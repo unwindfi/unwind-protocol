@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- The tab icon: the glass logo on the brand's diagonal purple gradient (the X avatar, without
+         its grain, which is noise at 16px). Made from waitlist/logo-glass-mark.webp. -->
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/favicon-64.png" type="image/png" sizes="64x64" />
+    <meta name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c0a1c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description"
+      content="Perpetual futures cleared by five-second batch auction. One price per batch, no time priority, and any token with a pool can have a market. Solana, settled in USDC." />
+    <title>unwind</title>
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      How a shared link looks on X and elsewhere: the glass logo on the
+      brand's grainy purple gradient (brand/x/og-3d.html). Absolute URLs, because
+      crawlers do not resolve relative ones.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://unwindfi.xyz/" />
+    <meta property="og:title" content="unwind" />
+    <meta property="og:description" content="Permissionless perps on any asset. Every batch clears at one price, and any Solana token with a pool can have a market." />
+    <meta property="og:image" content="https://unwindfi.xyz/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@unwindfi" />
+    <meta name="twitter:image" content="https://unwindfi.xyz/og.jpg" />
+    <!--
+      The front page's hero images, fetched with the HTML rather than after the
+      script that draws them: the violet light and the glass logo.
+    -->
+    <link rel="preload" as="image" href="/waitlist/field.webp" fetchpriority="high" />
+    <link rel="preload" as="image" href="/waitlist/logo-glass.webp" fetchpriority="high" />
+    <!--
+      The theme, before anything is painted.
+
+      Inline and blocking on purpose: React sets this attribute too late --
+      the page would paint dark, then repaint light on hydration, which is
+      the flash every theme switch is judged by. Kept to one statement so
+      the parser is held up for microseconds, and wrapped because reading
+      storage throws outright in a locked-down browser.
+    -->
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("unwind.theme") === "light" ? "light" : "dark";
+      } catch (e) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

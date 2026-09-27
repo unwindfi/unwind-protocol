@@ -1,0 +1,27 @@
+[[test.validator.account]]
+address = "FepWhkoBHU8FqUogcPVZhAnf8GTnYkQ6sW2xQLmqA9A1"
+filename = "tests/fixtures/at_200.json"
+
+[[test.validator.account]]
+address = "6YQHgyTRQdiFA1dBU92WBzhiKzhf7G6eBNtUr86LrfJC"
+filename = "tests/fixtures/at_220.json"
+
+[[test.validator.account]]
+address = "EfDoE6ZgTNpefvNUbk61yoyo9WiBhLpStMkHKHw4USSM"
+filename = "tests/fixtures/at_180.json"
+
+[[test.validator.account]]
+address = "5vXp7TW2UJv1bT8u9WKakcyA6DiLDXEzh7ekSKSSRS2D"
+filename = "tests/fixtures/at_100.json"
+
+[[test.validator.account]]
+address = "7PMVBuoYTGSXicYwypiccP6RXyRsydynTw8tGJXWe2Wq"
+filename = "tests/fixtures/at_50.json"
+
+[[test.validator.account]]
+address = "3LmRPsyygemk55saZecEbeGEdRVUgR2pb1rNyKFnzEjq"
+filename = "tests/fixtures/wide_conf.json"
+
+[[test.validator.account]]
+address = "6SURjfnVydGAJXVz9Mbp3XtK7AXrNHfBeymHJmqbB2Ba"
+filename = "tests/fixtures/partial.json"

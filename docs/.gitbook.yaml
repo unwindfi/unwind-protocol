@@ -1,0 +1,11 @@
+# This space, relative to its own directory. The site file above says where
+# that directory is; this one says how to read what is inside it.
+root: ./
+
+structure:
+  readme: README.md
+  summary: SUMMARY.md
+
+# Pages that moved. The Testnet page became Devnet on 2026-09-27.
+redirects:
+  testnet: devnet.md

@@ -1,0 +1,36 @@
+[package]
+name = "unwind"
+version = "0.1.0"
+description = "Permissionless perpetual futures cleared by dual flow batch auction"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "unwind"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+# Required by Anchor's zero-copy accounts. `min_const_generics` is what allows
+# an array longer than 32 to be Pod, which the batch needs.
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"
+
+[lints.rust]
+# `cargo kani` sets cfg(kani) for the proof harnesses in src/proofs/.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+# Proofs stub the text an Anchor error carries (its name and message): no
+# property reads it, and formatting it symbolically costs the model checker
+# minutes per harness. Stubbing is a Kani unstable feature, switched on here
+# so plain `cargo kani` keeps working. Used by src/proofs/budget.rs, money.rs and
+# settlement.rs.
+[package.metadata.kani]
+unstable = { stubbing = true }

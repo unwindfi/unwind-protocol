@@ -1,0 +1,29 @@
+.anchor
+target
+node_modules
+test-ledger
+.DS_Store
+**/*.rs.bk
+.localnet-ledger
+.localnet-state.json
+
+# Everything under app/ is generated: the Vite build lands there
+# (web/vite.config.ts `outDir`), and the brand mark, icon sprite and ticker
+# logos are written by the scripts/gen-*.ts generators. Rebuild with
+# `npm --prefix web run build` plus the generators, not from git.
+/app/
+
+# Vite's build output when targeting a static deploy (VERCEL=1); the local
+# build goes to /app instead.
+/web/dist/
+.vercel
+.env*
+.devnet-state.json
+.quote-cache.json
+
+# Server-side history (vault share prices for APY). Local state, not source.
+.cache/
+.*-faucet.json
+
+# Brand work (images, video, audio, render scripts) is kept outside the repo.
+/brand/

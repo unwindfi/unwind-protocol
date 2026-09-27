@@ -1,0 +1,17 @@
+# The site, and the spaces in it. GitBook reads this from the project
+# directory set on the Git Sync integration; ours is the repository root, so
+# it lives here. Each space points at a directory that carries its own
+# .gitbook.yaml, README.md and SUMMARY.md.
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: unwind Docs
+  structure:
+      # Exactly one space in the structure has to be the default: the one
+      # the site opens on. With a single space it is this one.
+    - type: space
+      default: true
+      key: mechanism
+      title: Docs
+      path: docs
+      content:
+        directory: ./docs

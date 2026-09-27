@@ -1,0 +1,5 @@
+# TLS in front of the server, so Vercel can reach it over HTTPS.
+# Point an A record for this name at the VPS first; Caddy gets the certificate.
+testnet-api.example.com {
+	reverse_proxy 127.0.0.1:3000
+}

@@ -1,0 +1,56 @@
+[toolchain]
+anchor_version = "0.31.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+unwind = "E8pRnTEfPFCcCPw9SQyrygMpLKRavo9oBYrf8qWQufmw"
+# Its own address. A pool records which program it takes prices from, so the
+# stand-in no longer has to squat on the real receiver's.
+mock_pyth = "J1FKStdEnsAK69gV4G5nVTm6eZTquo5kwQdLCHctE2k4"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+# Fixed `PriceUpdateV2` fixtures for the integration tests, written by
+# `scripts/gen-oracle-accounts.ts` and loaded at boot. The tests need prices
+# that never move; the product posts live ones through `mock_pyth` instead.
+[test.validator]
+bind_address = "0.0.0.0"
+
+[[test.validator.account]]
+address = "FepWhkoBHU8FqUogcPVZhAnf8GTnYkQ6sW2xQLmqA9A1"
+filename = "tests/fixtures/at_200.json"
+
+[[test.validator.account]]
+address = "6YQHgyTRQdiFA1dBU92WBzhiKzhf7G6eBNtUr86LrfJC"
+filename = "tests/fixtures/at_220.json"
+
+[[test.validator.account]]
+address = "EfDoE6ZgTNpefvNUbk61yoyo9WiBhLpStMkHKHw4USSM"
+filename = "tests/fixtures/at_180.json"
+
+[[test.validator.account]]
+address = "5vXp7TW2UJv1bT8u9WKakcyA6DiLDXEzh7ekSKSSRS2D"
+filename = "tests/fixtures/at_100.json"
+
+[[test.validator.account]]
+address = "7PMVBuoYTGSXicYwypiccP6RXyRsydynTw8tGJXWe2Wq"
+filename = "tests/fixtures/at_50.json"
+
+[[test.validator.account]]
+address = "3LmRPsyygemk55saZecEbeGEdRVUgR2pb1rNyKFnzEjq"
+filename = "tests/fixtures/wide_conf.json"
+
+[[test.validator.account]]
+address = "6SURjfnVydGAJXVz9Mbp3XtK7AXrNHfBeymHJmqbB2Ba"
+filename = "tests/fixtures/partial.json"

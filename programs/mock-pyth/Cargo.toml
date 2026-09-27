@@ -1,0 +1,22 @@
+[package]
+name = "mock-pyth"
+version = "0.1.0"
+description = "Localnet stand-in for the Pyth Solana Receiver, so prices can be pushed live"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "mock_pyth"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+# The devnet testnet build: only the relay authority may post prices.
+devnet = []
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }

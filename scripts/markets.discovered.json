@@ -1,0 +1,137 @@
+[
+  {
+    "symbol": "SPYx",
+    "name": "SP500",
+    "mint": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W",
+    "underlyingFeedId": "19e09bb805456ada3979a7d1cbb4b6d63babc3a0f8e8a9509f68afa5c4c11cd5",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/SPYx.png",
+    "liquidity": 6448869.301001527,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "CRCLx",
+    "name": "Circle",
+    "mint": "XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1",
+    "underlyingFeedId": "92b8527aabe59ea2b12230f7b532769b133ffb118dfbd48ff676f14b273f1365",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/CRCLx.png",
+    "liquidity": 2345964.424119547,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "COINx",
+    "name": "Coinbase",
+    "mint": "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu",
+    "underlyingFeedId": "fee33f2a978bf32dd6b662b65ba8083c6773b494f8401194ec1870c640860245",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/COINx.png",
+    "liquidity": 1371766.4690072038,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "TSLAx",
+    "name": "Tesla",
+    "mint": "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB",
+    "underlyingFeedId": "16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/TSLAx.png",
+    "liquidity": 1236255.3768674533,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "HOODx",
+    "name": "Robinhood",
+    "mint": "XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg",
+    "underlyingFeedId": "306736a4035846ba15a3496eed57225b64cc19230a50d14f3ed20fd7219b7849",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/HOODx.png",
+    "liquidity": 1192730.513831909,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "MSTRx",
+    "name": "MicroStrategy",
+    "mint": "XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ",
+    "underlyingFeedId": "e1e80251e5f5184f2195008382538e847fafc36f751896889dd3d1b1f6111f09",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/MSTRx.png",
+    "liquidity": 1112147.4632161537,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "AAPLx",
+    "name": "Apple",
+    "mint": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+    "underlyingFeedId": "49f6b65cb1de6b10eaf75e7c03ca029c306d0357e91b5311b175084a5ad55688",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/AAPLx.png",
+    "liquidity": 601951.3263232743,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "MSFTx",
+    "name": "Microsoft",
+    "mint": "XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX",
+    "underlyingFeedId": "d0ca23c1cc005e004ccf1db5bf76aeb6a49218f43dac3d4b275e92de12ded4d1",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/MSFTx.png",
+    "liquidity": 596146.4383696468,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "GOOGLx",
+    "name": "Alphabet",
+    "mint": "XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN",
+    "underlyingFeedId": "5a48c03e9b9cb337801073ed9d166817473697efff0d138874e0f6a33d6d5aa6",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/GOOGLx.png",
+    "liquidity": 393091.1955200082,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "METAx",
+    "name": "Meta",
+    "mint": "Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu",
+    "underlyingFeedId": "78a3e3b8e676a8f73c439f5d749737034b139bbbe899ba5775216fba596607fe",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/METAx.png",
+    "liquidity": 386762.74231680774,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "PLTRx",
+    "name": "Palantir",
+    "mint": "XsoBhf2ufR8fTyNSjqfU71DYGaE6Z3SUGAidpzriAA4",
+    "underlyingFeedId": "11a70634863ddffb71f2b11f2cff29f73f3db8f6d0b78c49f2b5f4ad36e885f0",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/PLTRx.png",
+    "liquidity": 349862.52111999993,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "AMZNx",
+    "name": "Amazon",
+    "mint": "Xs3eBt7uRfJX8QUs4suhyU8p2M6DoUDrJyWBa8LLZsg",
+    "underlyingFeedId": "b5d0e0fa58a1f8b81498ae670ce93c872d14434b72c364885d4fa1b257cbb07a",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/AMZNx.png",
+    "liquidity": 237121.99063835782,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "AMDx",
+    "name": "AMD",
+    "mint": "XsXcJ6GZ9kVnjqGsjBnktRcuwMBmvKWh8S93RefZ1rF",
+    "underlyingFeedId": "3622e381dbca2efd1859253763b1adc63f7f9abb8e76da1aa8e638a57ccde93e",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/AMDx.png",
+    "liquidity": 12892.864084795878,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "NFLXx",
+    "name": "Netflix",
+    "mint": "XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL",
+    "underlyingFeedId": "8376cfd7ca8bcdf372ced05307b24dced1f15b1afafdeff715664598f15a3dd2",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/NFLXx.png",
+    "liquidity": 2683.6139080419875,
+    "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;0907/C,1126/C,1127/0930-1300,1224/0930-1300,1225/C,0101/C,0118/C,0215/C,0326/C,0531/C,0618/C,0705/C"
+  },
+  {
+    "symbol": "NVDAx",
+    "name": "NVIDIA",
+    "mint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+    "underlyingFeedId": "b1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593",
+    "icon": "https://xstocks-metadata.backed.fi/logos/tokens/NVDAx.png",
+    "liquidity": null,
+    "schedule": null
+  }
+]

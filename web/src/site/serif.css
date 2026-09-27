@@ -1,0 +1,17 @@
+/*
+ * Instrument Serif (SIL Open Font License), the editorial face of the posters
+ * and the front page's wordmark. Latin subset only, loaded by the pages that
+ * set it rather than by every page.
+ */
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/InstrumentSerif-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-serif-display {
+  font-family: "Instrument Serif", Georgia, "Times New Roman", serif;
+  font-weight: 400;
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd web && npm install && npm run build && VITE_UNLOCK=1 npx vite build",
+  "outputDirectory": "web/dist",
+  "installCommand": "echo skip",
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/api/:first(batch|trades|candles|tx|order)/:rest*",
+      "destination": "/api/[...path]?__path=:first/:rest*"
+    },
+    {
+      "source": "/((?!api/|assets/|logos/|.*\\.).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/unlocked/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(logos|audio)/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
+      ]
+    },
+    {
+      "source": "/(favicon.svg|icons.svg)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
+      ]
+    }
+  ]
+}

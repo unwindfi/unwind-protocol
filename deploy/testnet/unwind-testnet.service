@@ -1,0 +1,26 @@
+# The testnet crank, keeper and price relay, as one long-running service.
+#
+# Install: see README.md in this directory. Paths assume the repo is checked
+# out at /opt/unwind and runs as a dedicated `unwind` user.
+[Unit]
+Description=unwind testnet server (crank, keeper, price relay, API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=unwind
+WorkingDirectory=/opt/unwind
+EnvironmentFile=/etc/unwind/testnet.env
+ExecStart=/usr/bin/npx ts-node --transpile-only scripts/server.ts
+# The crank is what keeps orders from sitting in escrow, so it comes back on
+# its own after a crash or a reboot.
+Restart=always
+RestartSec=5
+# Keys are read from /etc/unwind, which nothing else on the box needs.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

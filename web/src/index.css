@@ -1,0 +1,346 @@
+@import "tailwindcss";
+
+/*
+ * `pointer-coarse:` is already used by `lib/touch.ts`, but Tailwind v4 ships no
+ * such variant, so those utilities were being dropped silently. Declaring it
+ * makes them real — and gives the touch-only sizing a name, so a control can be
+ * grown for a thumb without growing it for a cursor.
+ */
+@custom-variant pointer-coarse (@media (pointer: coarse));
+
+/*
+ * `dark:` follows the switch, not the operating system.
+ *
+ * Tailwind's stock dark variant is `prefers-color-scheme`, and the imported
+ * beUI components are written in it -- so every one of them was themed by the
+ * laptop while the rest of the page was themed by the toggle. A dark address
+ * chip on a light page is what that looks like. Bound to the attribute the
+ * boot script writes, the two can no longer disagree.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * beUI components are written against shadcn's token names, so those have to
+ * exist and map onto the unwind palette — otherwise every imported component
+ * renders in shadcn's default neutral theme.
+ */
+:root {
+  --radius: 0.5rem;
+
+  /* Deep indigo rather than near-black navy (the purple rebrand, 2026-09-26): the
+     avatar's dark corner (#140b4a) taken down until it reads as a page, not a colour.
+     Every surface, line and grey below carries the same violet bias. */
+  --background: #0c0a1c;
+  /* A violet glow falling from the top of the page; nothing in light mode. */
+  --glow: rgba(106, 77, 244, .16);
+  /* How strong the film grain over every page is (see body::after). */
+  --grain: .13;
+  --foreground: #ece9fb;
+  --card: #121028;
+  --card-foreground: #ece9fb;
+  --popover: #171432;
+  --popover-foreground: #ece9fb;
+  --primary: #6a4df4;
+  /* The brand violet is dark enough that a label on top of it wants white, not
+     the page's near-black -- ink that dark clears 4.5:1 only on a lighter violet. */
+  --primary-foreground: #ffffff;
+  --secondary: #201c42;
+  --secondary-foreground: #ece9fb;
+  --muted: #171432;
+  --muted-foreground: #9d97c0;
+  --accent: #201c42;
+  --accent-foreground: #ece9fb;
+  --destructive: #f6465d;
+  --border: #29244f;
+  --input: #29244f;
+  --ring: #6a4df4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  /* Formulas and figures that have to line up read as code, not as prose. */
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* The built-in CSS easings are too weak to read as intentional. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/*
+ * unwind's own scale, on top of the shadcn set.
+ *
+ * Not `inline`: that block bakes each value into every utility that uses it,
+ * which is fine for a palette that never moves and impossible for one that
+ * does. Declared here the variables are emitted, `bg-panel` compiles to
+ * `var(--color-panel)`, and the light theme below can redefine them. It is
+ * also what lets the chart read its colours out of `getComputedStyle` rather
+ * than carrying a second copy of the palette in TypeScript.
+ */
+@theme {
+  --color-panel: #121028;
+  --color-panel2: #171432;
+  --color-panel3: #201c42;
+  --color-line: #29244f;
+  --color-linesoft: #1b1838;
+  --color-dim: #6c6696;
+  --color-up: #0ecb81;
+  --color-down: #f6465d;
+  --color-brand: #6a4df4;
+
+  /*
+   * The road behind the search on /markets. Its tarmac is painted, not
+   * tinted, so it needs stops of its own -- a pale road drawn on a pale page
+   * is invisible, and this is the one graphic on the site that cannot take
+   * its colour from a surface token.
+   */
+  --color-road-1: #f4f6fa;
+  --color-road-2: #d5dae4;
+  --color-road-3: #98a1b2;
+}
+
+
+/*
+ * The light theme.
+ *
+ * Outside every layer on purpose: Tailwind emits its palette inside
+ * `@layer theme`, and an unlayered rule beats a layered one whatever the
+ * specificity, so this is the one place the whole scale can be restated
+ * without fighting the generated output rule by rule.
+ *
+ * It is a restatement, not an inversion. A photographic negative of a
+ * trading screen gives you mid-grey panels and a green that vanishes on
+ * white: the surfaces here climb from page to panel the way the dark ones
+ * descend, and up/down are darkened until they clear 4.5:1 on white, because
+ * a price that cannot be read is worse than a price that is not pretty.
+ *
+ * `data-theme` is written by the boot script in index.html before first
+ * paint, so there is no flash of the other theme.
+ */
+:root[data-theme="light"] {
+  --glow: transparent;
+  --grain: 0;
+  --background: #f6f7fb;
+  --foreground: #0b1018;
+  --card: #ffffff;
+  --card-foreground: #0b1018;
+  --popover: #ffffff;
+  --popover-foreground: #0b1018;
+  --primary: #6a4df4;
+  --primary-foreground: #ffffff;
+  --secondary: #e7ebf3;
+  --secondary-foreground: #0b1018;
+  --muted: #eef1f7;
+  --muted-foreground: #5b6578;
+  --accent: #e7ebf3;
+  --accent-foreground: #0b1018;
+  --destructive: #cf2438;
+  --border: #dee3ed;
+  --input: #dee3ed;
+  --ring: #6a4df4;
+
+  --color-panel: #ffffff;
+  --color-panel2: #f1f4f9;
+  --color-panel3: #e4e9f2;
+  --color-line: #dee3ed;
+  --color-linesoft: #edf0f6;
+  --color-dim: #767f92;
+  /* Binance green and red are tuned for a black screen; on white they are a
+     highlighter and a pink. These are the same hues taken down until small
+     figures in them are legible. */
+  --color-up: #0a7f55;
+  --color-down: #cf2438;
+  --color-brand: #6a4df4;
+
+  /* The road inverts with the page: dark tarmac under a pale sky. */
+  --color-road-1: #aeb6c6;
+  --color-road-2: #8b95a8;
+  --color-road-3: #5d6779;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] { color-scheme: dark; }
+
+@layer base {
+  * { border-color: var(--border); }
+  html, body, #root { height: 100%; }
+  /*
+   * `100%` resolves against the *largest* viewport on mobile, so the bottom of
+   * the app sits behind the browser's collapsing toolbar until you scroll --
+   * which is exactly where the order bar and tab bar live. `dvh` tracks the
+   * viewport as that chrome moves.
+   */
+  @supports (height: 100dvh) {
+    html, body, #root { height: 100dvh; }
+  }
+  body {
+    background: radial-gradient(90% 60% at 50% -10%, var(--glow), transparent 70%) no-repeat,
+                var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    /* A pane that has hit its end must not drag the whole page with it. */
+    overscroll-behavior: none;
+  }
+
+  /*
+   * The trading screen is a fixed shell: its panes scroll and the document
+   * does not. The site pages are the opposite and render into the same
+   * document, so they release the lock rather than every section fighting it.
+   */
+  /*
+   * Film grain over the whole page, the texture of the posters and the X
+   * avatar (the purple rebrand). Fixed so it does not scroll with content,
+   * above everything but deaf to the pointer, and faint enough that small
+   * figures stay crisp. Off in light mode, where it reads as dirt.
+   */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    pointer-events: none;
+    opacity: var(--grain);
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  @media (prefers-reduced-transparency: reduce) { body::after { display: none; } }
+
+  html:has(.site), body:has(.site), #root:has(.site) {
+    height: auto;
+    overflow: visible;
+  }
+  /* Here the document itself scrolls, so the rubber-band at either end is the
+     root's, and it dragged the sticky nav with it. `none` on body does not
+     reach it; it has to sit on the scrolling element. */
+  html:has(.site) { overscroll-behavior-y: none; }
+
+  /*
+   * The site pages are the app's palette at reading sizes: the body font-size
+   * is 11.5px for a trading screen, which is not a size to set prose in.
+   */
+  .site { font-size: 14px; }
+
+  /*
+   * Staggered entrance. One keyframe plus an inline `animation-delay` per
+   * element, rather than an observer per block: the hero is above the fold and
+   * has nothing to wait for, and a delay is the cheapest possible sequencer.
+   */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+  }
+  .rise {
+    opacity: 0;
+    animation: rise 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rise { opacity: 1; animation: none; }
+  }
+
+  /*
+   * Safari zooms the page when a focused input's text is under 16px, and never
+   * zooms back out -- it leaves the layout wider than the viewport for the rest
+   * of the session. The desktop layout is deliberately 11.5-13px, so the floor
+   * is applied only where the zoom can actually fire.
+   */
+  @media (pointer: coarse) {
+    input, select, textarea { font-size: 16px; }
+  }
+
+  /*
+   * Touch scrolling in a pane, without the rubber-band handing off to the page.
+   */
+  .pane-scroll {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Horizontal stat/tab strips: scrollable, but with no visible bar. */
+  .strip-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .strip-scroll::-webkit-scrollbar { display: none; }
+
+  /* Bottom-anchored chrome has to clear the home indicator. */
+  .safe-b { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .safe-t { padding-top: env(safe-area-inset-top, 0px); }
+
+  /*
+   * Taps on controls should not paint the platform's grey flash over a themed
+   * surface, and a double-tap on a button should not zoom the chart.
+   */
+  @media (pointer: coarse) {
+    button, a, [role="tab"], [role="button"] {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+  }
+
+  /*
+   * A press has to be felt. Without it a tap on a phone is indistinguishable
+   * from a tap that missed, and the screen reads as unresponsive while the
+   * order is in flight.
+   */
+  .press {
+    transition: transform 160ms var(--ease-out-strong);
+  }
+  .press:active { transform: scale(0.97); }
+  .press:disabled:active { transform: none; }
+
+  /*
+   * Touch fires hover on tap and then leaves it stuck, so a hover style on a
+   * phone is a style that never goes away.
+   */
+  @media (hover: hover) and (pointer: fine) {
+    .hover-panel:hover { background: var(--color-panel3); }
+  }
+  /* Prices and sizes must not reflow as digits change. */
+  .n { font-variant-numeric: tabular-nums; }
+  /* The native number spinner is a browser widget that ignores the theme and
+     only appears on hover. Amount fields draw their own stepper instead. */
+  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* Overlay scrollbars on touch: an 8px gutter is a waste of a 375px screen. */
+  @media (pointer: coarse) {
+    ::-webkit-scrollbar { width: 0; height: 0; }
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--color-panel3); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}

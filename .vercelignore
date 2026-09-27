@@ -1,0 +1,18 @@
+# Vercel only builds the web app, which needs `web/` plus `scripts/markets.ts`.
+# Everything below is either irrelevant to that build or actively breaks the
+# upload: a running validator's ledger holds Unix sockets, which the CLI cannot
+# read and fails the deploy on.
+.anchor
+.localnet-ledger
+.localnet-oracles
+.localnet-state.json
+target
+app
+programs
+tests
+Cargo.toml
+Cargo.lock
+Anchor.toml
+node_modules
+web/dist
+brand
