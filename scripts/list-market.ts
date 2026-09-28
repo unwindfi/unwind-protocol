@@ -6,19 +6,21 @@
  *   1. point an Observation at an AMM pool
  *   2. crank it until it has enough history to be worth anything
  *   3. list the market against that observation — permissionless
- *   4. underwrite it — not permissionless, and deliberately separate
+ *   4. back it: post collateral that takes the market's first loss
  *
- * Step 4 is the one that is somebody's decision. Anyone can do the first
- * three; a market that has done only those can be quoted and watched and
- * cannot open a position, which is the safe state for something nobody has
- * put capital behind.
+ * Every step is permissionless. A market that has done only the first three
+ * can be quoted and watched and cannot open a position, which is the safe
+ * state for something nobody has put capital behind.
  */
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { SOL_USD_FEED, backingBookPda, custodyPda } from "./custodies";
+import { priceAccountFor } from "./mock-pyth";
 
 const ROOT = path.join(__dirname, "..");
 const S = JSON.parse(fs.readFileSync(path.join(ROOT, ".localnet-state.json"), "utf8"));
@@ -156,12 +158,33 @@ const MIN_WINDOW_SEC = 900;
   }
   console.log("\n  seasoned — the mark is now tradeable");
 
-  // 4. Underwrite it. The one step that is not permissionless.
+  // 4. Back it. The authority posts here like any backer would; the budget is
+  // what backing covers. Every custody rides along, in index order.
+  const usdcMint = new PublicKey(S.usdcMint);
+  const ownerToken = (await getOrCreateAssociatedTokenAccount(
+    conn, authority, usdcMint, authority.publicKey)).address;
+  await mintTo(conn, authority, usdcMint, ownerToken, authority.publicKey, 25_000e6);
+  const custodies = [
+    { custody: custodyPda(program.programId, pool, NATIVE_MINT),
+      price: priceAccountFor(Buffer.from(SOL_USD_FEED, "hex")) },
+    { custody: custodyPda(program.programId, pool, new PublicKey(S.usdtMint)),
+      price: SystemProgram.programId },
+  ];
   await program.methods
-    .setMarketBudget(USD(25_000))
-    .accounts({ authority: authority.publicKey, pool, market })
+    .backMarket(USD(25_000))
+    .accounts({
+      owner: authority.publicKey, pool, market,
+      backing: pda([Buffer.from("backing"), market.toBuffer(), authority.publicKey.toBuffer()]),
+      book: backingBookPda(program.programId, market),
+      depositMint: usdcMint, depositVault: new PublicKey(S.usdcVault), ownerToken,
+      tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(custodies.flatMap((c) => [
+      { pubkey: c.custody, isWritable: true, isSigner: false },
+      { pubkey: c.price, isWritable: false, isSigner: false },
+    ]))
     .rpc();
-  console.log("  funded with a $25,000 loss budget");
+  console.log("  backed with $25,000; the budget is what that covers");
 
   S.markets[SYMBOL] = {
     market: market.toBase58(),

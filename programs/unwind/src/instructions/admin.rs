@@ -270,8 +270,8 @@ pub fn add_market(ctx: Context<AddMarket>, params: MarketParams) -> Result<()> {
     // Listing is permissionless; underwriting is not. A deployer who could
     // name their own loss budget could list a market against a price they
     // control and set the budget to the size of the pool, which is not a
-    // listing, it is a withdrawal. The budget is the LPs' decision and it
-    // arrives afterwards, through `set_market_budget`.
+    // listing, it is a withdrawal. The budget arrives afterwards, with
+    // backing.
     market.loss_budget_usd = 0;
     market.net_loss_usd = 0;
     market.locked_usd = 0;
@@ -321,8 +321,8 @@ pub fn update_market_params(ctx: Context<UpdateMarket>, params: MarketParams) ->
     market.max_funding_rate_bps_per_hour = params.max_funding_rate_bps_per_hour;
     market.funding_k_bps = params.funding_k_bps;
     market.borrow_rate_bps_per_hour = params.borrow_rate_bps_per_hour;
-    // The budget is not a risk parameter the deployer re-sends; it is the
-    // LPs' decision, and it moves only through `set_market_budget`.
+    // The budget is not a risk parameter the authority re-sends: it rises
+    // with backing, and `set_market_budget` can only lower it.
     Ok(())
 }
 
@@ -336,14 +336,14 @@ pub fn set_session(ctx: Context<UpdateMarket>, session: u8) -> Result<()> {
     Ok(())
 }
 
-/// Sets the market's loss budget without touching any other parameter.
+/// Lowers the market's loss budget without touching any other parameter.
 ///
-/// Separate from `update_market_params` because funding a market and
-/// re-risking it are different decisions, made by different people at
-/// different times — and resending twenty unchanged fields to change one is
-/// how the other nineteen get changed by accident.
+/// Only down. A budget rises when somebody posts backing, and no key can
+/// raise one without it; this is the authority's brake on a market it no
+/// longer trusts, not a way to fund one.
 pub fn set_market_budget(ctx: Context<UpdateMarket>, loss_budget_usd: u64) -> Result<()> {
     let market = &mut ctx.accounts.market;
+    require!(loss_budget_usd <= market.loss_budget_usd, PerpError::BudgetOnlyLowers);
     market.loss_budget_usd = loss_budget_usd;
     emit!(MarketBudgetSet {
         market: market.key(),

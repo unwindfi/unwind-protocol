@@ -103,5 +103,5 @@ authority to act. Making the allowance collateral rather than permission
 removes that step, and is strictly safer for liquidity providers, who now sit
 behind the backer rather than in front.
 
-The authority can still set a market's budget directly with
-`set_market_budget`. No market needs it to, and no other account can.
+The authority can lower a market's budget with `set_market_budget`, as a
+brake on a market it no longer trusts. It cannot raise one.

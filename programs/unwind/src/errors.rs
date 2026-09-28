@@ -102,4 +102,6 @@ pub enum PerpError {
     PoolUnderwater,
     #[msg("Only the pool's mark keeper may push a mark")]
     NotMarkKeeper,
+    #[msg("The authority can only lower a market's budget; backing raises it")]
+    BudgetOnlyLowers,
 }

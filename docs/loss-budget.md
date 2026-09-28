@@ -21,9 +21,9 @@ and any account may cut a market's budget to that figure as liquidity drains
 from the underlying pool. The budget also falls on its own when backing is
 withdrawn, or when the price of a token the backing is held in falls.
 
-Any account may raise a budget by posting backing. The pool authority can also
-set a budget directly with `set_market_budget`. No other account can raise
-one.
+A budget rises only when somebody posts backing. No account can raise it any
+other way, the protocol authority included. The authority can lower a budget
+with `set_market_budget`, as a brake on a market it no longer trusts.
 
 {% hint style="info" %}
 Depth is temporarily purchasable. An account able to raise a budget by

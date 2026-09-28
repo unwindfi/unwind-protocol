@@ -8,6 +8,7 @@ import {
   mintTo,
   getAccount,
   getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import * as fs from "fs";
@@ -177,9 +178,24 @@ describe("unwind", () => {
         systemProgram: SystemProgram.programId,
       })
       .rpc();
+    // The budget comes from backing, which the authority posts here like any
+    // backer would.
+    const authorityUsdc = await getOrCreateAssociatedTokenAccount(
+      provider.connection, authority.payer, usdcMint, authority.publicKey);
+    await mintTo(provider.connection, authority.payer, usdcMint, authorityUsdc.address,
+      authority.publicKey, 10_000_000e6);
     await program.methods
-      .setMarketBudget(new BN(10_000_000_000_000))
-      .accounts({ authority: authority.publicKey, pool, market })
+      .backMarket(new BN(10_000_000_000_000))
+      .accounts({
+        owner: authority.publicKey, pool, market,
+        backing: PublicKey.findProgramAddressSync(
+          [Buffer.from("backing"), market.toBuffer(), authority.publicKey.toBuffer()],
+          program.programId)[0],
+        book: PublicKey.findProgramAddressSync(
+          [Buffer.from("backing_book"), market.toBuffer()], program.programId)[0],
+        depositMint: usdcMint, depositVault: usdcVault, ownerToken: authorityUsdc.address,
+        tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      })
       .rpc();
 
     lpUsdc = await createAssociatedTokenAccount(

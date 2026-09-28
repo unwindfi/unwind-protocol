@@ -17,7 +17,8 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID, createAssociatedTokenAccount, createAssociatedTokenAccountIdempotentInstruction,
-  createMint, createMintToInstruction, getAccount, getAssociatedTokenAddressSync, mintTo,
+  createMint, createMintToInstruction, getAccount, getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount, mintTo,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { createHash } from "crypto";
@@ -294,9 +295,20 @@ describe("system", () => {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
+      // The budget comes from backing, which the authority posts here like
+      // any backer would.
+      const authorityUsdc = await getOrCreateAssociatedTokenAccount(
+        conn, authority, usdcMint, authority.publicKey);
+      await mintTo(conn, authority, usdcMint, authorityUsdc.address, authority.publicKey, 10_000_000e6);
       await perps.methods
-        .setMarketBudget(USD(10_000_000))
-        .accounts({ authority: authority.publicKey, pool, market })
+        .backMarket(USD(10_000_000))
+        .accounts({
+          owner: authority.publicKey, pool, market,
+          backing: pda([Buffer.from("backing"), market.toBuffer(), authority.publicKey.toBuffer()]),
+          book: pda([Buffer.from("backing_book"), market.toBuffer()]),
+          depositMint: usdcMint, depositVault: usdcVault, ownerToken: authorityUsdc.address,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
         .rpc();
     }
 
@@ -564,8 +576,8 @@ describe("system", () => {
       // A move that takes Alice through her margin and leaves Bob fine.
       await post("EEE", 89);
 
-      const liquidatorUsdc = await createAssociatedTokenAccount(
-        conn, authority, usdcMint, authority.publicKey);
+      // The setup made it when the authority backed the markets.
+      const liquidatorUsdc = getAssociatedTokenAddressSync(usdcMint, authority.publicKey);
 
       for (const entry of inMarket as any[]) {
         const owner = entry.account.owner as PublicKey;
@@ -1174,7 +1186,11 @@ describe("system", () => {
       assert.equal(m.deployer.toBase58(), alice.publicKey.toBase58());
     });
 
+    // What the pool already held as backing: the setup backs every market.
+    let poolBackingBefore = 0;
+
     it("lets anyone underwrite it, with no authority on the transaction", async () => {
+      poolBackingBefore = Number((await perps.account.pool.fetch(pool) as any).backingUsd);
       await perps.methods.backMarket(USD(40_000))
         .accounts(backingAccounts(bob)).signers([bob]).rpc();
 
@@ -1189,7 +1205,7 @@ describe("system", () => {
 
     it("does not let backing read as LP capital", async () => {
       const p: any = await perps.account.pool.fetch(pool);
-      assert.equal(Number(p.backingUsd), 40_000e6);
+      assert.equal(Number(p.backingUsd) - poolBackingBefore, 40_000e6);
       // The vault holds it, the LPs do not own it: `liquidity_usd` is what LP
       // shares are priced against, and backing must never inflate it.
       assert.isAbove(Number(p.liquidityUsd), 0);
@@ -1224,6 +1240,25 @@ describe("system", () => {
         // withdraw from, and the withdrawal no longer makes an empty one.
         assert.match(e.toString(), /AccountNotInitialized|InsufficientLiquidity|ZeroAmount|constraint/i);
       }
+    });
+
+    it("lets the authority lower a budget but never raise it", async () => {
+      const setBudget = (usd: number) => perps.methods.setMarketBudget(USD(usd))
+        .accounts({ authority: authority.publicKey, pool, market }).rpc();
+      const budget = async () =>
+        Number((await perps.account.market.fetch(market) as any).lossBudgetUsd) / 1e6;
+
+      const was = await budget();
+      try {
+        await setBudget(was + 1_000);
+        assert.fail("the authority must not raise a budget");
+      } catch (e: any) {
+        assert.include(e.toString(), "BudgetOnlyLowers");
+      }
+      assert.approximately(await budget(), was, 0.01);
+
+      await setBudget(was - 5_000);
+      assert.approximately(await budget(), was - 5_000, 0.01);
     });
   });
 

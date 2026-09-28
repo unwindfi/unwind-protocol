@@ -40,7 +40,7 @@ Arrival time within a window carries no weight, so latency confers no
 advantage and no priority lane exists to be sold. Liquidation is
 permissionless, which removes the dependency on a keeper remaining
 available. A market's loss budget may be lowered by anyone as liquidity
-drains. It rises only when somebody posts backing, or when the pool authority
-sets it with `set_market_budget`. Depth alone never raises it, because depth
+drains. It rises only when somebody posts backing; the pool authority can lower it
+but never raise it. Depth alone never raises it, because depth
 is temporarily purchasable and an account able to mint a budget from depth
 would be authorising its own allowance.

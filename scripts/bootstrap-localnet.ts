@@ -17,7 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { MARKETS as ALL_MARKETS, feedIdFor } from "./markets";
 import { createLookupTable, loadLookupTable, sendV0 } from "./alt";
-import { ensureCustodies } from "./custodies";
+import { backingBookPda, ensureCustodies } from "./custodies";
 import { fetchQuotes, fetchSessions, Session } from "./prices";
 import { MOCK_PYTH_ID, mockPythProgram, postQuotes, priceAccountFor, relayKeypair } from "./mock-pyth";
 
@@ -278,13 +278,20 @@ async function main() {
       })
       .rpc();
 
-    // Listing is permissionless and arrives unfunded; underwriting is a
-    // separate act by whoever owns the risk. Localnet seeds every market with
-    // the same budget, where a real one derives it from what it costs to move
-    // that asset's price.
+    // Listing is permissionless and arrives unfunded. The budget comes from
+    // backing, which the authority posts here like any backer would. A fresh
+    // pool has no custodies yet, so none ride along.
+    const authorityUsdc = (await ataFor(conn, authority, usdcMint, authority.publicKey)).address;
+    await retry(() => mintTo(conn, authority, usdcMint, authorityUsdc, authority.publicKey, 250_000e6));
     await program.methods
-      .setMarketBudget(USD(250_000))
-      .accounts({ authority: authority.publicKey, pool, market })
+      .backMarket(USD(250_000))
+      .accounts({
+        owner: authority.publicKey, pool, market,
+        backing: pda([Buffer.from("backing"), market.toBuffer(), authority.publicKey.toBuffer()]),
+        book: backingBookPda(program.programId, market),
+        depositMint: usdcMint, depositVault: usdcVault, ownerToken: authorityUsdc,
+        tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      })
       .rpc();
     markets[m.symbol] = {
       market: market.toBase58(),
