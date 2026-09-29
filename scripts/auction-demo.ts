@@ -93,8 +93,8 @@ const sym = process.argv[2] ?? "SPYx";
   const before: any = await program.account.batch.fetch(batch);
   console.log(`  batch holds ${before.orders.filter((o: any) => o.active).length} orders, seq ${before.seq}`);
 
-  console.log("  waiting out the 5s window…");
-  await new Promise((r) => setTimeout(r, 6_000));
+  console.log("  waiting out the 1s window…");
+  await new Promise((r) => setTimeout(r, 2_000));
 
   await program.methods.clearBatch()
     .accounts({ pool, market, batch, priceUpdate }).rpc();

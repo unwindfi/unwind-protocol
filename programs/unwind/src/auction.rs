@@ -52,7 +52,7 @@ pub type Result<T> = core::result::Result<T, AuctionError>;
 /// The stack is no longer the binding limit — `Batch` is zero-copy, so the
 /// array is cast in place rather than deserialised through a 4KB frame — which
 /// leaves the compute budget as the only ceiling. Overflow goes to the next
-/// batch, five seconds later.
+/// batch, a second later.
 pub const MAX_BATCH_ORDERS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

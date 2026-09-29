@@ -9,7 +9,7 @@ coverY: 0
 
 unwind is a perpetual futures venue on Solana in which every market clears by
 dual flow batch auction and any market can be opened by anyone. Orders
-submitted inside a five second window are collected without order. Takers
+submitted inside a one second window are collected without order. Takers
 buying meet makers selling, takers selling meet makers buying, and each of
 those two auctions settles at the single price that crosses the most volume
 in it, so that every participant who trades in a given flow trades at the same

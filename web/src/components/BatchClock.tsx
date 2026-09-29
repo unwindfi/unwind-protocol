@@ -1,5 +1,5 @@
 /*
- * The batch as a clock: a ring that drains over the five-second window, the
+ * The batch as a clock: a ring that drains over the one-second window, the
  * seconds left inside it, and which batch this is beside it.
  *
  * It lives in the market header because the window is the one thing on this
@@ -14,11 +14,11 @@ import { clock, price } from "@/lib/format";
 
 /// How long a batch collects for. Mirrors `BATCH_INTERVAL_SEC` in the program;
 /// used only to draw the ring, never to decide anything.
-export const WINDOW_MS = 5_000;
+export const WINDOW_MS = 1_000;
 
 /// A clock that ticks faster than the data does.
 ///
-/// The batch is polled once a second, but a countdown that moves once a second
+/// The batch is polled twice a second, but a countdown that moves in steps
 /// reads as a stuck clock rather than a window closing. The remaining time is
 /// derived from `clearsAtMs`, which came from the chain; this only decides how
 /// often the page recomputes it.
@@ -41,7 +41,7 @@ export function useNow(ms: number) {
 export function useBatch(symbol: string, given?: Batch | null) {
   const own = usePoll(
     () => (given === undefined ? getBatch(symbol) : Promise.resolve(null)),
-    1000, [symbol, given === undefined]);
+    500, [symbol, given === undefined]);
   return given === undefined ? own : given;
 }
 
@@ -110,7 +110,7 @@ export function BatchRing({ batch, size = 34 }: { batch: Batch; size?: number })
     return () => a.cancel();
   }, [live, batch.clearsAtMs, c]);
 
-  const centre = phase === "collecting" ? String(Math.ceil(left / 1000))
+  const centre = phase === "collecting" ? (left / 1000).toFixed(1)
     : phase === "opening" ? "" : "0";
 
   return (

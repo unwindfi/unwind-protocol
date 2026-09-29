@@ -74,10 +74,10 @@ export default function App() {
   const account = usePoll(() => getAccount(owner), 1800, [accountTick, owner],
     () => peek<Account>("/api/account" + (owner ? `?owner=${owner}` : "")));
 
-  // Once a second against a five-second window: fast enough that the book is
-  // never a batch behind, and the countdown between polls is interpolated from
+  // Twice a second against a one-second window: fast enough that the book is
+  // at most half a batch behind, and the countdown between polls is interpolated from
   // the chain's own deadline rather than from this interval.
-  const batch = usePoll(() => (symbol ? getBatch(symbol) : Promise.resolve(null)), 1000, [symbol],
+  const batch = usePoll(() => (symbol ? getBatch(symbol) : Promise.resolve(null)), 500, [symbol],
     () => (symbol ? peek<Batch>(`/api/batch/${symbol}`) : null));
 
   const market = useMemo(
@@ -209,7 +209,7 @@ export default function App() {
           undefined,
           market.observed && !market.observed.seasoned
             ? "Clears in the opening auction."
-            : "Fills in the next batch, within 5s.");
+            : "Fills in the next batch, within a second.");
       }}
       /* The pool is Earn's job on a wide screen, where the rail links to it.
          The phone's account pane keeps its deposit as it was. */

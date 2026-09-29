@@ -25,7 +25,7 @@ market's fees.
 
 ## Price is determined by the batch
 
-Orders accumulate for five seconds and clear as two auctions: takers buying
+Orders accumulate for one second and clear as two auctions: takers buying
 against makers selling, and takers selling against makers buying, each at the
 single price that crosses the most volume. The liquidity pool fills only the
 takers makers leave standing, and never trades with a maker.

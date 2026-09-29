@@ -240,7 +240,7 @@ describe("unwind", () => {
    * which fills it at its own quote — so these tests still open at the
    * oracle-derived price they always did, by a longer route.
    */
-  const BATCH_WAIT_MS = 5_600;
+  const BATCH_WAIT_MS = 2_000;
 
   const open = async (
     isLong: boolean, collateral: BN, size: BN, price = "at_200", who = trader,

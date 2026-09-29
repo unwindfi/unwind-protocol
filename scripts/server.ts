@@ -66,14 +66,14 @@ const TICK_MS = Number(process.env.TICK_MS ?? (IS_LOCAL ? 4_000 : 20_000));
 // `getProgramAccounts` calls, which a public RPC prices far above an ordinary
 // read. Off localnet it runs on a much longer leash; the binding constraint is
 // how long an underwater position may sit, not how fast the loop can spin.
-/// How often every batch is checked for orders to clear. A batch is due five
-/// seconds after it opens, so two seconds late at worst is still inside the
-/// next window, and it halves what the crank costs against an RPC plan's
-/// monthly request allowance.
+/// How often every batch is checked for orders to clear. A batch is due one
+/// second after it opens, so the crank runs at the same pace: any slower and
+/// the crank, not the window, is what a trader waits on. One multi-account
+/// read per pass, plus transactions only for batches with orders in them.
+const AUCTION_MS = Number(process.env.AUCTION_MS ?? 1_000);
 /// How often the seeded testnet pools are moved to follow their real tokens.
 /// A few calls each per pass; two minutes keeps that well inside an RPC plan.
 const FLOW_MS = Number(process.env.FLOW_MS ?? 120_000);
-const AUCTION_MS = Number(process.env.AUCTION_MS ?? (IS_LOCAL ? 1_000 : 2_000));
 const KEEPER_MS = Number(process.env.KEEPER_MS ?? (IS_LOCAL ? 2_500 : 90_000));
 const CRANK_MS = Number(process.env.CRANK_MS ?? (IS_LOCAL ? 20_000 : 300_000));
 /// Trading calendars change a few times a day; checking every minute is ample.
@@ -310,7 +310,7 @@ const potUsd = (market: PublicKey, backingUsdRaw: any) =>
  * moment and dropped whenever a transaction lands.
  */
 const batchSeen = new Map<string, { state: any; at: number }>();
-const BATCH_FRESH_MS = 3_000;
+const BATCH_FRESH_MS = 1_000;
 const accountMemo = new Map<string, { at: number; body: Promise<any> }>();
 const ACCOUNT_FRESH_MS = 2_500;
 
@@ -893,7 +893,7 @@ const orderAccounts = (m: MarketRt, owner: PublicKey) => ({
 /// placed far enough through the index to cross whatever the batch finds,
 /// which is the same intent expressed in the only terms the program has. The
 /// tolerance is the trader's slippage budget, not a prediction.
-const BATCH_INTERVAL_SEC = 5;
+const BATCH_INTERVAL_SEC = 1;
 const MARKET_ORDER_TOLERANCE_BPS = 100; // 1%
 const marketLimit = (m: MarketRt, isLong: boolean) => {
   const p = px(m);
@@ -1639,7 +1639,7 @@ function indicativeCross(orders: BookOrder[]) {
 ///
 /// Read from the account every time rather than mirrored in this process: the
 /// batch is the authority on what is resting in it, and a copy kept here would
-/// go stale in precisely the five seconds that matter.
+/// go stale in precisely the second that matters.
 app.get("/api/batch/:symbol", async (req, res) => {
   const m = rt[req.params.symbol];
   if (!m) return res.status(404).json({ error: "unknown market" });
@@ -2087,7 +2087,7 @@ app.post("/api/withdraw", async (req, res) => {
       batchSeen.set(m.symbol, { state, at: Date.now() });
       // An open batch with nothing in it has nothing to clear. Clearing it
       // anyway only restarts its window, and cost a transaction per market
-      // every five seconds. Once an order lands the batch is already overdue
+      // every second. Once an order lands the batch is already overdue
       // and clears on the next pass.
       const open = Number(state.clearedTs) === 0;
       if (open && !state.orders.some((o: any) => o.active)) continue;

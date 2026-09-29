@@ -4,7 +4,7 @@
 //!
 //! Anyone can open a market on an asset with an on-chain price: a Pyth feed,
 //! or the asset's own Raydium CLMM or Meteora DLMM pool, observed until its
-//! mark has a history. Orders collect for five seconds and clear as two
+//! mark has a history. Orders collect for one second and clear as two
 //! auctions, takers buying against makers selling and takers selling against
 //! makers buying, each at one price (`auction`). The USDC pool fills only the
 //! takers the makers leave standing.

@@ -172,7 +172,7 @@ fn a_sealed_batch_takes_no_orders() {
 
 /// A batch is due exactly `BATCH_INTERVAL_SEC` after it opened, and once due
 /// it stays due. The first half assumes a real clock (a timestamp at least
-/// five seconds short of `i64::MAX`); the second holds for any timestamps.
+/// one interval short of `i64::MAX`); the second holds for any timestamps.
 #[kani::proof]
 fn a_batch_is_due_exactly_after_its_interval() {
     let mut b = Batch::zeroed();

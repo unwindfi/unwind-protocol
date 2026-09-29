@@ -3,7 +3,7 @@
 **Permissionless perpetual futures on Solana, cleared by dual flow batch auction.**
 
 Anyone can open a perp market on any token with an on-chain price. Orders
-collect for five seconds and clear together, so arriving first earns nothing.
+collect for one second and clear together, so arriving first earns nothing.
 Each market is backed by first-loss capital from whoever wants it to exist.
 
 [Documentation](https://unwind.gitbook.io/unwind-docs) ·
@@ -34,14 +34,14 @@ so the fastest order wins. unwind changes both.
 | --- | --- | --- |
 | Listing | Chosen by the venue | Any account, one transaction |
 | Price source | Integrated oracle feed | Pyth feed, or the token's own Raydium CLMM or Meteora DLMM pool |
-| Matching | Continuous, first come first served | Five-second batches, one price per flow |
+| Matching | Continuous, first come first served | One-second batches, one price per flow |
 | New-market risk | Carried by the venue or its LPs | First loss carried by the market's backers |
 
 ## How it works
 
 ### Clearing: dual flow batch auction
 
-Orders submitted during a five-second window are held, not filled. When the
+Orders submitted during a one-second window are held, not filled. When the
 window closes, the batch is split into two independent auctions:
 
 - **Buy flow:** takers buying against makers selling.

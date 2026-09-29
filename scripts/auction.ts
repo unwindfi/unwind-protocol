@@ -12,7 +12,7 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-tok
  * the only cost of two of them racing is a wasted transaction.
  */
 
-export const BATCH_INTERVAL_SEC = 5;
+export const BATCH_INTERVAL_SEC = 1;
 
 export const batchPda = (programId: PublicKey, market: PublicKey) =>
   PublicKey.findProgramAddressSync(

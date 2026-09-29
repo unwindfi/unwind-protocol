@@ -2,9 +2,13 @@
 
 ## Overview
 
-Orders submitted to a market accumulate for five seconds in a set that
+Orders submitted to a market accumulate for one second in a set that
 carries no ordering. When the window closes, the batch is cleared as a dual
 flow batch auction: two separate auctions, each at its own single price.
+
+One second is two to three Solana slots. That is longer than a block producer
+can reorder orders within, so arriving first earns nothing, and short enough
+that a fill is never a wait a trader notices.
 
 Every order is either a **maker** or a **taker**. A maker rests as liquidity
 and names the price it will trade at. A taker comes to trade against it.

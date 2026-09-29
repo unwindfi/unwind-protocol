@@ -6,12 +6,12 @@ use bytemuck::Zeroable;
 
 /// How long a batch collects orders before it can be cleared.
 ///
-/// The number is the whole argument. Long enough that arriving fifty
-/// milliseconds sooner than someone else is worth nothing — which is what
+/// The number is the whole argument. Long enough that arriving a slot or two
+/// sooner than someone else is worth nothing — which is what
 /// removes the incentive to race, and with it most of the reason to co-locate
 /// or pay for priority. Short enough that a trader managing a position in a
 /// fast market is not parked watching it move.
-pub const BATCH_INTERVAL_SEC: i64 = 5;
+pub const BATCH_INTERVAL_SEC: i64 = 1;
 
 /// Share of a market's remaining loss budget the pool will quote in one batch.
 ///

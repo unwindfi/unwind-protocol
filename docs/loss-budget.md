@@ -64,7 +64,7 @@ one percent costs 40,000 USDC.
 
 1. Backers post 50,000 USDC. Anyone may cut the market's loss budget to
    40,000 USDC.
-2. The pool's participation in a single five second window is capped at 2,000
+2. The pool's participation in a single one second window is capped at 2,000
    USDC, being five percent of the remaining budget.
 3. After losses consume 30,000 USDC, the remaining budget is 10,000 USDC and
    the per window cap falls to 500 USDC.

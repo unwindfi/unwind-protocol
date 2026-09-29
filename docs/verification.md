@@ -46,7 +46,7 @@ Around the auction, with the bounds each harness states:
 | --- | --- |
 | An insert takes the lowest free slot and moves nobody; no wallet goes past its limit; an order is refused only for the limit or a full batch | `inserting_takes_the_first_free_slot_and_nothing_else` |
 | A full or sealed batch refuses every order and changes nothing | `a_full_batch_refuses_and_overwrites_nothing`, `a_sealed_batch_takes_no_orders` |
-| A batch is due exactly five seconds after it opens and stays due; reopening keeps every standing order, rolling clears them, both start a fresh window | `a_batch_is_due_exactly_after_its_interval`, `a_new_window_opens_clean` |
+| A batch is due exactly one second after it opens and stays due; reopening keeps every standing order, rolling clears them, both start a fresh window | `a_batch_is_due_exactly_after_its_interval`, `a_new_window_opens_clean` |
 | One reading moves the observed mark at most its clamp (or one unit, so a tiny mark never freezes), only toward the reading, and never to zero | `the_mark_moves_at_most_its_clamp_and_toward_the_reading` |
 | A reading counts toward seasoning exactly once, a rejected one not at all, and the seasoning window starts at the first reading | `a_reading_counts_once_and_a_rejected_one_not_at_all` |
 | Sustained depth falls at once and rises by at most a tenth of the gap, once per interval | `sustained_depth_falls_at_once_and_rises_slowly` |

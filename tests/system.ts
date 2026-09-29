@@ -150,7 +150,7 @@ describe("system", () => {
    * clearing falls through to the pool, which fills at its own quote, so these
    * tests still open at the oracle-derived price they always did.
    */
-  const BATCH_WAIT_MS = 5_600;
+  const BATCH_WAIT_MS = 2_000;
 
   /// Waits out the collection window, seals the batch, and settles whatever
   /// it holds. Shared by opening and closing, because the program does not
