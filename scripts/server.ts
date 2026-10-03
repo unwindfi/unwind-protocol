@@ -134,16 +134,44 @@ const RPC_FALLBACK_URL = process.env.RPC_FALLBACK_URL
   || (CLUSTER === "devnet" && !RPC_URL.includes("api.devnet.solana.com")
     ? "https://api.devnet.solana.com" : "");
 let primaryLimitedUntil = 0;
+
+/*
+ * The public endpoint meters connections, not only calls: a batch read
+ * that fans out into thirty parallel requests is refused outright with
+ * "Connection rate limits exceeded", however few calls a minute it makes.
+ * Requests to it go through a short queue instead, a few in flight at a
+ * time and a breath between them. A dedicated endpoint is not queued.
+ */
+const PUBLIC_RPC = /api\.(devnet|mainnet-beta|testnet)\.solana\.com/;
+const QUEUE_WIDTH = 4;
+const QUEUE_GAP_MS = 60;
+let inFlight = 0;
+let lastStart = 0;
+const waiting: (() => void)[] = [];
+async function queued<T>(run: () => Promise<T>): Promise<T> {
+  if (inFlight >= QUEUE_WIDTH) await new Promise<void>((ok) => waiting.push(ok));
+  inFlight++;
+  const wait = lastStart + QUEUE_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((ok) => setTimeout(ok, wait));
+  lastStart = Date.now();
+  try { return await run(); } finally {
+    inFlight--;
+    waiting.shift()?.();
+  }
+}
+const metered = (url: string, init?: RequestInit) =>
+  PUBLIC_RPC.test(url) ? queued(() => fetch(url, init)) : fetch(url, init);
+
 const rpcFetch: typeof fetch = async (input, init) => {
-  if (!RPC_FALLBACK_URL) return fetch(input, init);
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!RPC_FALLBACK_URL) return metered(url, init);
   const toFallback = url.startsWith(RPC_URL) ? RPC_FALLBACK_URL + url.slice(RPC_URL.length) : url;
-  if (Date.now() < primaryLimitedUntil) return fetch(toFallback, init);
-  const r = await fetch(input, init);
+  if (Date.now() < primaryLimitedUntil) return metered(toFallback, init);
+  const r = await metered(url, init);
   if (r.status !== 429) return r;
   primaryLimitedUntil = Date.now() + 60_000;
   console.warn("rpc: primary rate limited, using the fallback for 60s");
-  return fetch(toFallback, init);
+  return metered(toFallback, init);
 };
 // One try per request: a 429 is answered by the fallback or by the last
 // good snapshot, never by sitting on the socket.
