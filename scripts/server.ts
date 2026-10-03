@@ -119,7 +119,37 @@ const trader = kp(st.keys.trader);
 /// A dedicated RPC for the testnet, without touching the state file: the
 /// public devnet endpoint throttles a crank into missing batches.
 const RPC_URL = process.env.RPC_URL || st.rpc;
-const conn = new Connection(RPC_URL, "confirmed");
+/*
+ * A second RPC for when the first says no.
+ *
+ * A dedicated provider meters by the month, and the day its cap is reached
+ * every read turns into a 429 and the venue is dark until somebody notices:
+ * web3.js's own retry made it worse, backing off and trying the same dead
+ * endpoint again for eight seconds per call. Each request goes to the
+ * primary once; a 429 sends it straight to the fallback, and for the next
+ * minute everything goes to the fallback without asking. The public devnet
+ * endpoint is slower and throttles the crank, but a slow venue is a venue.
+ */
+const RPC_FALLBACK_URL = process.env.RPC_FALLBACK_URL
+  || (CLUSTER === "devnet" && !RPC_URL.includes("api.devnet.solana.com")
+    ? "https://api.devnet.solana.com" : "");
+let primaryLimitedUntil = 0;
+const rpcFetch: typeof fetch = async (input, init) => {
+  if (!RPC_FALLBACK_URL) return fetch(input, init);
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const toFallback = url.startsWith(RPC_URL) ? RPC_FALLBACK_URL + url.slice(RPC_URL.length) : url;
+  if (Date.now() < primaryLimitedUntil) return fetch(toFallback, init);
+  const r = await fetch(input, init);
+  if (r.status !== 429) return r;
+  primaryLimitedUntil = Date.now() + 60_000;
+  console.warn("rpc: primary rate limited, using the fallback for 60s");
+  return fetch(toFallback, init);
+};
+// One try per request: a 429 is answered by the fallback or by the last
+// good snapshot, never by sitting on the socket.
+const conn = new Connection(RPC_URL, {
+  commitment: "confirmed", fetch: rpcFetch, disableRetryOnRateLimit: true,
+});
 const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(authority), {
   commitment: "confirmed",
 });
@@ -313,6 +343,9 @@ const batchSeen = new Map<string, { state: any; at: number }>();
 const BATCH_FRESH_MS = 1_000;
 const accountMemo = new Map<string, { at: number; body: Promise<any> }>();
 const ACCOUNT_FRESH_MS = 2_500;
+/// Each wallet's last account view that was read in full, served when the
+/// chain cannot be read (see /api/markets).
+const accountLast = new Map<string, { at: number; body: any }>();
 
 const observationPda = (market: PublicKey) =>
   PublicKey.findProgramAddressSync(
@@ -1396,16 +1429,28 @@ app.use("/fonts", express.static(path.join(ROOT, "node_modules/@fontsource/inter
 /// at twenty markets a read-through cost twenty-two RPC calls a request.
 let marketsMemo: { at: number; body: Promise<any> } | null = null;
 const MARKETS_FRESH_MS = 2_000;
+/// The last list that was read in full. When the chain cannot be read the
+/// page gets this, with the time it dates from in a header, rather than an
+/// error: a price a few seconds old beats a skeleton, and the page already
+/// says when its figures are stale.
+let marketsLast: { at: number; body: any } | null = null;
 
 app.get("/api/markets", async (_req, res) => {
   try {
     if (!marketsMemo || Date.now() - marketsMemo.at >= MARKETS_FRESH_MS) {
       const body = marketsView();
       marketsMemo = { at: Date.now(), body };
-      body.catch(() => { if (marketsMemo?.body === body) marketsMemo = null; });
+      body.then((b) => { marketsLast = { at: Date.now(), body: b }; },
+        () => { if (marketsMemo?.body === body) marketsMemo = null; });
     }
     res.json(await marketsMemo.body);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (marketsLast) {
+      res.set("X-Stale-Since", String(marketsLast.at));
+      return res.json(marketsLast.body);
+    }
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function marketsView() {
@@ -1759,9 +1804,17 @@ app.get("/api/account", async (req, res) => {
     const body = accountView(owner);
     accountMemo.set(key, { at: Date.now(), body });
     // A failed read is not kept: the next poll asks the chain again.
-    body.catch(() => accountMemo.delete(key));
+    body.then((b) => accountLast.set(key, { at: Date.now(), body: b }),
+      () => accountMemo.delete(key));
     res.json(await body);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    const last = accountLast.get(ownerOf(req).toBase58());
+    if (last) {
+      res.set("X-Stale-Since", String(last.at));
+      return res.json(last.body);
+    }
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function accountView(owner: PublicKey) {

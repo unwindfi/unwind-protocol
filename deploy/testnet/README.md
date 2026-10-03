@@ -16,6 +16,14 @@ needs to stay up.
 | `/etc/unwind/relay.json` | `~/.config/unwind/relay.json` on your machine |
 | `/etc/unwind/testnet.env` | `testnet.env.example`, with a dedicated devnet RPC |
 
+The dedicated RPC is metered. When it answers 429 the server sends that read
+to `RPC_FALLBACK_URL` (the public devnet endpoint unless set) and stays on
+the fallback for a minute, and `/api/markets` and `/api/account` answer
+with the last list they read in full, dated in an `X-Stale-Since` header,
+rather than an error. The crank is slower on the fallback, so a key that
+has stopped answering still needs replacing; the log says
+`rpc: primary rate limited` when that is happening.
+
 Node 20 or newer.
 
 ## Install
