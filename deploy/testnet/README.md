@@ -24,6 +24,14 @@ rather than an error. The crank is slower on the fallback, so a key that
 has stopped answering still needs replacing; the log says
 `rpc: primary rate limited` when that is happening.
 
+Every ten minutes the log prints how many RPC calls the server made, with a
+daily projection and the busiest methods (`rpc: 4210 calls in 10m (~606k/day):
+getMultipleAccounts 1800, ...`), so a key that is running out says why. The
+auction reads every batch once a second only while something is resting or an
+order was just built; otherwise it reads them every `AUCTION_IDLE_MS` (4
+seconds by default), and wakes at once when an order arrives through this
+server.
+
 Node 20 or newer.
 
 ## Install

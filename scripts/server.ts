@@ -71,6 +71,15 @@ const TICK_MS = Number(process.env.TICK_MS ?? (IS_LOCAL ? 4_000 : 20_000));
 /// the crank, not the window, is what a trader waits on. One multi-account
 /// read per pass, plus transactions only for batches with orders in them.
 const AUCTION_MS = Number(process.env.AUCTION_MS ?? 1_000);
+/// Between passes while no batch holds an order and nobody has just asked
+/// for one. Polling every batch every second around the clock was the
+/// largest single spend of RPC calls, and almost all of it read empty
+/// batches.
+const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
+/// Until when the auction runs at full speed: set when a batch is seen
+/// holding orders, and when this server builds an order for someone.
+let auctionHotUntil = 0;
+const heatAuction = (ms = 30_000) => { auctionHotUntil = Math.max(auctionHotUntil, Date.now() + ms); };
 /// How often the seeded testnet pools are moved to follow their real tokens.
 /// A few calls each per pass; two minutes keeps that well inside an RPC plan.
 const FLOW_MS = Number(process.env.FLOW_MS ?? 120_000);
@@ -162,8 +171,34 @@ async function queued<T>(run: () => Promise<T>): Promise<T> {
 const metered = (url: string, init?: RequestInit) =>
   PUBLIC_RPC.test(url) ? queued(() => fetch(url, init)) : fetch(url, init);
 
+/*
+ * Every call, counted by method and logged every ten minutes with a daily
+ * projection, so the next time a key runs dry the log already says which
+ * loop spent it.
+ */
+const rpcCalls = new Map<string, number>();
+const countCall = (body: unknown) => {
+  if (typeof body !== "string") return;
+  try {
+    const j = JSON.parse(body);
+    for (const c of Array.isArray(j) ? j : [j]) {
+      const m = String(c?.method ?? "?");
+      rpcCalls.set(m, (rpcCalls.get(m) ?? 0) + 1);
+    }
+  } catch { /* not JSON-RPC */ }
+};
+const RPC_REPORT_MS = 10 * 60_000;
+setInterval(() => {
+  const total = [...rpcCalls.values()].reduce((a, b) => a + b, 0);
+  const top = [...rpcCalls.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([m, n]) => `${m} ${n}`).join(", ");
+  console.log(`rpc: ${total} calls in 10m (~${Math.round(total * 144 / 1000)}k/day): ${top}`);
+  rpcCalls.clear();
+}, RPC_REPORT_MS).unref();
+
 const rpcFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  countCall(init?.body);
   if (!RPC_FALLBACK_URL) return metered(url, init);
   const toFallback = url.startsWith(RPC_URL) ? RPC_FALLBACK_URL + url.slice(RPC_URL.length) : url;
   if (Date.now() < primaryLimitedUntil) return metered(toFallback, init);
@@ -368,9 +403,11 @@ const potUsd = (market: PublicKey, backingUsdRaw: any) =>
  * moment and dropped whenever a transaction lands.
  */
 const batchSeen = new Map<string, { state: any; at: number }>();
-const BATCH_FRESH_MS = 1_000;
+/// Matches the auction's idle pace: while it runs fast it refreshes this
+/// itself every second, and while it is idle nothing in a batch changes.
+const BATCH_FRESH_MS = 4_000;
 const accountMemo = new Map<string, { at: number; body: Promise<any> }>();
-const ACCOUNT_FRESH_MS = 2_500;
+const ACCOUNT_FRESH_MS = 4_000;
 /// Each wallet's last account view that was read in full, served when the
 /// chain cannot be read (see /api/markets).
 const accountLast = new Map<string, { at: number; body: any }>();
@@ -1456,7 +1493,7 @@ app.use("/fonts", express.static(path.join(ROOT, "node_modules/@fontsource/inter
 /// The whole market list, kept for a moment. Every open page polls it, and
 /// at twenty markets a read-through cost twenty-two RPC calls a request.
 let marketsMemo: { at: number; body: Promise<any> } | null = null;
-const MARKETS_FRESH_MS = 2_000;
+const MARKETS_FRESH_MS = 3_000;
 /// The last list that was read in full. When the chain cannot be read the
 /// page gets this, with the time it dates from in a header, rather than an
 /// error: a price a few seconds old beats a skeleton, and the page already
@@ -2172,6 +2209,7 @@ app.post("/api/withdraw", async (req, res) => {
       // and clears on the next pass.
       const open = Number(state.clearedTs) === 0;
       if (open && !state.orders.some((o: any) => o.active)) continue;
+      heatAuction(10_000);
       // Quote before clearing, into the batch the takers are waiting in. A
       // listing still seasoning has no mark to quote around yet.
       if (MAKER_ON && open && !(m.observed && !m.observed.seasoned)) {
@@ -2278,7 +2316,19 @@ app.post("/api/withdraw", async (req, res) => {
   try { await loadCustodies(); await loadBooks(); }
   catch (e: any) { console.warn(`custodies: ${explain(e)}`); }
   loop("tick", tick, TICK_MS);
-  loop("auction", auction, AUCTION_MS);
+  // Its own loop rather than `loop`: the wait between passes is short while
+  // anything is resting or an order was just built, and long otherwise, and
+  // a long wait ends early the moment an order arrives.
+  {
+    const pass = async () => {
+      await auction().catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
+      const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
+      const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
+        ? void pass() : void setTimeout(wait, 100);
+      setTimeout(wait, Math.min(AUCTION_MS, until - Date.now()));
+    };
+    setTimeout(pass, AUCTION_MS);
+  }
   loop("sessions", syncSessions, SESSION_MS);
   loop("keeper", keeper, KEEPER_MS);
   loop("balance", watchBalance, 10 * 60_000);
@@ -2412,6 +2462,10 @@ app.get("/api/pool/:address", async (req, res) => {
 /// The server signs none of it. Listing is the lister's transaction, paid for
 /// and owned by them, which is the only arrangement under which "anyone can
 /// list" means anything.
+// An order, a close or a trigger built here will land in a batch within
+// seconds: run the auction at full speed for a while.
+app.use("/api/tx", (_req, _res, next) => { heatAuction(); next(); });
+
 app.post("/api/tx/list-market", async (req, res) => {
   try {
     const owner = ownerOf(req);
