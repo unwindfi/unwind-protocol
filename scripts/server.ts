@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 /// Backend for the local unwind product.
 ///
 /// Four jobs: post live prices into each market's oracle, serve the front-end,
@@ -177,13 +178,18 @@ const metered = (url: string, init?: RequestInit) =>
  * loop spent it.
  */
 const rpcCalls = new Map<string, number>();
+/// Which loop or route a call was made for, carried through its awaits.
+const rpcWho = new AsyncLocalStorage<string>();
+const rpcBy = new Map<string, number>();
 const countCall = (body: unknown) => {
   if (typeof body !== "string") return;
   try {
     const j = JSON.parse(body);
+    const who = rpcWho.getStore() ?? "other";
     for (const c of Array.isArray(j) ? j : [j]) {
       const m = String(c?.method ?? "?");
       rpcCalls.set(m, (rpcCalls.get(m) ?? 0) + 1);
+      rpcBy.set(who, (rpcBy.get(who) ?? 0) + 1);
     }
   } catch { /* not JSON-RPC */ }
 };
@@ -192,8 +198,11 @@ setInterval(() => {
   const total = [...rpcCalls.values()].reduce((a, b) => a + b, 0);
   const top = [...rpcCalls.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
     .map(([m, n]) => `${m} ${n}`).join(", ");
+  const by = [...rpcBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([w, n]) => `${w} ${n}`).join(", ");
   console.log(`rpc: ${total} calls in 10m (~${Math.round(total * 144 / 1000)}k/day): ${top}`);
-  rpcCalls.clear();
+  console.log(`rpc by caller: ${by}`);
+  rpcCalls.clear(); rpcBy.clear();
 }, RPC_REPORT_MS).unref();
 
 const rpcFetch: typeof fetch = async (input, init) => {
@@ -1455,6 +1464,11 @@ async function trimBudget(market: PublicKey, o: any) {
 
 const app = express();
 app.use(express.json());
+// Every request's RPC calls are counted under its route (ids folded away).
+app.use((req, _res, next) => {
+  const route = req.path.replace(/\/[A-Za-z0-9]{24,}/g, "/:id").replace(/\/[A-Z0-9]{2,12}x?$/g, "/:symbol");
+  rpcWho.run(`${req.method} ${route}`, next);
+});
 // No caching for the app shell: this is a dev server, and a stale index.html or
 // app.js after an edit looks exactly like a bug in the page.
 app.use((_req, res, next) => {
@@ -2099,7 +2113,7 @@ app.post("/api/withdraw", async (req, res) => {
   // own retries, until the throttle never lifted and nothing cleared.
   const loop = (name: string, fn: () => Promise<unknown>, ms: number) => {
     const pass = async () => {
-      await fn().catch((e: any) => console.warn(`${name}: ${e?.message ?? e}`));
+      await rpcWho.run(name, fn).catch((e: any) => console.warn(`${name}: ${e?.message ?? e}`));
       setTimeout(pass, ms);
     };
     setTimeout(pass, ms);
@@ -2321,7 +2335,7 @@ app.post("/api/withdraw", async (req, res) => {
   // a long wait ends early the moment an order arrives.
   {
     const pass = async () => {
-      await auction().catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
+      await rpcWho.run("auction", auction).catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
       const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
       const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
         ? void pass() : void setTimeout(wait, 100);
@@ -3458,7 +3472,7 @@ app.use((req, res, next) => {
 
 app.listen(PORT, () => {
   setTimeout(recordTape, 15_000);
-  setInterval(recordTape, TAPE_EVERY_MS);
+  setInterval(() => rpcWho.run("vault tape", recordTape), TAPE_EVERY_MS);
     console.log(`unwind (${CLUSTER}) on http://localhost:${PORT}`);
   // The query string is where RPC providers put the API key.
   console.log(`  rpc ${RPC_URL.split("?")[0]}`);
