@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Wordmark } from "@/components/Wordmark";
+import { GlassMark } from "@/components/GlassMark";
 import {
   ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
@@ -117,7 +118,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
     <header className="relative z-50 bg-background safe-t">
       <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
-          <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-8 w-8" />
+          <GlassMark className="h-8 w-8" />
           <Wordmark height={18} />
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
@@ -262,7 +263,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
         <div className="grid gap-8 md:grid-cols-[1.2fr_2fr]">
           <div>
             <a href="/markets" className="flex items-center gap-2.5">
-              <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-7 w-7" />
+              <GlassMark className="h-7 w-7" />
               <Wordmark height={21} />
             </a>
             <p className="mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">

@@ -1,5 +1,5 @@
 import { Wordmark } from "@/components/Wordmark";
-import { Mark } from "./Brand";
+import { GlassMark } from "@/components/GlassMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletActions } from "@/components/WalletActions";
 import { PageMenu } from "@/site/Chrome";
@@ -20,7 +20,7 @@ export function Nav() {
     <nav className="relative flex h-[46px] flex-none items-center gap-1 border-b border-line
                     bg-panel px-3 safe-t md:h-[42px]">
       <a href="/" className="flex items-center gap-2 md:mr-5" aria-label="unwind home">
-        <Mark size={25} />
+        <GlassMark className="h-[25px] w-[25px]" />
         <Wordmark height={17} />
       </a>
       {/* The section links are a desktop affordance. On a phone the bottom tab
