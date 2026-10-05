@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { TickerLogo } from "@/components/TickerLogo";
 import type { Batch, Market } from "@/lib/api";
-import { clock, compact, pct, price, tone } from "@/lib/format";
+import { clock, compact, pct, pmove, price, tone } from "@/lib/format";
 
 /// The rate longs pay now, in percent an hour: positive means longs are
 /// paying. It used to be the difference of the cumulative indices, which is
@@ -186,7 +186,7 @@ export function StatTiles({ m, dense = false }: {
       )}
       <Stat label="24h change" help="Since the session opened.">
         <span className={tone(m.changePct)}>
-          {m.change >= 0 ? "+" : ""}{m.change.toFixed(2)} / {pct(m.changePct)}
+          {pmove(m.change, m.price)} / {pct(m.changePct)}
         </span>
       </Stat>
       <Stat label="24h volume" help="Notional traded.">{compact(m.volume24h)}</Stat>

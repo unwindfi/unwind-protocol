@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { NumberTicker } from "@/components/motion/number-ticker";
 import { EASE_OUT } from "@/lib/ease";
 import type { Account, Market } from "@/lib/api";
-import { money, tone } from "@/lib/format";
+import { money, pnum, price, tone } from "@/lib/format";
 
 /// Key and value across one rule, the way /list states a figure: the name
 /// quiet on the left, the number in weight on the right.
@@ -89,7 +89,7 @@ function Field({
           id={id} type={grouped ? "text" : "number"} inputMode="decimal" value={shown}
           min={grouped ? undefined : min} step={grouped ? undefined : step}
           placeholder={placeholder} aria-label={ariaLabel ?? label}
-          onChange={(e) => onChange(grouped ? e.target.value.replace(/[^\d.]/g, "") : e.target.value)}
+          onChange={(e) => onChange(grouped ? cleanAmount(e.target.value) : e.target.value)}
           className="n min-w-0 flex-1 bg-transparent text-[14px] font-medium
                      outline-none placeholder:font-normal placeholder:text-dim" />
         {unit && <span className="flex-none text-[12.5px] text-muted-foreground">{unit}</span>}
@@ -138,6 +138,19 @@ function Stepper({
   );
 }
 
+/// What a typed or pasted amount means: "1e5" is a hundred thousand rather
+/// than the 15 its digits make, separators and stray characters go, and a
+/// leading zero is dropped so "00012" reads as 12.
+function cleanAmount(v: string) {
+  const t = v.trim();
+  if (/^\d*\.?\d+e[+-]?\d+$/i.test(t) && Number.isFinite(Number(t))) return String(Number(t));
+  return t.replace(/[^\d.]/g, "").replace(/^0+(?=\d)/, "");
+}
+
+/// The smallest order the ticket sends. Below it the fee rounds to nothing
+/// and the fill is dust the batch still has to carry.
+const MIN_ORDER_USD = 10;
+
 /// Time in force. The program takes an expiry timestamp, where zero means the
 /// order stands until it fills or is cancelled, so "good till cancelled" and
 /// a dated order are the same field, and this is the whole range of it.
@@ -146,8 +159,11 @@ type Tif = keyof typeof TIF;
 
 export function OrderTicket({
   m, account, busy, onOrder, onLimit, onMaker, onPool, onFund, onTrigger, onCancelTrigger,
-  onReduce, submitLabel, mobile = false, card = false, side: sideProp, onSideChange,
+  onReduce, submitLabel, mobile = false, card = false, side: sideProp, onSideChange, onConnect,
 }: {
+  /// Present when no wallet is connected: the button asks for one instead
+  /// of placing anything.
+  onConnect?: () => void;
   m: Market;
   account: Account | null;
   busy: boolean;
@@ -257,6 +273,7 @@ export function OrderTicket({
           ? `Choose ${pos.isLong ? "Short" : "Long"} to reduce a ${pos.isLong ? "long" : "short"}.`
           : ""
     : size <= 0 ? ""
+    : size < MIN_ORDER_USD ? `Minimum order ${money(MIN_ORDER_USD, 0)}.`
     : account && calc.debit > avail ? `Not enough margin. ${money(calc.debit)} needed, ${money(avail)} free.`
     : calc.capped ? `Over this market's ${side} capacity.`
     : "";
@@ -303,7 +320,18 @@ export function OrderTicket({
 
   // "Buy / Long" describes a fill. This places an order into the next batch,
   // and the button should not promise more than that.
-  const cta = submitLabel
+  // A limit far through the market is legal, and fills at the batch price,
+  // but a slipped digit looks the same; say how far it is.
+  const mid = (m.bid + m.ask) / 2;
+  const lp = Number(limitPrice);
+  const through = mode === "limit" && lp > 0 && mid > 0
+    ? (side === "long" ? lp / mid - 1 : 1 - lp / mid) : 0;
+  const limitNote = through > 0.1
+    ? `${Math.round(through * 100)}% ${side === "long" ? "above" : "below"} the market. It fills at the batch price, at most this.`
+    : "";
+
+  const cta = onConnect ? "Connect wallet"
+    : submitLabel
     ? submitLabel
     : reduceOnly ? `Reduce ${pos?.isLong ? "Long" : "Short"}`
     : maker ? (side === "long" ? "Post Buy Order" : "Post Sell Order")
@@ -427,9 +455,9 @@ export function OrderTicket({
           {mode === "limit" && (
             <Field
               label="Limit Price" unit="USD" value={limitPrice} onChange={setLimitPrice}
-              placeholder={((m.bid + m.ask) / 2).toFixed(2)}
+              placeholder={pnum((m.bid + m.ask) / 2)}
               trailing={
-                <button type="button" onClick={() => setLimitPrice(((m.bid + m.ask) / 2).toFixed(2))}
+                <button type="button" onClick={() => setLimitPrice(pnum((m.bid + m.ask) / 2))}
                   className="inline-flex h-6 flex-none items-center rounded-full border border-line px-2.5 text-[11px]
                              font-medium text-muted-foreground transition-colors
                              hover:border-foreground/40 hover:text-foreground">
@@ -551,7 +579,7 @@ export function OrderTicket({
               <fieldset className="mt-4 min-w-0 rounded-[16px] border border-line px-4 pb-3 pt-1">
                 <legend className="px-1.5 text-[13px] text-foreground">Triggers</legend>
                 <div className="-mt-0.5 mb-2 text-right text-[11.5px] text-dim">
-                  mark {pos.mark.toFixed(2)}
+                  mark {pnum(pos.mark)}
                 </div>
 
                 {(["tp", "sl"] as const).map((kind) => {
@@ -565,7 +593,7 @@ export function OrderTicket({
                       {standing ? (
                         <>
                           <span className="n flex-1 text-[12.5px] font-semibold">
-                            {standing.triggerPrice.toFixed(2)}
+                            {pnum(standing.triggerPrice)}
                             <span className="ml-1.5 font-normal text-dim">
                               {standing.triggerAbove ? "or above" : "or below"}
                             </span>
@@ -583,9 +611,9 @@ export function OrderTicket({
                           <input
                             type="number"
                             aria-label={kind === "tp" ? "Take profit price" : "Stop loss price"}
-                            placeholder={(pos.mark * (kind === "tp"
+                            placeholder={pnum(pos.mark * (kind === "tp"
                               ? (pos.isLong ? 1.1 : 0.9)
-                              : (pos.isLong ? 0.95 : 1.05))).toFixed(2)}
+                              : (pos.isLong ? 0.95 : 1.05)))}
                             value={triggers[kind]}
                             onChange={(e) => setTriggers({ ...triggers, [kind]: e.target.value })}
                             className="n h-9 min-w-0 flex-1 rounded-[10px] border border-line
@@ -615,25 +643,26 @@ export function OrderTicket({
 
         <button
           type="button"
-          disabled={busy || size <= 0 || !!warn || stale
+          disabled={onConnect ? false : busy || size <= 0 || !!warn || stale
             || (mode === "limit" && !reduceOnly && !Number(limitPrice))}
           // Filled with the side's colour, the same as the switch above it,
-          // and simply dimmed when the order cannot go.
-          onClick={submit}
+          // and simply dimmed when the order cannot go. Without a wallet it
+          // is the ink button that asks for one.
+          onClick={onConnect ?? submit}
           className={`press mt-5 flex min-h-[48px] w-full items-center justify-center rounded-full
                       px-4 text-center text-[14px] font-medium text-background transition-opacity
                       hover:opacity-90 disabled:pointer-events-none disabled:opacity-40
-                      ${side === "long" ? "bg-up" : "bg-down"}`}>
+                      ${onConnect ? "bg-foreground" : side === "long" ? "bg-up" : "bg-down"}`}>
           {cta}
         </button>
-        {warn && (
-          <p className="mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn}</p>
+        {!onConnect && (warn || limitNote) && (
+          <p className="mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
         )}
       </div>
 
       <div className="mt-2 border-t border-line bg-panel2 px-5 py-1.5">
         <KV k="Liquidation price">
-          {size > 0 && calc.liq > 0 && !reduceOnly ? money(calc.liq) : "N/A"}
+          {size > 0 && calc.liq > 0 && !reduceOnly ? price(calc.liq) : "N/A"}
         </KV>
         <KV k="Order value">{size > 0 ? money(size) : "N/A"}</KV>
         <KV k="Margin required">{size > 0 && !reduceOnly ? money(calc.debit) : "N/A"}</KV>

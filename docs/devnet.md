@@ -58,6 +58,12 @@ wallet counted once and capped, so trading your own market from many
 wallets adds little. The exact scoring, the discount and its length are
 published here before mainnet.
 
+## Your wallet signs everything
+
+Every order, close, deposit, withdrawal and backing is signed by the wallet
+you connect. Without one, the site shows prices, charts and markets, and the
+trade buttons ask you to connect; there is no shared demo account to trade.
+
 ## First connection
 
 The first time a wallet connects, the site shows three screens once: what

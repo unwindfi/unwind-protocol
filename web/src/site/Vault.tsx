@@ -41,7 +41,8 @@ export default function VaultPage() {
   const devnet = useHasBackend() === true;
   const [open, setOpen] = useState<"in" | "out" | null>(null);
 
-  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy), [account, markets, backings, apy]);
+  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner),
+    [account, markets, backings, apy, owner]);
   const v = vaults.find((x) => x.id === id);
   const m = v?.market;
   const points = (id === "pool" ? series?.pool : series?.markets[id]) ?? [];

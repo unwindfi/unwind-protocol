@@ -167,7 +167,8 @@ export default function List() {
   const input = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------ search
-  const [query, setQuery] = useState("");
+  // A search handed over from Markets ("List ZZZZ") arrives as ?q=.
+  const [query, setQuery] = useState(() => new URLSearchParams(location.search).get("q") ?? "");
   const [testnetPools, setTestnetPools] = useState<TestnetPool[]>([]);
   const [seed, setSeed] = useState(String(MIN_LISTING_BACKING_USD));
   useEffect(() => {
@@ -182,6 +183,15 @@ export default function List() {
   }, []);
   const defaultBacking = testnetPools.length ? TESTNET_LISTING_BACKING_USD : MIN_LISTING_BACKING_USD;
   const unlisted = testnetPools.filter((p) => !p.listed);
+  /// On devnet only the seeded pools can be listed, and the token search
+  /// finds mainnet tokens with similar names instead: "WIND" found Windoge.
+  /// So devnet answers the search from its own pools.
+  const devnetHits = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!testnetPools.length || !q) return [];
+    return testnetPools.filter((p) =>
+      p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
+  }, [testnetPools, query]);
   const [hits, setHits] = useState<TokenHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
@@ -514,7 +524,48 @@ export default function List() {
                       </button>
                     )}
 
-                    {showList && hits.length > 0 && (
+                    {showList && testnetPools.length > 0 && query.trim() && !token && (
+                      <ul id="token-results" role="listbox"
+                        className="absolute inset-x-0 top-[calc(100%+6px)] z-30 max-h-[360px]
+                                   overflow-y-auto overscroll-contain rounded-[14px] border
+                                   border-line bg-panel p-1 shadow-2xl">
+                        {devnetHits.map((p) => (
+                          <li key={p.pool} role="option" aria-selected={false}>
+                            {p.listed ? (
+                              <a href={`/trade?symbol=${encodeURIComponent(
+                                markets.find((m) => m.observed?.source === p.pool)?.symbol ?? p.symbol)}`}
+                                onMouseDown={(e) => e.preventDefault()}
+                                className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
+                                <TokenIcon src={null} label={p.symbol} />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
+                                  <span className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
+                                </span>
+                                <span className="flex-none text-[12px] text-muted-foreground">Listed · Trade</span>
+                              </a>
+                            ) : (
+                              <button type="button" onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => { setOpen(false); void readPoolAddress(p.pool); }}
+                                className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
+                                <TokenIcon src={null} label={p.symbol} />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
+                                  <span className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
+                                </span>
+                                <span className="flex-none text-[12px] text-foreground">List</span>
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                        {devnetHits.length === 0 && (
+                          <li className="px-3 py-3 text-[12.5px] text-muted-foreground">
+                            Nothing on devnet matches. Devnet lists its own pools only:{" "}
+                            {unlisted.map((p) => p.symbol).join(", ") || "all are listed"}.
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                    {showList && hits.length > 0 && !testnetPools.length && (
                       <ul id="token-results" role="listbox"
                         className="absolute inset-x-0 top-[calc(100%+6px)] z-30 max-h-[360px]
                                    overflow-y-auto overscroll-contain rounded-[14px] border
@@ -678,8 +729,8 @@ export default function List() {
                     ))}
                   </div>
                   <p className={`mt-2.5 text-[12px] leading-relaxed ${
-                    underMin && seedAmount > 0 ? "text-down" : "text-muted-foreground"}`}>
-                    {underMin && seedAmount > 0
+                    underMin && seed.trim() !== "" ? "text-down" : "text-muted-foreground"}`}>
+                    {underMin && seed.trim() !== ""
                       ? `At least ${money(MIN_LISTING_BACKING_USD, 0)} to list${
                         payWith !== "USDC" && seedUsd > 0 ? `; this is about ${money(seedUsd, 0)}` : ""}.`
                       : <>First loss, capped at what you post. Earns {backerShare}% of LP fees.
@@ -689,9 +740,12 @@ export default function List() {
 
                 {/* The limits default to the most the pool allows, which is
                     what almost everyone wants. Folded rather than removed,
-                    for the lister who wants a smaller market. */}
+                    for the lister who wants a smaller market. Its label gives
+                    the leverage the market will actually reach, the figure the
+                    summary shows: the setting is capped by the pool's depth,
+                    and the uncapped 5x beside "2x → 4x" read as two markets. */}
                 {preview && (
-                  <Fold label={`Advanced · ${limits.leverage}x, ${compact(limits.oiUsd)} max`}
+                  <Fold label={`Advanced · up to ${Math.min(limits.leverage, limits.depthLeverage)}x, ${compact(limits.oiUsd)} max`}
                     open={advanced} onToggle={() => setAdvanced((a) => !a)}>
                     <div className="flex flex-col gap-6">
                       <p className="text-[12px] text-muted-foreground">

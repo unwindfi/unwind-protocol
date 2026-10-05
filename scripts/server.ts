@@ -692,6 +692,43 @@ async function shadowMintMap(): Promise<Map<string, string>> {
   }
   return shadowMints;
 }
+/// The real token's name, by the seeded pool's address, for the same copies.
+let shadowNames: Map<string, string> | null = null;
+async function shadowNameMap(): Promise<Map<string, string>> {
+  if (CLUSTER !== "devnet") return new Map();
+  if (!shadowNames) {
+    const { SHADOWS } = await import("./testnet-flow");
+    shadowNames = new Map(seeded
+      .filter((p) => SHADOWS[p.symbol]?.symbol === p.symbol && SHADOWS[p.symbol].name)
+      .map((p) => [p.pair, SHADOWS[p.symbol].name!]));
+  }
+  return shadowNames;
+}
+
+/*
+ * A listed market's day, from its bars rather than from this process. Its
+ * open was the first price this process saw, so its "24h change" was the
+ * change since the last restart: PENGU read -0.25% on a day its chart rose
+ * 8%. Every ten minutes the open, high and low come from the last day of its
+ * 15-minute bars (the real token's history on devnet, the kept tape
+ * otherwise). On devnet a test copy also takes the real token's name, so a
+ * search for "Pudgy" finds PENGU.
+ */
+async function refreshListedDay() {
+  const names = await shadowNameMap();
+  const since = Date.now() / 1000 - 86_400;
+  for (const m of Object.values(rt)) {
+    if (!m.observed) continue;
+    const name = names.get(m.observed.source.toBase58());
+    if (name) m.name = name;
+    const day = (await seedBars(m, 900).catch(() => [] as Candle[])).filter((b) => b.time >= since);
+    if (day.length < 4) continue;
+    m.open = day[0].open;
+    m.high = Math.max(...day.map((b) => b.high));
+    m.low = Math.min(...day.map((b) => b.low));
+  }
+}
+
 async function realMintOf(m: MarketRt): Promise<string | null> {
   if (!m.observed) return null;
   return (await shadowMintMap()).get(m.observed.source.toBase58()) ?? null;
@@ -2284,7 +2321,19 @@ async function accountView(owner: PublicKey) {
   }
 }
 
-app.post("/api/order", async (req, res) => {
+/*
+ * Endpoints that sign as the server's own demo trader. A local chain uses
+ * them for the demo account; anywhere else they let any visitor, or anyone
+ * calling the API, trade one shared account and spend the server's SOL and
+ * RPC budget, so they answer 403 and the page asks for a wallet instead.
+ */
+const DEMO_SIGNING = CLUSTER === "localnet" || IS_LOCAL;
+const demoOnly: express.RequestHandler = (_req, res, next) => {
+  if (DEMO_SIGNING) return next();
+  res.status(403).json({ ok: false, error: "Connect a wallet: trades are signed by your own wallet." });
+};
+
+app.post("/api/order", demoOnly, async (req, res) => {
   const { symbol, isLong, collateral, size } = req.body;
   const m = rt[symbol];
   if (!m) return res.status(404).json({ ok: false, error: "unknown market" });
@@ -2326,7 +2375,7 @@ const closeOrder = async (m: MarketRt, owner: PublicKey, sizeUsd: number) => {
   };
 };
 
-app.post("/api/close", async (req, res) => {
+app.post("/api/close", demoOnly, async (req, res) => {
   const m = rt[req.body.symbol];
   if (!m) return res.status(404).json({ ok: false, error: "unknown market" });
   try {
@@ -2337,7 +2386,7 @@ app.post("/api/close", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
-app.post("/api/deposit", async (req, res) => {
+app.post("/api/deposit", demoOnly, async (req, res) => {
   try {
     const accounts = await allMarketAccounts();
     const ix = await program.methods
@@ -2352,7 +2401,7 @@ app.post("/api/deposit", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
-app.post("/api/withdraw", async (req, res) => {
+app.post("/api/withdraw", demoOnly, async (req, res) => {
   try {
     const accounts = await allMarketAccounts();
     const ix = await program.methods
@@ -2688,6 +2737,8 @@ app.post("/api/withdraw", async (req, res) => {
     ...custodyPairs(false),
   ]);
   loop("observe", observer, OBSERVE_MS);
+  void rpcWho.run("listed day", refreshListedDay).catch((e: any) => console.warn(`listed day: ${e?.message ?? e}`));
+  loop("listed day", refreshListedDay, 10 * 60_000);
   // Slow: a `getProgramAccounts` per scan, against a set that changes when
   // somebody lists something. A minute late to notice is a minute of the
   // lister's countdown, which is the right thing to trade for the call.
@@ -3647,7 +3698,7 @@ async function cancelOrderIx(owner: PublicKey, body: any) {
     .instruction();
 }
 
-app.post("/api/order/trigger", async (req, res) => {
+app.post("/api/order/trigger", demoOnly, async (req, res) => {
   try {
     const ix = await placeOrderIx(trader.publicKey, req.body);
     await sendV0(conn, trader, [ix]);
@@ -3655,7 +3706,7 @@ app.post("/api/order/trigger", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
-app.post("/api/order/cancel", async (req, res) => {
+app.post("/api/order/cancel", demoOnly, async (req, res) => {
   try {
     const ix = await cancelOrderIx(trader.publicKey, req.body);
     await sendV0(conn, trader, [ix]);

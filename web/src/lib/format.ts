@@ -21,6 +21,19 @@ export const price = (n: number) => {
     { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
+/// Decimal places for a price at its magnitude: two from $10 up, then enough
+/// for four significant digits. The one rule every price on the page follows.
+export const priceDecimals = (n: number) =>
+  !Number.isFinite(n) || n <= 0 || n >= 10 ? 2 : Math.min(12, 3 - Math.floor(Math.log10(n)));
+
+/// A price as a bare number at its magnitude ("0.009839", "768.23"), for
+/// tables and inputs. Two places used to print a sub-cent token as "0.01".
+export const pnum = (n: number) => (Number.isFinite(n) ? n.toFixed(priceDecimals(Math.abs(n))) : "–");
+
+/// A signed move in price units, at the decimals of the price it moved.
+export const pmove = (change: number, at: number) =>
+  (change >= 0 ? "+" : "") + change.toFixed(priceDecimals(Math.abs(at)));
+
 export const pct = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 
 /// A duration as m:ss, or h:mm:ss past the hour. For countdowns.

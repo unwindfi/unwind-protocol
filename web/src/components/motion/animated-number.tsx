@@ -44,8 +44,12 @@ export function AnimatedNumber({
   }, [value, duration, inView, startOnView, reduce]);
 
   return (
+    // The figure counts up once it scrolls into view, so until then the
+    // visible digits read zero; screen readers and copied text get the
+    // real value instead.
     <span ref={ref} className={cn("tabular-nums", className)}>
-      {format(display)}
+      <span aria-hidden="true">{format(display)}</span>
+      <span className="sr-only">{format(value)}</span>
     </span>
   );
 }

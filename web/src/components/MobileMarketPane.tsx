@@ -1,6 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/Tabs";
 import type { Market, Trade } from "@/lib/api";
-import { compact, hhmmss, pct, tone } from "@/lib/format";
+import { compact, hhmmss, pct, pmove, pnum, priceDecimals, tone } from "@/lib/format";
 import { fundingPct } from "@/components/market/MarketHead";
 
 /*
@@ -54,16 +54,16 @@ export function MobileMarketPane({
 
         <TabsContent value="overview" className="pane-scroll mt-0 min-h-0 flex-1 pb-4">
           <Section title="Price">
-            <Row k="Oracle" hint="index">{m.price.toFixed(2)}</Row>
-            <Row k="Bid"><span className="text-down">{m.bid.toFixed(2)}</span></Row>
-            <Row k="Ask"><span className="text-up">{m.ask.toFixed(2)}</span></Row>
-            <Row k="Spread">{(m.ask - m.bid).toFixed(2)} · {(m.spreadBps / 100).toFixed(2)}%</Row>
+            <Row k="Oracle" hint="index">{pnum(m.price)}</Row>
+            <Row k="Bid"><span className="text-down">{pnum(m.bid)}</span></Row>
+            <Row k="Ask"><span className="text-up">{pnum(m.ask)}</span></Row>
+            <Row k="Spread">{(m.ask - m.bid).toFixed(priceDecimals(m.price))} · {(m.spreadBps / 100).toFixed(2)}%</Row>
             <Row k="24h change">
               <span className={tone(m.changePct)}>
-                {m.change >= 0 ? "+" : ""}{m.change.toFixed(2)} · {pct(m.changePct)}
+                {pmove(m.change, m.price)} · {pct(m.changePct)}
               </span>
             </Row>
-            <Row k="24h range">{m.low.toFixed(2)} – {m.high.toFixed(2)}</Row>
+            <Row k="24h range">{pnum(m.low)} – {pnum(m.high)}</Row>
           </Section>
 
           <Section title="Market">
@@ -113,7 +113,7 @@ export function MobileMarketPane({
                 <div key={i}
                   className="grid grid-cols-3 gap-2 border-b border-line px-4 py-2.5 text-[13px]">
                   <span className={`n font-medium ${t.side === "buy" ? "text-up" : "text-down"}`}>
-                    {t.price.toFixed(2)}
+                    {pnum(t.price)}
                   </span>
                   <span className="n text-right">{compact(t.size)}</span>
                   <span className="n text-right text-muted-foreground">{hhmmss(t.t)}</span>

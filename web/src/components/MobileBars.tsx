@@ -1,4 +1,5 @@
 import type { Market } from "@/lib/api";
+import { pnum } from "@/lib/format";
 
 export type MobileView = "chart" | "book" | "positions" | "account";
 
@@ -43,14 +44,14 @@ export function MobileBars({
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
                      rounded-full bg-foreground text-background transition-opacity hover:opacity-90">
           <span className="text-[14px] font-medium leading-none">Buy / Long</span>
-          <span className="n text-[11px] leading-none opacity-60">{m.ask.toFixed(2)}</span>
+          <span className="n text-[11px] leading-none opacity-60">{pnum(m.ask)}</span>
         </button>
         <button onClick={() => onTrade("short")}
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
                      rounded-full border border-line text-foreground transition-colors
                      hover:border-foreground/40">
           <span className="text-[14px] font-medium leading-none">Sell / Short</span>
-          <span className="n text-[11px] leading-none text-muted-foreground">{m.bid.toFixed(2)}</span>
+          <span className="n text-[11px] leading-none text-muted-foreground">{pnum(m.bid)}</span>
         </button>
       </div>
       )}

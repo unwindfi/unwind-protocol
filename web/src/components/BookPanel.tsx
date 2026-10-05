@@ -7,7 +7,7 @@ const TAB = "min-h-[38px] px-3 text-[12.5px] font-medium first:pl-0";
 import { Gauge } from "@/components/market/Gauge";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import { useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
-import { compact, hhmmss } from "@/lib/format";
+import { compact, hhmmss, pnum } from "@/lib/format";
 
 /// Caption over figure, the stat tiles' manner without the tile: the wide
 /// panel's way of stating a number.
@@ -18,7 +18,7 @@ const Stat = ({ k, v, cls = "" }: { k: string; v: string; cls?: string }) => (
   </div>
 );
 
-const px = (p: number | null | undefined) => (p ? p.toFixed(2) : "–");
+const px = (p: number | null | undefined) => (p ? pnum(p) : "–");
 
 /// Caption over figure, small, for the book's three-up row.
 const Fig = ({ k, v, cls = "", sub }: { k: string; v: string; cls?: string; sub?: string }) => (
@@ -41,7 +41,7 @@ const Order = ({ price, size, bid, isMaker, widest }: {
       style={{ width: `${(size / widest) * 100}%` }}
     />
     <span className={`relative n ${bid ? "text-up" : "text-down"}`}>
-      {price.toFixed(2)}
+      {pnum(price)}
       {isMaker && <span className="ml-1 text-[9.5px] text-dim" title="Maker">M</span>}
     </span>
     <span className="relative n text-right">{compact(size)}</span>
@@ -191,8 +191,8 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
        * over no clears, were five ways of saying "not yet".
        */}
       <div className="grid grid-cols-3 gap-x-3 px-4 py-3 sm:px-5">
-        <Fig k="Buy" v={last?.buyPrice ? last.buyPrice.toFixed(2) : "–"} cls={last?.buyPrice ? "text-up" : "text-dim"} />
-        <Fig k="Sell" v={last?.sellPrice ? last.sellPrice.toFixed(2) : "–"} cls={last?.sellPrice ? "text-down" : "text-dim"} />
+        <Fig k="Buy" v={last?.buyPrice ? pnum(last.buyPrice) : "–"} cls={last?.buyPrice ? "text-up" : "text-dim"} />
+        <Fig k="Sell" v={last?.sellPrice ? pnum(last.sellPrice) : "–"} cls={last?.sellPrice ? "text-down" : "text-dim"} />
         <Fig k="Matched" v={last && last.matched > 0 ? compact(last.matched) : "–"}
           cls={last && last.matched > 0 ? "" : "text-dim"}
           sub={lastShare != null ? `pool ${lastShare.toFixed(0)}%` : undefined} />
@@ -302,7 +302,7 @@ export function BookPanel({
                 <div className={`pane-scroll pb-2 ${narrow ? "min-h-0 flex-1" : "max-h-[240px]"}`}>
                   {trades.map((t, i) => (
                     <div key={i} className="grid grid-cols-3 gap-1.5 px-5 py-[3px] text-[12px] sm:px-6">
-                      <span className={t.side === "buy" ? "text-up" : "text-down"}>{t.price.toFixed(2)}</span>
+                      <span className={t.side === "buy" ? "text-up" : "text-down"}>{pnum(t.price)}</span>
                       <span className="text-right">{compact(t.size)}</span>
                       <span className="text-right text-muted-foreground">{hhmmss(t.t)}</span>
                     </div>
@@ -351,8 +351,8 @@ export function BookPanel({
           <div className={`grid content-center grid-cols-2 gap-x-6 gap-y-5 ${narrow ? "" : "sm:grid-cols-3"}`}>
             {/* Bids in the buy colour and asks in the sell colour, as on every
                 other book. */}
-            <Stat k="Bid" v={m.bid.toFixed(2)} cls="text-up" />
-            <Stat k="Ask" v={m.ask.toFixed(2)} cls="text-down" />
+            <Stat k="Bid" v={pnum(m.bid)} cls="text-up" />
+            <Stat k="Ask" v={pnum(m.ask)} cls="text-down" />
             <Stat k="Spread" v={`${(m.spreadBps / 50).toFixed(3)}%`} />
             <Stat k="Max long" v={compact(maxLong)} />
             <Stat k="Max short" v={compact(maxShort)} />

@@ -64,6 +64,8 @@ type Group = {
  */
 const MEMES = ["BONK", "WIF", "POPCAT", "FARTCOIN", "MEW", "PENGU", "TRUMP",
   "BOME", "WEN", "AI16Z"];
+/// A market's token without its unit: 1MBONK is BONK quoted per million.
+const isMeme = (symbol: string) => MEMES.includes(symbol.replace(/^1[KMB](?=[A-Z])/, ""));
 
 const GROUPS: Group[] = [
   { key: "all", label: "All markets", of: () => true, art: "/logos/SOL.png" },
@@ -83,12 +85,12 @@ const GROUPS: Group[] = [
   },
   {
     key: "memes", label: "Memecoins",
-    of: (m) => MEMES.includes(m.symbol),
+    of: (m) => isMeme(m.symbol),
     art: "/logos/BONK.png",
   },
   {
     key: "crypto", label: "Crypto",
-    of: (m) => !/x$/.test(m.symbol) && !MEMES.includes(m.symbol),
+    of: (m) => !/x$/.test(m.symbol) && !isMeme(m.symbol),
     art: "/logos/JUP.png",
   },
   {
@@ -103,13 +105,19 @@ const GROUPS: Group[] = [
   },
 ];
 
+/// Room to open on a market: what its long and short sides can still take.
+const roomOf = (m: Market) => Math.max(0, m.capLong) + Math.max(0, m.capShort);
+
 /// What the table can be sorted by, and how each column reads a market.
 const COLUMNS = [
   { key: "price", label: "Price", get: (m: Market) => m.price },
   { key: "oi", label: "Open interest", get: (m: Market) => m.oi },
   { key: "change", label: "24h change", get: (m: Market) => m.changePct },
   { key: "volume", label: "24h volume", get: (m: Market) => m.volume24h },
-  { key: "liquidity", label: "Liquidity", get: (m: Market) => m.freeLiquidity },
+  // What this market can still take, both sides together, rather than the
+  // pool's free liquidity, which is one figure shared by every market and
+  // printed the same $9.98M on every row.
+  { key: "liquidity", label: "Liquidity", get: (m: Market) => roomOf(m) },
 ] as const;
 
 type SortKey = (typeof COLUMNS)[number]["key"] | "name";
@@ -162,6 +170,7 @@ function SourceMenu({ value, onChange }: { value: SourceKey; onChange: (v: Sourc
   return (
     <div ref={box} className="flex items-center gap-2">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        aria-label={`Price source: ${SOURCE_LABEL[value]}`}
         className={`press flex h-11 flex-none items-center gap-2.5 rounded-full px-5 text-[15px] text-foreground ${
           open || value !== "all" ? "bg-panel3" : "bg-panel2 hover:bg-panel3"}`}>
         {SOURCE_LABEL[value]}
@@ -176,6 +185,7 @@ function SourceMenu({ value, onChange }: { value: SourceKey; onChange: (v: Sourc
           <div className={`flex w-max items-center gap-1.5 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}>
             {(Object.keys(SOURCE_LABEL) as SourceKey[]).filter((k) => k !== value).map((k) => (
               <button key={k} type="button" tabIndex={open ? 0 : -1}
+                aria-label={`Show ${SOURCE_LABEL[k].toLowerCase()}`}
                 onClick={() => { onChange(k); setOpen(false); }}
                 className="press h-11 whitespace-nowrap rounded-full bg-panel2 px-5 text-[15px] text-muted-foreground
                            hover:bg-panel3 hover:text-foreground">
@@ -492,9 +502,12 @@ export default function Markets() {
               about it at the row's end. */}
           {markets.length > 0 && rows.length === 0 && (
             <div className="flex items-center justify-between gap-4 px-3 py-5 text-[14px] sm:px-5">
-              <span className="text-muted-foreground">No results</span>
+              <span className="text-muted-foreground">
+                {group === "watchlist" && !query.trim() ? "Star a market to keep it here" : "No results"}
+              </span>
               {query.trim() && (
-                <a href="/list" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+                <a href={`/list?q=${encodeURIComponent(query.trim())}`}
+                  className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
                   <NavIcon name="list" size={16} />
                   List {query.trim().toUpperCase()}
                 </a>
@@ -548,7 +561,7 @@ export default function Markets() {
                 <span className="hidden justify-end md:flex">
                   <span className="n rounded-[10px] bg-panel2 px-3 py-1.5 text-[15px]
                                    group-hover:bg-panel3">
-                    {compact(m.freeLiquidity)}
+                    {compact(roomOf(m))}
                   </span>
                 </span>
               </a>

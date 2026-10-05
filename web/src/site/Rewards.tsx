@@ -417,7 +417,7 @@ function Board({ all, week, owner, self, who }: {
       {b && rows.length === 0 && <Empty>No points yet.</Empty>}
       {b && b.wallets > 0 && (
         <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">
-          {b.wallets.toLocaleString()} wallets. Top 20 hold {(b.concentration * 100).toFixed(1)}%.{" "}
+          {b.wallets.toLocaleString()} {b.wallets === 1 ? "wallet" : "wallets"}. Top 20 hold {(b.concentration * 100).toFixed(1)}%.{" "}
           {money(b.paidUsd)} paid out. House wallets aren't ranked.
         </p>
       )}

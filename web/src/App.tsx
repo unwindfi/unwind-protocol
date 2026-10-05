@@ -22,10 +22,11 @@ import { Box } from "@/components/market/Box";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import * as api from "@/lib/api";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { getAccount, getBatch, getMarkets, getTrades, peek, post, usePoll } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
-import { money } from "@/lib/format";
+import { money, pnum } from "@/lib/format";
 
 /// Only timeframes the price source actually carries. Jupiter publishes no
 /// sub-minute bars at all, so 5s/15s had nothing behind them but this process's
@@ -43,6 +44,15 @@ export default function App() {
   // A link from the landing page names the market it was clicked on.
   const [symbol, setSymbol] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get("symbol"));
+  // The address follows the market on screen, so a reload or a shared link
+  // opens the market that was being looked at, not the one the page opened on.
+  useEffect(() => {
+    if (!symbol) return;
+    const u = new URL(window.location.href);
+    if (u.searchParams.get("symbol") === symbol) return;
+    u.searchParams.set("symbol", symbol);
+    window.history.replaceState(window.history.state, "", u);
+  }, [symbol]);
   const [tf, setTf] = useState(300);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -70,10 +80,13 @@ export default function App() {
   useEffect(() => { if (polled) setLastOk(Date.now()); }, [polled]);
   const readOnly = markets.length > 0 && api.readOnly;
   const [accountTick, setAccountTick] = useState(0);
-  // Follows the connected wallet, falling back to the demo account when there
-  // is none: the view is always of whoever is actually trading.
-  const account = usePoll(() => getAccount(owner), 1800, [accountTick, owner],
-    () => peek<Account>("/api/account" + (owner ? `?owner=${owner}` : "")));
+  // The connected wallet's account, and none without one. It used to fall
+  // back to the server's demo account, so every visitor without a wallet saw
+  // one shared balance and its positions as their own, and traded them.
+  const account = usePoll(
+    () => (owner ? getAccount(owner) : Promise.resolve(null)), 1800, [accountTick, owner],
+    () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null));
+  const { setVisible: openWallet } = useWalletModal();
 
   // Twice a second against a one-second window: fast enough that the book is
   // at most half a batch behind, and the countdown between polls is interpolated from
@@ -114,7 +127,7 @@ export default function App() {
       const l = account!.liquidations[0];
       showToast({
         title: "Position liquidated",
-        description: `${l.symbol} ${l.isLong ? "long" : "short"} at ${l.price.toFixed(2)} · ${money(l.returned)} returned`,
+        description: `${l.symbol} ${l.isLong ? "long" : "short"} at ${pnum(l.price)} · ${money(l.returned)} returned`,
         status: "error",
       });
       seenLiqs.current = n;
@@ -132,11 +145,12 @@ export default function App() {
     /// resolves later, which an auction order always is.
     note?: string
   ) => {
+    // Every action is signed by the trader's own wallet; without one there is
+    // nothing to sign with, so ask for it.
+    if (!wallet.publicKey) { openWallet(true); return; }
     setBusy(true);
     try {
-      const r = wallet.publicKey
-        ? await signAndSend(wallet, path.replace(/^\//, ""), body, record)
-        : await post(path, body);
+      const r = await signAndSend(wallet, path.replace(/^\//, ""), body, record);
       showToast(r.ok
         ? { title: ok, description: note, status: "success" }
         : { title: "Rejected", description: r.error, status: "error" });
@@ -146,7 +160,7 @@ export default function App() {
       setBusy(false);
       setAccountTick((t) => t + 1);
     }
-  }, [showToast, wallet]);
+  }, [showToast, wallet, openWallet]);
 
   /// Funds a freshly connected wallet with test USDC, and SOL when it has
   /// too little for fees. The server says how much, since it differs by
@@ -196,6 +210,7 @@ export default function App() {
             undefined, "Rests this batch. Unfilled, the margin comes back.")}
           onFund={owner ? fund : undefined}
       m={market} account={account} busy={busy || readOnly} mobile={isMobile}
+      onConnect={owner ? undefined : () => openWallet(true)}
       card={!isMobile}
       side={isMobile ? side : undefined}
       onSideChange={isMobile ? setSide : undefined}
@@ -263,7 +278,7 @@ export default function App() {
                   </TabsList>
                 </Tabs>
                 <span className="text-[12px] text-muted-foreground">
-                  Reference <span className="n text-foreground">{market.price.toFixed(2)}</span>
+                  Reference <span className="n text-foreground">{pnum(market.price)}</span>
                 </span>
               </div>
               <ChartBoundary resetKey={`${market.symbol}:${tf}`}>

@@ -5,7 +5,7 @@ import { BatchClock, usePriceTitle } from "./BatchClock";
 import { StatTiles } from "./market/MarketHead";
 import { TickerLogo } from "./TickerLogo";
 import type { Batch, Market } from "@/lib/api";
-import { pct, tone } from "@/lib/format";
+import { pct, pmove, pnum, tone } from "@/lib/format";
 
 export function MarketHeader({
   m, onOpen, mobile = false, batch,
@@ -58,13 +58,13 @@ export function MarketHeader({
         <BatchClock m={m} batch={batch} compact />
 
         <div className="flex flex-none flex-col items-end">
-          <DigitSwap value={m.ask.toFixed(2)} animationKey={m.ask}
+          <DigitSwap value={pnum(m.ask)} animationKey={m.ask}
             direction={m.change >= 0 ? "up" : "down"}
             className="text-[24px] font-semibold leading-none tracking-[-.025em]" />
           {/* The move in its own colour, no badge: the arrow the badge
               carried said what the sign already did. */}
           <span className={`n mt-1.5 text-[12.5px] font-medium ${tone(m.changePct)}`}>
-            {m.change >= 0 ? "+" : ""}{m.change.toFixed(2)} · {pct(m.changePct)}
+            {pmove(m.change, m.price)} · {pct(m.changePct)}
           </span>
         </div>
       </header>

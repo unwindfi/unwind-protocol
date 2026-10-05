@@ -4,7 +4,7 @@ import type { TableColumn } from "@/components/motion/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { getFills, usePoll } from "@/lib/api";
 import type { Account, Market, Position, Trade } from "@/lib/api";
-import { hhmmss, money, pct, price, tone } from "@/lib/format";
+import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
 
 type PosRow = Position & { symbol: string };
 type Order = Account["orders"][number];
@@ -80,9 +80,9 @@ function PositionCard({
 
       <div className="mt-3 grid grid-cols-4 gap-2">
         <KV k="Size">{money(r.size, 0)}</KV>
-        <KV k="Entry">{r.entry.toFixed(2)}</KV>
-        <KV k="Mark">{r.mark.toFixed(2)}</KV>
-        <KV k="Liq."><span className="text-down">{r.liqPrice ? r.liqPrice.toFixed(2) : "–"}</span></KV>
+        <KV k="Entry">{pnum(r.entry)}</KV>
+        <KV k="Mark">{pnum(r.mark)}</KV>
+        <KV k="Liq."><span className="text-down">{r.liqPrice ? pnum(r.liqPrice) : "–"}</span></KV>
       </div>
 
       <div className="mt-3 flex items-center gap-2">
@@ -148,13 +148,13 @@ export function BottomPanel({
         {r.isLong ? "Long" : "Short"}</span>) },
     { key: "size", header: "Value", align: "right", sortable: true,
       cell: (r) => money(r.size, 0) },
-    { key: "entry", header: "Entry", align: "right", cell: (r) => r.entry.toFixed(2) },
-    { key: "mark", header: "Mark", align: "right", cell: (r) => r.mark.toFixed(2) },
+    { key: "entry", header: "Entry", align: "right", cell: (r) => pnum(r.entry) },
+    { key: "mark", header: "Mark", align: "right", cell: (r) => pnum(r.mark) },
     { key: "pnl", header: "PnL (ROE)", align: "right", sortable: true,
       cell: (r) => (<span className={tone(r.pnl)}>{money(r.pnl)}{" "}
         <span className="text-muted-foreground">({pct(r.pnlPct)})</span></span>) },
     { key: "liqPrice", header: "Liq. price", align: "right",
-      cell: (r) => <span className="text-down">{r.liqPrice ? r.liqPrice.toFixed(2) : "–"}</span> },
+      cell: (r) => <span className="text-down">{r.liqPrice ? pnum(r.liqPrice) : "–"}</span> },
     { key: "collateral", header: "Margin", align: "right", cell: (r) => money(r.collateral) },
     // Funding paid so far has a tab of its own; in the docked table it was
     // the column that pushed Close off the panel's edge.
@@ -178,7 +178,7 @@ export function BottomPanel({
       cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
         {r.side === "buy" ? "Buy" : "Sell"}</span>) },
     { key: "size", header: "Size", align: "right", sortable: true, cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
+    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
   ];
 
   const liqs = account?.liquidations ?? [];
@@ -190,7 +190,7 @@ export function BottomPanel({
       cell: (r) => (<span className={r.isLong ? "text-up" : "text-down"}>
         {r.isLong ? "Long" : "Short"}</span>) },
     { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
+    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
     { key: "returned", header: "Returned", align: "right", cell: (r) => money(r.returned) },
   ];
 
@@ -254,7 +254,7 @@ export function BottomPanel({
       cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
         {r.side === "buy" ? "Buy" : "Sell"}</span>) },
     { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
+    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
   ];
 
   /*
@@ -311,13 +311,13 @@ export function BottomPanel({
         {tab === "orders" && (
           <Table data={orders} columns={orderCols} getRowId={(r) => r.address}
             className={flat} height={tableH(orders.length)}
-            emptyState={empty("No take profits, stops or limit orders")} />
+            emptyState={empty(owner ? "No take profits, stops or limit orders" : "Connect a wallet to see its orders")} />
         )}
         {tab === "funding" && (
           positions.length === 0 && nowRates ? nowRates
             : <Table data={positions} columns={fundCols} getRowId={(r) => r.symbol}
                 className={flat} height={tableH(positions.length)}
-                emptyState={empty("No open positions")} />
+                emptyState={empty(owner ? "No open positions" : "Connect a wallet to see its positions")} />
         )}
         {tab === "fills" && (
           <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
@@ -327,12 +327,12 @@ export function BottomPanel({
         {tab === "positions" && (
           mobile
             ? positions.length === 0
-              ? empty("No open positions")
+              ? empty(owner ? "No open positions" : "Connect a wallet to see its positions")
               : positions.map((r) => (
                   <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} />))
             : <Table data={positions} columns={posCols} getRowId={(r) => r.symbol}
                 className={flat} height={tableH(positions.length)}
-                emptyState={empty("No open positions")} />
+                emptyState={empty(owner ? "No open positions" : "Connect a wallet to see its positions")} />
         )}
         {/*
          * Balances was a tab here and a box in the rail, saying the same

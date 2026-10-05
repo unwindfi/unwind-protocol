@@ -122,8 +122,11 @@ export function apyCell(a: Apy | null | undefined, empty: string) {
   };
 }
 
+/// `owned` says the account and backings are a connected wallet's. Without
+/// one the server answers with its demo account, which is fine for the
+/// pool's figures and nobody's to show as "yours".
 export function vaultsOf(account: Account | null | undefined, markets: Market[], backings: Backing[],
-  apy: { pool: Apy | null; markets: Record<string, Apy> } | null | undefined) {
+  apy: { pool: Apy | null; markets: Record<string, Apy> } | null | undefined, owned = true) {
   const out: Vault[] = [];
   const pool = account?.pool;
   if (pool) {
@@ -133,7 +136,7 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
       tvlNote: `${compact(pool.lpSupply)} xLP`,
       apy: apyCell(apy?.pool, "no deposits"),
       strategy: "Default",
-      yours: account!.lp.value,
+      yours: owned ? account!.lp.value : 0,
       group: "pool",
       util: { pct: pool.utilization, note: `of ${pool.maxUtilization}% cap` },
     });
@@ -154,7 +157,7 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
       tvlNote: o ? `of ${compact(o.depthUsd)} depth` : `${compact(m.lossBudgetUsd)} budget`,
       apy: apyCell(apy?.markets[m.symbol], "not backed yet"),
       strategy: "First loss",
-      yours: backings.find((b) => b.symbol === m.symbol)?.value ?? 0,
+      yours: owned ? backings.find((b) => b.symbol === m.symbol)?.value ?? 0 : 0,
       group: o ? "opened" : /x$/.test(m.symbol) ? "equities" : "crypto",
       // An opened market's budget is its backing capped by the pool's depth,
       // so it is measured against the depth; a listed one against its budget.
@@ -430,8 +433,8 @@ export default function Earn() {
   const [open, setOpen] = useState<{ id: string; start: "in" | "out" } | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
 
-  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy),
-    [account, markets, backings, apy]);
+  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner),
+    [account, markets, backings, apy, owner]);
   const opened = open ? vaults.find((v) => v.id === open.id) ?? null : null;
   // Markets first, most-backed at the top, and the pool after them: backing
   // is the thing to choose, and the pool is what you get by not choosing.
