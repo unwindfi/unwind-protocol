@@ -2867,7 +2867,13 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         } catch {
           // One order that cannot settle fails its whole transaction, so
           // retry that group one at a time rather than strand the others.
+          // But a group that timed out has often landed: read the batch
+          // again and retry only what is still active. Retrying all of them
+          // sent a transaction per settled order that could only fail
+          // (`InvalidParameter`, 65 in ten minutes under load).
+          const now: any = await program.account.batch.fetch(batch).catch(() => null);
           for (const d of members) {
+            if (now && !now.orders[d.i]?.active) { settled(d.o); continue; }
             try { await send([d.ix]); settled(d.o); }
             catch (e: any) { console.warn(`settle ${m.symbol}#${d.i}: ${e?.message ?? e}`); }
           }
