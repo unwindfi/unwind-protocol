@@ -316,29 +316,6 @@ const conn = new Connection(RPC_URL, {
  * Replacing `confirmTransaction` on the shared connection covers every
  * caller: Anchor's `.rpc()`, `sendAndConfirm` and the relay endpoint.
  */
-/*
- * Program addresses, derived once. `findProgramAddressSync` tries bumps from
- * 255 down, and each try is an ed25519 on-curve check; profiled under the
- * 100-wallet load test it was about 70% of this process's CPU, because the
- * same position, order, batch and token-account addresses were derived again
- * on every request and every pass (an account read alone derives two hundred
- * order slots). An address depends only on its seeds and program, so it is
- * cached for the life of the process. Patched on the class so Anchor and
- * spl-token, which call the same function, are covered too.
- */
-const pdaCache = new Map<string, [PublicKey, number]>();
-const derivePda = PublicKey.findProgramAddressSync.bind(PublicKey);
-PublicKey.findProgramAddressSync = (seeds: Array<Buffer | Uint8Array>, programId: PublicKey) => {
-  const key = programId.toBase58() + ":" + seeds.map((b) => Buffer.from(b).toString("hex")).join(",");
-  let hit = pdaCache.get(key);
-  if (!hit) {
-    hit = derivePda(seeds, programId);
-    if (pdaCache.size >= 500_000) pdaCache.clear();
-    pdaCache.set(key, hit);
-  }
-  return hit;
-};
-
 const CONFIRM_POLL_MS = 500;
 type Waiter = { resolve: (r: any) => void; reject: (e: any) => void; lastValid?: number; deadline: number };
 const unconfirmed = new Map<string, Waiter[]>();
