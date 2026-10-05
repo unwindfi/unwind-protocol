@@ -662,31 +662,21 @@ function observedBars(m: MarketRt, tf: number): Candle[] {
 /*
  * The real token's history, for a devnet market listed on a test copy of it.
  *
- * The seeded pools hold the real token's price (testnet-flow.ts), so the
+ * The keeper marks these copies at the real price (realPricesByPool), so the
  * real token's own chart is this market's chart before the venue's tape
- * begins. Read from the token's deepest mainnet pool on GeckoTerminal. Its
- * free API refused calls two seconds apart, so they are spaced six apart and
- * a 429 pauses them for a minute. Nothing ever waits on it: a chart not read
- * yet answers with the venue's own tape and is fetched behind the answer,
- * each is kept five minutes and answered stale while it refreshes, and a
- * failure leaves the market on its own tape. (Waiting on it held the
- * server's startup warm-up past the deploy's health check.)
+ * begins. Read from Jupiter's chart data by mainnet mint, the source the
+ * equities already chart from. (GeckoTerminal was tried first: its free API
+ * refused most of a restart's reads, and most charts stayed empty.) Nothing
+ * waits on it: a chart not read yet answers with the venue's own tape and is
+ * fetched behind the answer, each is kept five minutes and answered stale
+ * while it refreshes, and a failure leaves the market on its own tape.
  */
-const GT = "https://api.geckoterminal.com/api/v2/networks/solana";
-const GT_FRAMES: Record<number, [string, number]> = {
-  60: ["minute", 1], 300: ["minute", 5], 900: ["minute", 15],
-  3600: ["hour", 1], 14400: ["hour", 4], 86400: ["day", 1],
+const JUP_CHARTS_URL = "https://datapi.jup.ag/v2/charts";
+const JUP_FRAMES: Record<number, string> = {
+  60: "1_MINUTE", 300: "5_MINUTE", 900: "15_MINUTE",
+  3600: "1_HOUR", 14400: "4_HOUR", 86400: "1_DAY",
 };
-let gtNext = 0;
-async function gtGet(url: string): Promise<any> {
-  const wait = gtNext - Date.now();
-  gtNext = Math.max(Date.now(), gtNext) + 6_000;
-  if (wait > 0) await new Promise((ok) => setTimeout(ok, wait));
-  const r = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
-  if (r.status === 429) gtNext = Math.max(gtNext, Date.now() + 60_000);
-  if (!r.ok) throw new Error(`geckoterminal ${r.status}`);
-  return r.json();
-}
+let jupNext = 0;
 /// Mainnet mint of the real token a seeded pool copies, by the pool's address.
 /// Empty off devnet: only devnet has test copies standing in for real tokens.
 let shadowMints: Map<string, string> | null = null;
@@ -736,32 +726,29 @@ async function realPricesByPool(): Promise<Map<string, number>> {
   }
   return out;
 }
-const realPools = new Map<string, { pool: string; side: "base" | "quote" }>();
 const realSeeds = new Map<string, { at: number; bars: Candle[] }>();
 const realRefreshing = new Set<string>();
 async function fetchRealBars(mint: string, tf: number, unitExp: number): Promise<Candle[]> {
-  let p = realPools.get(mint);
-  if (!p) {
-    const j = await gtGet(`${GT}/tokens/${mint}/pools?page=1`);
-    const top = j?.data?.[0];
-    if (!top) throw new Error("no mainnet pool");
-    p = {
-      pool: top.attributes.address,
-      side: top.relationships.base_token.data.id === `solana_${mint}` ? "base" : "quote",
-    };
-    realPools.set(mint, p);
-  }
-  const [frame, agg] = GT_FRAMES[tf];
-  const j = await gtGet(`${GT}/pools/${p.pool}/ohlcv/${frame}?aggregate=${agg}&limit=1000&currency=usd&token=${p.side}`);
+  // A breath between reads, so a restart's warm-up does not arrive at once.
+  const wait = jupNext - Date.now();
+  jupNext = Math.max(Date.now(), jupNext) + 300;
+  if (wait > 0) await new Promise((ok) => setTimeout(ok, wait));
+  const to = Date.now();
+  const r = await fetch(`${JUP_CHARTS_URL}/${mint}?interval=${JUP_FRAMES[tf]}&to=${to}&candles=1000&type=price`,
+    { signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`jupiter charts ${r.status}`);
+  const j: any = await r.json();
   const unit = 10 ** unitExp;
-  return ((j?.data?.attributes?.ohlcv_list ?? []) as number[][])
-    .map(([time, open, high, low, close]) => ({
-      time, open: open * unit, high: high * unit, low: low * unit, close: close * unit,
+  return ((j?.candles ?? []) as any[])
+    .map((c) => ({
+      time: Number(c.time), open: Number(c.open) * unit, high: Number(c.high) * unit,
+      low: Number(c.low) * unit, close: Number(c.close) * unit,
     }))
-    .sort((a, b) => a.time - b.time);
+    .filter((c) => Number.isFinite(c.time) && c.close > 0)
+    .sort((x, y) => x.time - y.time);
 }
 async function realBars(m: MarketRt, tf: number): Promise<Candle[]> {
-  if (!GT_FRAMES[tf]) return [];
+  if (!JUP_FRAMES[tf]) return [];
   const mint = await realMintOf(m);
   if (!mint) return [];
   const key = `${mint}:${tf}`;

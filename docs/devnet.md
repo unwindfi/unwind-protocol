@@ -30,9 +30,8 @@ once a day.
   every minute by the server's mark keeper, so they trade at the real price.
   Their devnet pools still supply the depth that sets leverage and budgets,
   and a server process swaps in them every ten minutes to keep them near the
-  real price. Their charts start with the real token's history from its
-  deepest mainnet pool (GeckoTerminal), then continue with the venue's own
-  prints. A market somebody lists on mainnet is priced from its own pool
+  real price. Their charts start with the real token's history (Jupiter's
+  chart data), then continue with the venue's own prints. A market somebody lists on mainnet is priced from its own pool
   (see [Price sources](price-sources.md)).
 - **WIND, KITE and YAK.** Invented tokens with their own pools, left for
   testers to list and back. They follow the percentage moves of BONK, JUP and
