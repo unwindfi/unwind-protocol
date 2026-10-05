@@ -89,7 +89,10 @@ export interface Account {
   /// Which chain this pool lives on — the status bar should never claim one
   /// cluster while serving another.
   cluster: string;
-  address: string; usdc: number; margin: number; unrealized: number; equity: number;
+  address: string; usdc: number;
+  /// The wallet's SOL, or null when the read failed.
+  sol?: number | null;
+  margin: number; unrealized: number; equity: number;
   positions: Record<string, Position>;
   liquidations: { t: number; symbol: string; isLong: boolean; size: number; price: number; returned: number }[];
   /// Closed because profit outgrew the pool's reserve, not because the trader

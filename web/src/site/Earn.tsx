@@ -47,6 +47,7 @@ import { signAndSend } from "@/lib/tx";
 import { PAY_TOKENS, usdPrices, type PayWith } from "@/lib/listing";
 import { PayToken } from "@/components/PayToken";
 import { YourBacking } from "@/components/YourBacking";
+import { FundPrompt } from "@/components/FundPrompt";
 import { compact, money } from "@/lib/format";
 
 const NONE: Market[] = [];
@@ -469,6 +470,7 @@ export default function Earn() {
       <SiteHeader here="/earn" actions={<WalletActions />} />
 
       <Shell main className="pb-14 pt-4 sm:pt-8">
+        <FundPrompt onFunded={() => setTick((t) => t + 1)} />
         {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
                         lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">

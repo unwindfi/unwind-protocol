@@ -2363,8 +2363,10 @@ async function accountView(owner: PublicKey) {
     const zero = { amount: 0n } as any;
     // All at once: none depends on another, and against a remote RPC each
     // round trip is hundreds of milliseconds the page polls through.
-    const [usdc, lpTok, supply, p, positions, orderAccounts, traderPnl] = await Promise.all([
+    const [usdc, sol, lpTok, supply, p, positions, orderAccounts, traderPnl] = await Promise.all([
       getAccount(conn, ata(owner, usdcMint)).catch(() => zero),
+      // For the faucet prompt: a wallet short of rent cannot list or back.
+      conn.getBalance(owner).then((l) => l / 1e9).catch(() => null),
       getAccount(conn, ata(owner, lpMint)).catch(() => zero),
       lpSupplyRead(),
       poolAccount(),
@@ -2401,6 +2403,7 @@ async function accountView(owner: PublicKey) {
       cluster: CLUSTER,
       address: owner.toBase58(),
       usdc: Number(usdc.amount) / 1e6,
+      sol,
       margin, unrealized,
       equity: Number(usdc.amount) / 1e6 + margin + unrealized + held * lpPrice,
       positions,

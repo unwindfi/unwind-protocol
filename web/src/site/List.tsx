@@ -43,6 +43,7 @@ import {
   type PayWith, type PoolOption, type TokenHit,
 } from "@/lib/listing";
 import { signAndSend } from "@/lib/tx";
+import { FundPrompt } from "@/components/FundPrompt";
 import { compact, money, price } from "@/lib/format";
 import {
   listingLimits, LISTING_ROUND_TRIP_FEE_BPS, MIN_LISTING_BACKING_USD, POOL_QUOTE_BUDGET_BPS,
@@ -470,6 +471,7 @@ export default function List() {
                    object-cover opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent)]
                    dark:block" />
       <Shell main className="relative pb-28 pt-4 sm:pt-8 lg:pb-14">
+        <FundPrompt />
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
                         lg:grid-cols-[minmax(0,1fr)_440px]">
           {/* ------------------------------------------------------ form */}

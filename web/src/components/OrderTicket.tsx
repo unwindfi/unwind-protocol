@@ -433,7 +433,7 @@ export function OrderTicket({
             className="press mt-4 h-10 w-full rounded-full bg-foreground text-[13.5px]
                        font-medium text-background transition-opacity hover:opacity-90
                        disabled:opacity-40">
-            Get test USDC
+            Get test funds
           </button>
         )}
 
