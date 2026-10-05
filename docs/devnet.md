@@ -25,13 +25,15 @@ once a day.
 - **Popular Solana tokens.** SOL, JUP, BONK, WIF, JTO, PYTH, RAY, TRUMP,
   PENGU, FARTCOIN, POPCAT, RENDER, HNT, ORCA and DRIFT. These are test copies:
   devnet tokens under the real tickers, each in a Meteora DLMM pool against
-  test USDC. A server process reads the real token's price on mainnet
-  (Jupiter) every two minutes and swaps in the devnet pool until it matches,
-  so the markets move the way the real tokens do. Their charts start with the
-  real token's history from its deepest mainnet pool (GeckoTerminal), then
-  continue with the venue's own prints. They are listed through the
-  ordinary permissionless path, priced from their pools like any market
-  somebody opens (see [Price sources](price-sources.md)).
+  test USDC. They are listed through the ordinary permissionless path, but
+  on devnet their mark is the real token's price on mainnet (Jupiter), pushed
+  every minute by the server's mark keeper, so they trade at the real price.
+  Their devnet pools still supply the depth that sets leverage and budgets,
+  and a server process swaps in them every ten minutes to keep them near the
+  real price. Their charts start with the real token's history from its
+  deepest mainnet pool (GeckoTerminal), then continue with the venue's own
+  prints. A market somebody lists on mainnet is priced from its own pool
+  (see [Price sources](price-sources.md)).
 - **WIND, KITE and YAK.** Invented tokens with their own pools, left for
   testers to list and back. They follow the percentage moves of BONK, JUP and
   WIF.

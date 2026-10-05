@@ -688,16 +688,53 @@ async function gtGet(url: string): Promise<any> {
   return r.json();
 }
 /// Mainnet mint of the real token a seeded pool copies, by the pool's address.
+/// Empty off devnet: only devnet has test copies standing in for real tokens.
 let shadowMints: Map<string, string> | null = null;
-async function realMintOf(m: MarketRt): Promise<string | null> {
-  if (CLUSTER !== "devnet" || !m.observed) return null;
+async function shadowMintMap(): Promise<Map<string, string>> {
+  if (CLUSTER !== "devnet") return new Map();
   if (!shadowMints) {
     const { SHADOWS } = await import("./testnet-flow");
     shadowMints = new Map(seeded
       .filter((p) => SHADOWS[p.symbol]?.symbol === p.symbol)
       .map((p) => [p.pair, SHADOWS[p.symbol].mint]));
   }
-  return shadowMints.get(m.observed.source.toBase58()) ?? null;
+  return shadowMints;
+}
+async function realMintOf(m: MarketRt): Promise<string | null> {
+  if (!m.observed) return null;
+  return (await shadowMintMap()).get(m.observed.source.toBase58()) ?? null;
+}
+
+/*
+ * The real token's price, for the keeper to mark a devnet test copy at.
+ *
+ * Percolator's devnet keeper reads each token's mainnet pool and pushes that
+ * price straight to the devnet market. Ours did it the long way round: a bot
+ * swapped the devnet pool toward the real price every few minutes, and the
+ * keeper pushed a median of that pool, minutes behind and only as right as
+ * the last swap that landed. Now the mark is the real price itself (Jupiter,
+ * one batched call a pass, by mainnet mint), and the devnet pool is kept
+ * only for the depth the program reads on chain. A pass where Jupiter fails
+ * falls back to the pool.
+ */
+const JUP_PRICE_URL = "https://lite-api.jup.ag/price/v3";
+async function realPricesByPool(): Promise<Map<string, number>> {
+  const mints = await shadowMintMap();
+  const out = new Map<string, number>();
+  if (!mints.size) return out;
+  try {
+    const r = await fetch(`${JUP_PRICE_URL}?ids=${[...new Set(mints.values())].join(",")}`,
+      { signal: AbortSignal.timeout(8_000) });
+    if (!r.ok) throw new Error(`jupiter price ${r.status}`);
+    const j = (await r.json()) as Record<string, { usdPrice?: number }>;
+    for (const [pair, mint] of mints) {
+      const p = j[mint]?.usdPrice;
+      if (p && p > 0) out.set(pair, p);
+    }
+  } catch (e: any) {
+    console.warn(`real prices: ${e?.message ?? e}; marking from the pools this pass`);
+  }
+  return out;
 }
 const realPools = new Map<string, { pool: string; side: "base" | "quote" }>();
 const realSeeds = new Map<string, { at: number; bars: Candle[] }>();
@@ -1566,7 +1603,13 @@ async function ensureMarkKeeper() {
 /// nothing, and a real move is followed within a couple of passes. On a new
 /// market the first push is the spot itself, which is what lets it open at
 /// once.
-async function keeperPrice(observation: PublicKey, account: any): Promise<number> {
+async function keeperPrice(observation: PublicKey, account: any, real?: number): Promise<number> {
+  // A devnet copy of a real token is marked at the real price (see
+  // realPricesByPool), unsmoothed: it is already the market's own price.
+  if (real && real > 0) {
+    const scaled = Math.round(real * 10 ** (account.unitExp ?? 0) * 1e6);
+    if (scaled > 0) return scaled;
+  }
   const read = await readPool(conn, new PublicKey(account.source), usdcMint);
   if (!(read.price > 0)) throw new Error("pool reads no price");
   const key = observation.toBase58();
@@ -1598,6 +1641,7 @@ async function observer() {
     infos.forEach((info, k) => { if (info) otherPoolMarkets.add(batch[k].toBase58()); });
   }
   const folded: { publicKey: PublicKey; account: any }[] = [];
+  const real = await realPricesByPool();
   for (const { publicKey, account } of all) {
     if (otherPoolMarkets.has(new PublicKey(account.market).toBase58())) continue;
     try {
@@ -1607,7 +1651,7 @@ async function observer() {
       const extra = account.sourceKind === SOURCE_KIND.meteoraDlmm
         ? await dlmmObserveAccounts(conn, new PublicKey(account.source), account.quoteIsToken0)
         : [];
-      const price = await keeperPrice(publicKey, account);
+      const price = await keeperPrice(publicKey, account, real.get(new PublicKey(account.source).toBase58()));
       await program.methods.pushMark(new BN(price))
         .accounts({
           keeper: authority.publicKey, observation: publicKey, market: account.market,
