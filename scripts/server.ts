@@ -1590,7 +1590,41 @@ async function ensureMarkKeeper() {
 /// nothing, and a real move is followed within a couple of passes. On a new
 /// market the first push is the spot itself, which is what lets it open at
 /// once.
+/*
+ * A circuit breaker on what the keeper pushes, as Percolator's keeper has.
+ *
+ * A mark more than BREAKER_PCT from the one on chain is held at the old mark
+ * (re-pushed, so the market stays fresh rather than going stale) until
+ * BREAKER_CONFIRM passes in a row agree on the move, then taken. One bad
+ * reading from a price source would otherwise move the mark at once and
+ * liquidate positions on it. Measured against the mark on chain, so a
+ * restart does not forget it.
+ */
+const BREAKER_PCT = 10;
+const BREAKER_CONFIRM = 3;
+const breakerTrips = new Map<string, number>();
+function breaker(key: string, symbol: string, onChain: number, next: number): number {
+  if (!(onChain > 0)) return next;
+  const move = Math.abs(next / onChain - 1) * 100;
+  if (move <= BREAKER_PCT) { breakerTrips.delete(key); return next; }
+  const trips = (breakerTrips.get(key) ?? 0) + 1;
+  if (trips >= BREAKER_CONFIRM) {
+    breakerTrips.delete(key);
+    console.warn(`mark ${symbol}: ${move.toFixed(1)}% move confirmed over ${trips} passes, taken`);
+    return next;
+  }
+  breakerTrips.set(key, trips);
+  console.warn(`mark ${symbol}: ${move.toFixed(1)}% move held (${trips}/${BREAKER_CONFIRM})`);
+  return onChain;
+}
+
 async function keeperPrice(observation: PublicKey, account: any, real?: number): Promise<number> {
+  const key = observation.toBase58();
+  const symbol = Object.values(rt).find((m) => m.address.equals(new PublicKey(account.market)))?.symbol ?? key.slice(0, 8);
+  return breaker(key, symbol, num(account.ewmaPrice), await keeperCandidate(observation, account, real));
+}
+
+async function keeperCandidate(observation: PublicKey, account: any, real?: number): Promise<number> {
   // A devnet copy of a real token is marked at the real price (see
   // realPricesByPool), unsmoothed: it is already the market's own price.
   if (real && real > 0) {
