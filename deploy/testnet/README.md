@@ -24,7 +24,9 @@ devnet endpoint unless set). Meanwhile `/api/markets` and `/api/account`
 answer with the last list they read in full, dated in an `X-Stale-Since`
 header, rather than an error. The crank is slower on the fallback, so a pool
 that keeps resting needs more keys. The startup log names the hosts and the
-number of keys, never the keys themselves.
+number of keys, never the keys themselves. Transaction confirmations go over
+a websocket, which free Helius keys refuse; on devnet it goes to the public
+endpoint unless `RPC_WS_URL` says otherwise.
 
 Every ten minutes the log prints how many RPC calls the server made, with a
 daily projection and the busiest methods (`rpc: 4210 calls in 10m (~606k/day):

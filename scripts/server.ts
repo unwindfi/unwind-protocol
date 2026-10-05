@@ -137,6 +137,15 @@ const trader = kp(st.keys.trader);
 const RPC_ENDPOINTS = (process.env.RPC_URLS || "").split(/[\s,]+/).filter(Boolean);
 const RPC_URL = RPC_ENDPOINTS[0] || process.env.RPC_URL || st.rpc;
 if (!RPC_ENDPOINTS.length) RPC_ENDPOINTS.push(RPC_URL);
+/*
+ * Where subscriptions go. web3.js confirms every transaction over a
+ * websocket it derives from the first key, and free Helius keys refuse
+ * websockets with a 429: each confirm then hung for its full 30s, the price
+ * posts stalled and the server never came up. On devnet the public endpoint
+ * takes them, as it did before the pool; RPC_WS_URL picks another.
+ */
+const RPC_WS_URL = process.env.RPC_WS_URL
+  || (CLUSTER === "devnet" ? "wss://api.devnet.solana.com" : undefined);
 /// Where an endpoint is, without the key in its path or query, for logs.
 const rpcHost = (u: string) => { try { return new URL(u).host; } catch { return "rpc"; } };
 /*
@@ -252,6 +261,7 @@ const rpcFetch: typeof fetch = async (input, init) => {
 // good snapshot, never by sitting on the socket.
 const conn = new Connection(RPC_URL, {
   commitment: "confirmed", fetch: rpcFetch, disableRetryOnRateLimit: true,
+  wsEndpoint: RPC_WS_URL,
 });
 const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(authority), {
   commitment: "confirmed",
