@@ -792,7 +792,7 @@ async function marketAccount(m: MarketRt) {
 /// Keyed by market address: markets are listed while the server runs, so a
 /// position in a list read two seconds ago is not a market.
 let allMarketsRead: { at: number; body: Promise<Map<string, any>> } | null = null;
-function allMarketAccounts(): Promise<Map<string, any>> {
+function marketsByAddress(): Promise<Map<string, any>> {
   if (allMarketsRead && Date.now() - allMarketsRead.at < 2_000) return allMarketsRead.body;
   const markets = Object.values(rt);
   const body = (async () => {
@@ -1978,7 +1978,7 @@ app.get("/api/candles/:symbol", async (req, res) => {
 async function traderPnlNow() {
   let traderPnl = 0;
   const markets = Object.values(rt);
-  const accounts = await allMarketAccounts();
+  const accounts = await marketsByAddress();
   for (const m of markets) {
     const ma = accounts.get(m.address.toBase58());
     if (!ma) continue;
