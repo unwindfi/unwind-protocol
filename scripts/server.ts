@@ -618,12 +618,53 @@ async function seedBars(m: MarketRt, tf: number): Promise<Candle[]> {
 }
 
 const refreshing = new Set<string>();
+/*
+ * The marks of markets with no candle source, one close a minute for two
+ * days, kept in .cache (which a deploy carries over). Their chart is the tape
+ * this venue keeps, and that tape lived only in memory: every restart wiped
+ * it and a listed market's chart started again from nothing. Remembering our
+ * own prints is not inventing history the mark lacks.
+ */
+const OBSERVED_TAPE_FILE = path.join(ROOT, ".cache", `${CLUSTER}-observed-tape.json`);
+const OBSERVED_TAPE_MS = 48 * 3600_000;
+let observedTape: Record<string, { t: number; p: number }[]> = {};
+try { observedTape = JSON.parse(fs.readFileSync(OBSERVED_TAPE_FILE, "utf8")); } catch { observedTape = {}; }
+setInterval(() => {
+  const now = Date.now();
+  const minute = Math.floor(now / 60_000) * 60_000;
+  for (const m of Object.values(rt)) {
+    if (m.def || !m.history.length) continue;
+    const rows = observedTape[m.symbol] ?? (observedTape[m.symbol] = []);
+    const p = m.history[m.history.length - 1].p;
+    if (rows.length && rows[rows.length - 1].t === minute) rows[rows.length - 1].p = p;
+    else rows.push({ t: minute, p });
+    while (rows.length && rows[0].t < now - OBSERVED_TAPE_MS) rows.shift();
+  }
+  try {
+    fs.mkdirSync(path.dirname(OBSERVED_TAPE_FILE), { recursive: true });
+    fs.writeFileSync(OBSERVED_TAPE_FILE, JSON.stringify(observedTape));
+  } catch (e: any) { console.warn(`observed tape: ${e?.message ?? e}`); }
+}, 60_000).unref();
+
+/// The kept tape as bars of `tf` seconds. Below a minute it has nothing to say.
+function observedBars(m: MarketRt, tf: number): Candle[] {
+  if (tf < 60) return [];
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  for (const { t, p } of observedTape[m.symbol] ?? []) {
+    const time = Math.floor(t / 1000 / tf) * tf;
+    if (!cur || cur.time !== time) { cur = { time, open: p, high: p, low: p, close: p }; out.push(cur); }
+    else { cur.high = Math.max(cur.high, p); cur.low = Math.min(cur.low, p); cur.close = p; }
+  }
+  return out;
+}
+
 async function fetchSeed(m: MarketRt, tf: number, key: string): Promise<Candle[]> {
   const hit = seeds[key];
   // A market listed against a pool has no candle source at all. Its chart is
-  // the tape this process keeps, and an empty seed is what says so -- inventing
-  // bars for it would be inventing the history the mark deliberately lacks.
-  if (!m.def) return [];
+  // the tape this venue keeps: what this process has seen, after what earlier
+  // processes kept (see observedBars).
+  if (!m.def) return observedBars(m, tf);
   try {
     const bars = await fetchCandles(m.def, tf);
     seeds[key] = { at: Date.now(), bars };
@@ -1623,8 +1664,13 @@ app.use("/fonts", express.static(path.join(ROOT, "node_modules/@fontsource/inter
 
 /// The whole market list, kept for a moment. Every open page polls it, and
 /// at twenty markets a read-through cost twenty-two RPC calls a request.
-let marketsMemo: { at: number; body: Promise<any> } | null = null;
+/// A request never waits on the chain while a list under half a minute old
+/// exists: it gets that list, and a stale one starts a single refresh behind
+/// the answer. Before, the first request after each three-second window sat
+/// through the whole read, about half a second on every page load.
+let marketsInFlight: Promise<any> | null = null;
 const MARKETS_FRESH_MS = 3_000;
+const MARKETS_SERVE_MS = 30_000;
 /// The last list that was read in full. When the chain cannot be read the
 /// page gets this, with the time it dates from in a header, rather than an
 /// error: a price a few seconds old beats a skeleton, and the page already
@@ -1633,13 +1679,14 @@ let marketsLast: { at: number; body: any } | null = null;
 
 app.get("/api/markets", async (_req, res) => {
   try {
-    if (!marketsMemo || Date.now() - marketsMemo.at >= MARKETS_FRESH_MS) {
-      const body = marketsView();
-      marketsMemo = { at: Date.now(), body };
-      body.then((b) => { marketsLast = { at: Date.now(), body: b }; },
-        () => { if (marketsMemo?.body === body) marketsMemo = null; });
+    const now = Date.now();
+    if (!marketsInFlight && (!marketsLast || now - marketsLast.at >= MARKETS_FRESH_MS)) {
+      const body = marketsView().then((b) => { marketsLast = { at: Date.now(), body: b }; return b; });
+      marketsInFlight = body;
+      body.catch(() => {}).finally(() => { if (marketsInFlight === body) marketsInFlight = null; });
     }
-    res.json(await marketsMemo.body);
+    if (marketsLast && now - marketsLast.at < MARKETS_SERVE_MS) return res.json(marketsLast.body);
+    res.json(await (marketsInFlight ?? Promise.resolve(marketsLast?.body)));
   } catch (e: any) {
     if (marketsLast) {
       res.set("X-Stale-Since", String(marketsLast.at));
