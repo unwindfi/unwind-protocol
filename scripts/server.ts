@@ -1386,7 +1386,20 @@ function ownerOf(req: any): PublicKey {
 
 function explain(e: any): string {
   const s = e?.toString?.() ?? String(e);
-  const m = s.match(/Error Message: ([^.]+)\./) || s.match(/Error Code: (\w+)/);
+  // A failed simulation says only "Simulation failed." and keeps its reason
+  // in the logs. Running short of SOL for rent was the usual one: a listing
+  // needs a few accounts' worth, and the page said nothing a lister could act on.
+  const logs = [...(e?.logs ?? e?.transactionLogs ?? []), s].join("\n");
+  const lamports = logs.match(/insufficient lamports (\d+), need (\d+)/);
+  if (lamports) {
+    const short = (Number(lamports[2]) - Number(lamports[1])) / 1e9;
+    return `Not enough SOL for rent and fees: about ${Math.max(short, 0.001).toFixed(3)} SOL more needed.`;
+  }
+  if (/insufficient funds|InsufficientFunds|0x1\b/.test(logs) && /Transfer|token/i.test(logs)) {
+    return "Not enough funds in the wallet for this.";
+  }
+  const m = s.match(/Error Message: ([^.]+)\./) || s.match(/Error Code: (\w+)/)
+    || logs.match(/Error Message: ([^.]+)\./);
   // A plain `throw new Error("...")` stringifies with its class in front, and
   // the page prints whatever comes back verbatim. The prefix is noise to a
   // reader who was told to paste a pool address.
@@ -1505,14 +1518,35 @@ async function keeper() {
 ///
 /// Scans every order in the program rather than one account's, for the same
 /// reason the liquidation pass does: an order nobody executes is not an order.
+/*
+ * The standing orders, kept in memory and checked against the live price
+ * every few seconds. Scanning the chain each pass costs a `getProgramAccounts`,
+ * so it used to run every three minutes, and a take profit whose price was
+ * crossed for a minute and a half was never filled: the scan stepped over it.
+ * The list is read again every minute and right after any transaction this
+ * server relays; the checks between reads cost nothing.
+ */
+let orderCache: { at: number; all: any[] } | null = null;
+const ORDER_CACHE_MS = 60_000;
+const ORDER_CHECK_MS = Number(process.env.ORDER_CHECK_MS ?? 3_000);
+const invalidateOrders = () => { orderCache = null; };
+/// Orders that were hit but refused, and when they may be tried again: a
+/// three-second check would otherwise send the same failing transaction
+/// twenty times a minute.
+const orderRetryAt = new Map<string, number>();
+
 async function orderKeeper() {
   let all: any[];
   try {
-    all = (await program.account.order.all()) as never;
+    if (!orderCache || Date.now() - orderCache.at > ORDER_CACHE_MS) {
+      orderCache = { at: Date.now(), all: (await program.account.order.all()) as never };
+    }
+    all = orderCache.all;
   } catch (e: any) {
     console.warn(`order scan: ${e.message}`);
     return;
   }
+  let fired = false;
 
   const byMarket = new Map<string, MarketRt>();
   for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
@@ -1527,6 +1561,7 @@ async function orderKeeper() {
     const hit = o.triggerAbove ? price >= trigger : price <= trigger;
     const expired = num(o.expiryTs) !== 0 && Date.now() / 1000 >= num(o.expiryTs);
     if (!hit && !expired) continue;
+    if ((orderRetryAt.get(entry.publicKey.toBase58()) ?? 0) > Date.now()) continue;
 
     try {
       const owner = new PublicKey(String(o.owner));
@@ -1546,6 +1581,7 @@ async function orderKeeper() {
         trigger, price, above: o.triggerAbove, expired,
       });
       orderFills.splice(20);
+      fired = true;
       console.log(
         `${expired ? "expired" : "filled"} order ${m.symbol} ` +
         `(${owner.toBase58().slice(0, 4)}…) trigger ${trigger} at ${price}`);
@@ -1553,8 +1589,11 @@ async function orderKeeper() {
       // A trigger that is reached but will not execute is worth knowing about:
       // the trader is watching an order that looks live and is not.
       console.warn(`order ${m.symbol} (${String(o.owner).slice(0, 4)}…): ${explain(e)}`);
+      orderRetryAt.set(entry.publicKey.toBase58(), Date.now() + 60_000);
     }
   }
+  // What fired is gone from the chain; read it again rather than retry it.
+  if (fired) invalidateOrders();
 }
 
 /// Keeps the funding index moving when nobody is trading.
@@ -2731,7 +2770,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     loop("flow", makeFlow(conn, authority, usdcMint, seeded), FLOW_MS);
   }
   // Offset, so the two heaviest calls in the process never coincide.
-  setTimeout(() => loop("orders", orderKeeper, KEEPER_MS), KEEPER_MS / 2);
+  // Every few seconds against the cached list (see orderCache).
+  setTimeout(() => loop("orders", orderKeeper, ORDER_CHECK_MS), 5_000);
   loop("crank", crank, CRANK_MS);
   // Pushing marks needs the keeper record first. Failing here is loud but
   // not fatal: without it every push is refused, and the loop says so.
@@ -3659,6 +3699,8 @@ app.post("/api/tx/send", async (req, res) => {
       blockhash: req.body.blockhash,
       lastValidBlockHeight: req.body.lastValidBlockHeight,
     }, "confirmed");
+    // A new, cancelled or changed order is in the next trigger check.
+    invalidateOrders();
     // Whatever it changed, no page should be shown the balance from before it.
     accountMemo.clear();
     if (req.body.record?.symbol) {
@@ -3669,7 +3711,9 @@ app.post("/api/tx/send", async (req, res) => {
       }
     }
     if (Date.now() - listingBuiltAt < 5 * 60_000) {
-      void rpcWho.run("discover", async () => { await discoverMarkets(); await refreshListedDay(); })
+      // Then its first price straight away, not at the next minute's pass:
+      // the page promises it tradeable within seconds of listing.
+      void rpcWho.run("discover", async () => { await discoverMarkets(); await observer(); await refreshListedDay(); })
         .catch((e: any) => console.warn(`discover after listing: ${e?.message ?? e}`));
     }
     res.json({ ok: true, sig });

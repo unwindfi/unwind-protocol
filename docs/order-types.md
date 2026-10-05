@@ -71,6 +71,10 @@ no privileged execution path, which is consistent with clearing, settlement
 and liquidation being permissionless for the same reason: none of these
 operations accepts a price or a discretionary input from its caller.
 
+On devnet the venue's own server watches every order and checks each trigger
+against the mark every three seconds, so a take profit or stop fires within a
+few seconds of its price being reached.
+
 A trader may hold several orders against a single market simultaneously. A
 take profit and a stop loss on the same position is the ordinary case.
 
