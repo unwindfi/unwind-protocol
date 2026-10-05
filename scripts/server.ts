@@ -81,10 +81,13 @@ const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
 /// Markets the auction is working on right now, so a pass starts each one
 /// at most once.
 const auctionWorking = new Set<string>();
-/// How many markets the auction works at once (see `auction`).
-const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 6);
+/// How many markets the auction works at once (see `auction`). Twelve since
+/// the address cache freed the CPU: at six, with twenty-odd markets due under
+/// load, the rest waited for a slot, and that wait was most of the slowest
+/// fills (25 to 30s at the 95th percentile).
+const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 12);
 /// How many settlement transactions one market sends at once.
-const SETTLE_PARALLEL = Number(process.env.SETTLE_PARALLEL ?? 4);
+const SETTLE_PARALLEL = Number(process.env.SETTLE_PARALLEL ?? 6);
 /// How many marks the keeper pushes at once (see `observer`).
 const MARK_PARALLEL = Number(process.env.MARK_PARALLEL ?? 8);
 /// Until when the auction runs at full speed: set when a batch is seen
