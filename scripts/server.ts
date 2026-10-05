@@ -659,12 +659,96 @@ function observedBars(m: MarketRt, tf: number): Candle[] {
   return out;
 }
 
+/*
+ * The real token's history, for a devnet market listed on a test copy of it.
+ *
+ * The seeded pools hold the real token's price (testnet-flow.ts), so the
+ * real token's own chart is this market's chart before the venue's tape
+ * begins. Read from the token's deepest mainnet pool on GeckoTerminal, whose
+ * free API allows about thirty calls a minute: calls are spaced two seconds
+ * apart, each chart is kept five minutes and answered stale while it
+ * refreshes, and a failure leaves the market on its own tape.
+ */
+const GT = "https://api.geckoterminal.com/api/v2/networks/solana";
+const GT_FRAMES: Record<number, [string, number]> = {
+  60: ["minute", 1], 300: ["minute", 5], 900: ["minute", 15],
+  3600: ["hour", 1], 14400: ["hour", 4], 86400: ["day", 1],
+};
+let gtNext = 0;
+async function gtGet(url: string): Promise<any> {
+  const wait = gtNext - Date.now();
+  gtNext = Math.max(Date.now(), gtNext) + 2_100;
+  if (wait > 0) await new Promise((ok) => setTimeout(ok, wait));
+  const r = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`geckoterminal ${r.status}`);
+  return r.json();
+}
+/// Mainnet mint of the real token a seeded pool copies, by the pool's address.
+let shadowMints: Map<string, string> | null = null;
+async function realMintOf(m: MarketRt): Promise<string | null> {
+  if (CLUSTER !== "devnet" || !m.observed) return null;
+  if (!shadowMints) {
+    const { SHADOWS } = await import("./testnet-flow");
+    shadowMints = new Map(seeded
+      .filter((p) => SHADOWS[p.symbol]?.symbol === p.symbol)
+      .map((p) => [p.pair, SHADOWS[p.symbol].mint]));
+  }
+  return shadowMints.get(m.observed.source.toBase58()) ?? null;
+}
+const realPools = new Map<string, { pool: string; side: "base" | "quote" }>();
+const realSeeds = new Map<string, { at: number; bars: Candle[] }>();
+const realRefreshing = new Set<string>();
+async function fetchRealBars(mint: string, tf: number, unitExp: number): Promise<Candle[]> {
+  let p = realPools.get(mint);
+  if (!p) {
+    const j = await gtGet(`${GT}/tokens/${mint}/pools?page=1`);
+    const top = j?.data?.[0];
+    if (!top) throw new Error("no mainnet pool");
+    p = {
+      pool: top.attributes.address,
+      side: top.relationships.base_token.data.id === `solana_${mint}` ? "base" : "quote",
+    };
+    realPools.set(mint, p);
+  }
+  const [frame, agg] = GT_FRAMES[tf];
+  const j = await gtGet(`${GT}/pools/${p.pool}/ohlcv/${frame}?aggregate=${agg}&limit=1000&currency=usd&token=${p.side}`);
+  const unit = 10 ** unitExp;
+  return ((j?.data?.attributes?.ohlcv_list ?? []) as number[][])
+    .map(([time, open, high, low, close]) => ({
+      time, open: open * unit, high: high * unit, low: low * unit, close: close * unit,
+    }))
+    .sort((a, b) => a.time - b.time);
+}
+async function realBars(m: MarketRt, tf: number): Promise<Candle[]> {
+  if (!GT_FRAMES[tf]) return [];
+  const mint = await realMintOf(m);
+  if (!mint) return [];
+  const key = `${mint}:${tf}`;
+  const hit = realSeeds.get(key);
+  const load = () => fetchRealBars(mint, tf, m.observed?.unitExp ?? 0)
+    .then((bars) => { realSeeds.set(key, { at: Date.now(), bars }); return bars; })
+    .catch((e: any) => { console.warn(`real candles ${m.symbol}@${tf}s: ${e?.message ?? e}`); return hit?.bars ?? []; });
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.bars;
+  if (hit) {
+    if (!realRefreshing.has(key)) {
+      realRefreshing.add(key);
+      void load().finally(() => realRefreshing.delete(key));
+    }
+    return hit.bars;
+  }
+  return load();
+}
+
 async function fetchSeed(m: MarketRt, tf: number, key: string): Promise<Candle[]> {
   const hit = seeds[key];
-  // A market listed against a pool has no candle source at all. Its chart is
-  // the tape this venue keeps: what this process has seen, after what earlier
-  // processes kept (see observedBars).
-  if (!m.def) return observedBars(m, tf);
+  // A market listed against a pool has no candle source of its own. Its
+  // chart is the tape this venue keeps (see observedBars), and on devnet,
+  // before that, the real token's history (see realBars).
+  if (!m.def) {
+    const [real, kept] = await Promise.all([realBars(m, tf), Promise.resolve(observedBars(m, tf))]);
+    const from = kept.length ? kept[0].time : Infinity;
+    return [...real.filter((c) => c.time < from), ...kept];
+  }
   try {
     const bars = await fetchCandles(m.def, tf);
     seeds[key] = { at: Date.now(), bars };

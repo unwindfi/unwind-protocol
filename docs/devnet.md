@@ -27,7 +27,9 @@ once a day.
   devnet tokens under the real tickers, each in a Meteora DLMM pool against
   test USDC. A server process reads the real token's price on mainnet
   (Jupiter) every two minutes and swaps in the devnet pool until it matches,
-  so the markets move the way the real tokens do. They are listed through the
+  so the markets move the way the real tokens do. Their charts start with the
+  real token's history from its deepest mainnet pool (GeckoTerminal), then
+  continue with the venue's own prints. They are listed through the
   ordinary permissionless path, priced from their pools like any market
   somebody opens (see [Price sources](price-sources.md)).
 - **WIND, KITE and YAK.** Invented tokens with their own pools, left for

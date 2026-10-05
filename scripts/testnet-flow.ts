@@ -3,9 +3,10 @@
 /// Nobody trades the pools `seed-devnet-pools.ts` made, so without this their
 /// prices, and the markets listed on them, would sit still forever. Each one
 /// shadows a real token instead: every pass reads the real token's price on
-/// mainnet (Jupiter) and swaps in the devnet pool until the pool has moved by
-/// the same percentage since this process started. The charts get real
-/// volatility and real trends, while the tokens stay plainly made up.
+/// mainnet (Jupiter) and swaps in the devnet pool. A test copy of a real token
+/// is held at the real price, so its chart can carry the real token's history
+/// from its mainnet pool; an invented token moves by the same percentage as
+/// the real one it follows, from its own made-up price.
 ///
 /// The swaps are ordinary DLMM swaps, so everything downstream (the observed
 /// mark, its velocity clamp, depth, budgets) sees exactly what it would see if
@@ -92,11 +93,17 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
   async function follow(s: Seeded, realPrice: number) {
     const dlmm = await DLMM.create(conn, new PublicKey(s.pair));
     const now = Number((await dlmm.getActiveBin()).pricePerToken);
-    // Anchored at the first pass, so a restart re-bases rather than jumping
-    // the pool to wherever the real token has gone since.
-    let a = anchors.get(s.symbol);
-    if (!a) { a = { real: realPrice, pool: now }; anchors.set(s.symbol, a); }
-    const target = a.pool * (realPrice / a.real);
+    // A copy of a real token is held at the real price itself: its chart
+    // draws the real token's history from its mainnet pool, and a pool at its
+    // own offset would trade at a level that history never shows. One that
+    // drifted is walked back in a pass. An invented token keeps its own price
+    // and follows the real one's moves from where it was when this started.
+    let target = realPrice;
+    if (SHADOWS[s.symbol].symbol !== s.symbol) {
+      let a = anchors.get(s.symbol);
+      if (!a) { a = { real: realPrice, pool: now }; anchors.set(s.symbol, a); }
+      target = a.pool * (realPrice / a.real);
+    }
 
     if (Math.abs(target / now - 1) > DEADBAND) {
       await swapTo(dlmm, s, target, target > now);
