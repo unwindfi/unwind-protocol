@@ -345,18 +345,17 @@ fn an_accepted_open_is_inside_the_open_interest_cap() {
     }
 }
 
-/// An open that passes `check_open` reserves exactly its size times the
-/// market's PnL reserve rate, rounded down, and that reservation fits the
-/// pool: locked stays within liquidity and within the utilization cap, with
-/// no rounding in the pool's favour. Bounds: sizes and pool balances below
-/// 2^8, any reserve rate and utilization cap.
+/// An open that passes `check_open` reserves nothing, whatever the market's
+/// PnL reserve rate: profit is held to what the market can pay by the
+/// haircut at close, not by liquidity set aside at open. Bounds: sizes and
+/// pool balances below 2^8, any reserve rate and utilization cap.
 #[kani::proof]
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
 #[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
 #[kani::solver(cadical)]
-fn an_accepted_open_reserves_its_share_and_fits_the_pool() {
+fn an_accepted_open_reserves_nothing() {
     let p = pool();
     let mut m = market();
     m.max_leverage_bps = u32::MAX;
@@ -370,12 +369,7 @@ fn an_accepted_open_reserves_its_share_and_fits_the_pool() {
     let size = byte();
 
     if let Ok(plan) = check_open(&p, &m, &pos, is_long, 1, size, 1) {
-        let want = size as u128 * m.pnl_reserve_bps as u128;
-        let lock = plan.extra_lock as u128;
-        assert!(lock * BPS <= want && want < (lock + 1) * BPS);
-        let locked = p.locked_usd as u128 + lock;
-        assert!(locked <= p.liquidity_usd as u128);
-        assert!(locked * BPS <= p.max_utilization_bps as u128 * p.liquidity_usd as u128);
+        assert!(plan.extra_lock == 0);
     }
 }
 

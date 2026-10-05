@@ -776,9 +776,6 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
         <span className={tone(account.unrealized)}>{money(account.unrealized)}</span>
       </KV>
       <KV k="LP Position">{money(account.lp.value)}</KV>
-      <KV k="Pool Utilization">
-        {account.pool.utilization.toFixed(2)}% / {account.pool.maxUtilization}%
-      </KV>
       <KV k="Insurance Fund">{money(account.pool.insurance)}</KV>
     </div>
   );

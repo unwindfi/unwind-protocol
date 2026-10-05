@@ -350,7 +350,7 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
     require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
     require!(!ctx.accounts.market.paused, PerpError::MarketPaused);
 
-    let utilization = ctx.accounts.pool.utilization_bps();
+    let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
     ctx.accounts
         .market
         .accrue_funding(clock.unix_timestamp, utilization)?;

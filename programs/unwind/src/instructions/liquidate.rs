@@ -83,7 +83,7 @@ pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
     require!(ctx.accounts.position.is_open(), PerpError::PositionEmpty);
 
     let clock = Clock::get()?;
-    let utilization = ctx.accounts.pool.utilization_bps();
+    let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
     ctx.accounts
         .market
         .accrue_funding(clock.unix_timestamp, utilization)?;

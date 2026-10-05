@@ -87,20 +87,16 @@ from the row.
 
 ## Withdrawing
 
-A backer may withdraw at any time, bounded twice: by what their shares are
-worth after the market's losses, and by what the market still has to cover.
-What stays behind must cover both the reserve its open positions have locked
-and whatever those positions are already winning at the current price.
+A backer may withdraw all of their stake at any time, bounded only by what
+their shares are worth after the market's losses. Nothing is held back for
+open positions.
 
-The second part is what stops a backer who sees the market move against the
-pool from leaving first. Without it, the budget would shrink just before the
-winners closed, and their profit would fall on the liquidity providers, who
-never underwrote the market. A market with no open positions needs no price to
-withdraw from, so backing is never stuck behind a market whose price source
-has stopped.
-
-The withdraw dialog shows how much can come out now, and a request for more is
-answered with the amount held for open positions and the most you can take.
+Withdrawing lowers the market's loss budget to the backing that is left. A
+backer who leaves while traders are winning does not hand that profit to the
+liquidity providers: winners are only ever paid out of the remaining budget,
+at a fair share when it falls short (see [Profit haircuts](auto-deleveraging.md)).
+So the cost of a backer leaving early falls on the market's winners, not on
+capital that never underwrote it.
 
 ## Why anyone would do it
 

@@ -184,6 +184,12 @@ export function StatTiles({ m, dense = false }: {
           {price(m.price)}
         </Stat>
       )}
+      {/* Only when it binds: at 100% every winner is paid in full. */}
+      {m.payoutPct != null && m.payoutPct < 99.95 && (
+        <Stat label="Profit paid" help="This market can't cover every winner in full right now. A winning close is paid this share of its profit; losses are collected in full.">
+          <span className="text-down">{m.payoutPct.toFixed(1)}%</span>
+        </Stat>
+      )}
       <Stat label="Spread" help="Bid to ask. A long closes at the bid, a short at the ask; PnL is taken there.">
         {(m.spreadBps / 50).toFixed(3)}%
       </Stat>

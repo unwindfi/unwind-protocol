@@ -481,6 +481,39 @@ impl Market {
         long.checked_add(short).ok_or_else(|| PerpError::MathOverflow.into())
     }
 
+    /// The profit every winning side holds at `price`: each side's PnL where
+    /// it is positive, the losing side counted as zero rather than netted
+    /// against it. What a fair-share payout divides by.
+    pub fn winning_pnl_usd(&self, price: u64) -> Result<u64> {
+        let side = |is_long: bool, size: u64, entry: u64| -> Result<u64> {
+            if size == 0 {
+                return Ok(0);
+            }
+            Ok(position_pnl_usd(is_long, size, entry, price)?.max(0) as u64)
+        };
+        let long = side(true, self.long_size_usd, self.long_avg_entry_price)?;
+        let short = side(false, self.short_size_usd, self.short_avg_entry_price)?;
+        long.checked_add(short).ok_or_else(|| PerpError::MathOverflow.into())
+    }
+
+    /// How much of the pool this market's book leans on, for the borrow rate:
+    /// the imbalance between its sides as a share of the pool's liquidity.
+    ///
+    /// It used to be the liquidity reserved against open positions, and
+    /// nothing is reserved any more. A balanced book costs the pool nothing,
+    /// so it borrows nothing; what the pool is exposed to is the side it is
+    /// left holding.
+    pub fn utilization_bps(&self, pool_liquidity_usd: u64) -> u16 {
+        let net = self.long_size_usd.abs_diff(self.short_size_usd);
+        if net == 0 {
+            return 0;
+        }
+        if pool_liquidity_usd == 0 {
+            return BPS as u16;
+        }
+        ((net as u128) * BPS / (pool_liquidity_usd as u128)).min(BPS) as u16
+    }
+
     fn rate_to_index_delta(rate_bps_per_hour: u128, elapsed: i64) -> Result<i128> {
         let numer = rate_bps_per_hour
             .checked_mul(FUNDING_SCALE as u128)

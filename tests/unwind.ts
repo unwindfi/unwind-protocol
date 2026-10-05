@@ -346,8 +346,10 @@ describe("unwind", () => {
     // Entry is the index plus the spread, so strictly worse than $200.
     assert.isTrue(pos.entryPrice.gt(PRICE(200)));
 
+    // Nothing is held against an open: profit is held to what the market
+    // can pay by the haircut at close.
     const poolMid = await program.account.pool.fetch(pool);
-    assert.equal(poolMid.lockedUsd.toString(), USD(10_000).toString());
+    assert.equal(poolMid.lockedUsd.toString(), "0");
 
     await close(new BN(0), "at_220"); // +10% on the index
     const after = await getAccount(provider.connection, traderUsdc);
@@ -359,7 +361,7 @@ describe("unwind", () => {
     assert.isBelow(pnl, 1000, `win should be net of costs, got ${pnl}`);
 
     const p = await program.account.pool.fetch(pool);
-    assert.equal(p.lockedUsd.toString(), "0", "reserve must be released");
+    assert.equal(p.lockedUsd.toString(), "0", "nothing was held");
     assert.isBelow(
       p.liquidityUsd.toNumber(), USD(500_000).toNumber(),
       "the pool is the counterparty and must be down"
@@ -585,29 +587,26 @@ describe("unwind", () => {
     );
   });
 
-  it("lets LPs withdraw only unlocked capital", async () => {
-    await open(true, USD(50_000), USD(400_000), "at_200"); // locks $400k
+  it("lets LPs withdraw with positions open, since nothing is held for them", async () => {
+    await open(true, USD(50_000), USD(400_000), "at_200");
 
-    const p = await program.account.pool.fetch(pool);
-    const tooMuch = p.liquidityUsd.sub(p.lockedUsd).add(USD(1));
+    // Half the pool: far past what the old $400k reserve would have left free.
     const lpSupply = (await getAccount(provider.connection, lpLp)).amount;
-
-    try {
-      await program.methods
-        .removeLiquidity(new BN(lpSupply.toString()), new BN(0))
-        .accounts({
-          owner: lp.publicKey,
-          pool, usdcMint, usdcVault, lpMint,
-          ownerUsdc: lpUsdc, ownerLp: lpLp,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .remainingAccounts(await allMarkets(oracle("at_200")))
-        .signers([lp])
-        .rpc();
-      assert.fail("expected locked capital to be unwithdrawable");
-    } catch (e) {
-      assert.include(e.toString(), "InsufficientLiquidity");
-    }
+    const half = new BN((lpSupply / 2n).toString());
+    const before = (await getAccount(provider.connection, lpUsdc)).amount;
+    await program.methods
+      .removeLiquidity(half, new BN(0))
+      .accounts({
+        owner: lp.publicKey,
+        pool, usdcMint, usdcVault, lpMint,
+        ownerUsdc: lpUsdc, ownerLp: lpLp,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts(await allMarkets(oracle("at_200")))
+      .signers([lp])
+      .rpc();
+    const after = (await getAccount(provider.connection, lpUsdc)).amount;
+    assert.isTrue(after > before, "the withdrawal paid out");
 
     await close(new BN(0), "at_200");
   });

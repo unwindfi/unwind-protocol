@@ -674,51 +674,25 @@ describe("system", () => {
   });
 
   describe("auto-deleveraging", () => {
-    it("refuses a position the reserve still covers", async () => {
-      await setParams("JJJ", {});
+    it("refuses every position, since a winner is haircut at close instead", async () => {
+      await setParams("JJJ", { pnlReserveBps: 1_000 });
       await post("JJJ", 100);
-      await open("JJJ", alice, true, USD(2_000), USD(10_000));
-      await post("JJJ", 104);
+      await open("JJJ", alice, true, USD(2_000), USD(15_000));
+      // Profit far past what a 10% reserve would have covered.
+      await post("JJJ", 130);
 
       try {
         await perps.methods.autoDeleverage().accounts(adlAccounts("JJJ", alice.publicKey)).rpc();
-        assert.fail("a covered position must not be deleveraged");
+        assert.fail("deleveraging is retired");
       } catch (e: any) {
         assert.include(e.toString(), "PositionCovered");
       }
 
-      await close("JJJ", alice);
-      await post("JJJ", 100);
-    });
-
-    it("closes a position whose profit has outgrown its reserve, paying it in full", async () => {
-      // A thin reserve, so a modest move puts the profit past what the pool set
-      // aside against this position.
-      await setParams("JJJ", { pnlReserveBps: 1_000 });
-      await post("JJJ", 100);
-      await open("JJJ", alice, true, USD(2_000), USD(15_000));
-
-      const reserved = (await perps.account.position.fetch(
-        positionPda(markets.get("JJJ")!, alice.publicKey))).lockedUsd.toNumber();
-
-      await post("JJJ", 130);
-
+      // The ordinary close pays the profit, the budget being there for it.
       const before = Number((await getAccount(conn, usdcOf.get(alice.publicKey.toBase58())!)).amount);
-      await perps.methods.autoDeleverage()
-        .accounts(adlAccounts("JJJ", alice.publicKey))
-        .rpc();
+      await close("JJJ", alice);
       const after = Number((await getAccount(conn, usdcOf.get(alice.publicKey.toBase58())!)).amount);
-
-      const pos = await perps.account.position.fetch(
-        positionPda(markets.get("JJJ")!, alice.publicKey));
-      assert.equal(pos.sizeUsd.toNumber(), 0, "the position is closed");
-
-      // Full equity, no penalty: more than the collateral they put up.
-      const paid = after - before;
-      assert.isAbove(paid, USD(2_000).toNumber(),
-        "a deleveraged trader keeps their profit");
-      // And the profit really had outgrown the reserve, which is the trigger.
-      assert.isAbove(paid - USD(2_000).toNumber(), reserved * 0.5);
+      assert.isAbove(after - before, USD(2_000).toNumber(), "the winner keeps their profit");
 
       await setParams("JJJ", {});
       await post("JJJ", 100);

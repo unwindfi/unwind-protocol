@@ -47,10 +47,12 @@ than fill at an old price. Liquidation does not depend on them.
 
 A market's losses are paid in order: the backing posted behind it, then pool
 liquidity up to the market's loss budget, then the insurance fund. A winner is
-never paid past its reserve or its market's budget; it is closed at the mark
-instead, so a profitable position can be closed early and paid less than its
-paper gain. See [Loss budget](loss-budget.md) and
-[Auto-deleveraging](auto-deleveraging.md).
+never paid past its market's budget: when the market cannot cover every
+winner, each winning close is paid the same fair share of its profit and the
+rest is not paid, so a profitable position can be paid less than its paper
+gain. Backers can withdraw at any time, which lowers the budget winners are
+paid from. See [Loss budget](loss-budget.md) and
+[Profit haircuts](auto-deleveraging.md).
 
 ## Backing and the pool
 

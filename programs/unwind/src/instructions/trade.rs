@@ -120,8 +120,13 @@ pub fn check_open(
         PerpError::OpenInterestCapExceeded
     );
 
-    let extra_lock = mul_div_u64(size_usd, market.pnl_reserve_bps as u128, BPS)?;
-    // The pool's utilization cap protects the LPs in aggregate.
+    // Nothing is held against an open. Reserving the full notional on both
+    // sides froze backing a balanced book never needed, and a backer of a
+    // market with open interest could withdraw nothing. What bounds a market
+    // now is what bounds its payouts: profit is paid only as far as the market
+    // can pay it (`haircut_profit_usd`), so open size needs no reserve behind
+    // it. `pnl_reserve_bps` is kept on the account and no longer read.
+    let extra_lock = 0;
     pool.check_lock(extra_lock)?;
 
     Ok(OpenPlan {
@@ -325,6 +330,38 @@ pub fn payable_usd(market: &Market, settlement: &Settlement) -> u64 {
     settlement
         .equity_usd
         .min(settlement.collateral_share.saturating_add(market.remaining_budget_usd()))
+}
+
+/// The part of `owed_usd`, a winner's profit past its collateral, that its
+/// market can pay at `price`.
+///
+/// A fair share rather than first come: when the market cannot pay every
+/// winner in full, each is paid the same fraction of what it is owed,
+/// `available / winners`, where `available` is what the market's budget and
+/// the vault can still cover and `winners` is the profit every winning side
+/// holds at this price. The rest is not paid. Nothing is reserved when a
+/// position opens, so this is what stands between open interest and the
+/// LPs: no close is ever paid more than its market was underwritten for, and
+/// no winner can beat another to the money by closing first.
+///
+/// `winners` is read from the market's side aggregates, so a side holding
+/// both winners and losers counts net; it is never taken below `owed_usd`,
+/// which keeps a single payout within `available` whatever the aggregate says.
+pub fn haircut_profit_usd(pool: &Pool, market: &Market, owed_usd: u64, price: u64) -> Result<u64> {
+    if owed_usd == 0 {
+        return Ok(0);
+    }
+    let available = market.remaining_budget_usd().min(
+        market
+            .backing_usd
+            .saturating_add(pool.liquidity_usd)
+            .saturating_add(pool.insurance_usd),
+    );
+    let winners = market.winning_pnl_usd(price)?.max(owed_usd);
+    if winners <= available {
+        return Ok(owed_usd);
+    }
+    mul_div_u64(owed_usd, available as u128, winners as u128)
 }
 
 /// Moves the settled amounts between the pool's books and pays the trader.
@@ -552,6 +589,8 @@ pub struct Close {
     pub remaining_usd: u64,
     /// Part of `fee_usd` paid to the market's backers rather than its LPs.
     pub backer_fee_usd: u64,
+    /// Profit owed and not paid, because the market could not cover it.
+    pub haircut_usd: u64,
 }
 
 /// Unwinds `close_size` of a position at `fill` and leaves the payout owing.
@@ -611,7 +650,12 @@ pub fn book_close_at(
 
     let settlement = settle(position, market, close_size, fill)?;
     let fee_usd = close_fee_usd(market, close_size, discount_bps)?.min(settlement.equity_usd);
-    let payout = settlement.equity_usd - fee_usd;
+    // Profit past the collateral is paid at the market's fair-share rate,
+    // read before this close leaves the side aggregates it is counted in.
+    let gross = settlement.equity_usd - fee_usd;
+    let owed = gross.saturating_sub(settlement.collateral_share);
+    let haircut_usd = owed - haircut_profit_usd(pool, market, owed, fill)?;
+    let payout = gross - haircut_usd;
 
     let backer_fee_usd = apply_settlement_to_pool(
         pool, market, &settlement, payout, fee_usd, close_size, is_long,
@@ -649,6 +693,7 @@ pub fn book_close_at(
         funding_usd: settlement.funding_usd,
         remaining_usd: remaining,
         backer_fee_usd,
+        haircut_usd,
     })
 }
 
@@ -693,6 +738,17 @@ pub struct PositionClosed {
     pub pnl_usd: i64,
     pub funding_usd: i64,
     pub fee_usd: u64,
+    pub payout_usd: u64,
+}
+
+/// Profit a close was owed and not paid, because its market could not cover
+/// every winner in full (`haircut_profit_usd`).
+#[event]
+pub struct ProfitHaircut {
+    pub position: Pubkey,
+    pub owner: Pubkey,
+    pub market: Pubkey,
+    pub haircut_usd: u64,
     pub payout_usd: u64,
 }
 
@@ -913,20 +969,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_settled_open_reserves_against_the_budget_even_past_its_cap() {
+    fn an_open_holds_nothing_back_and_the_pool_keeps_quoting() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
-        // A market underwritten for $100 cannot quote $5,000 of notional from
-        // the pool -- `clear_batch` sizes the pool's share to zero -- but a
-        // fill that reached settlement crossed another trader and is owed.
-        // It is booked, and the reservation it carries is what keeps the pool
-        // out of later batches.
+        // A market underwritten for $100 takes a $5,000 open without setting
+        // anything aside: what limits it is what a winner can be paid, which
+        // the haircut at close holds to the budget.
         m.loss_budget_usd = 100_000_000;
-        assert_eq!(pool_quote_ceiling(&p, &m).unwrap(), 80_000_000);
         book_open(&mut p, &mut m, &mut pos, Pubkey::default(), 1, true,
                   1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
         assert_eq!(pos.size_usd, 5_000_000_000);
-        assert_eq!(m.locked_usd, 5_000_000_000);
-        assert_eq!(pool_quote_ceiling(&p, &m).unwrap(), 0);
+        assert_eq!((pos.locked_usd, m.locked_usd, p.locked_usd), (0, 0, 0));
+        assert_eq!(pool_quote_ceiling(&p, &m).unwrap(), u64::MAX);
     }
 
     #[test]
@@ -939,12 +992,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_open_past_the_pools_utilization_cap_is_refused_by_the_check() {
+    fn a_lock_left_from_before_does_not_refuse_an_open() {
         let (mut p, m, pos) = (pool(), market(), position());
-        // 80% of $10m may be locked; leave room for less than this open.
-        p.locked_usd = 8_000_000_000_000 - 1_000_000_000;
-        assert!(check_open(&p, &m, &pos, true, 1_000_000_000, 5_000_000_000, PX).is_err());
-        assert!(check_open(&p, &m, &pos, true, 1_000_000_000, 1_000_000_000, PX).is_ok());
+        // Positions opened before reserves were retired still hold theirs,
+        // even past the cap; a new open adds nothing and is not refused.
+        p.locked_usd = 9_000_000_000_000;
+        assert!(check_open(&p, &m, &pos, true, 1_000_000_000, 5_000_000_000, PX).is_ok());
     }
 
     fn batch_order(owner: Pubkey, is_bid: bool, size: u64, collateral: u64, filled: u64,
@@ -976,13 +1029,6 @@ pub(crate) mod tests {
     fn a_market_with_its_budget_spent_still_settles_every_order() {
         let (mut p, mut m) = (pool(), market());
         m.loss_budget_usd = 100_000_000_000; // $100k
-        // Reserved right up to the cap, as the imbalanced flow left it.
-        m.locked_usd = m.lock_headroom_usd(p.max_utilization_bps);
-        p.locked_usd = m.locked_usd;
-        assert_eq!(m.lock_headroom_usd(p.max_utilization_bps), 0);
-
-        // The pool does not quote into a market with no headroom.
-        assert_eq!(pool_quote_ceiling(&p, &m).unwrap(), 0);
 
         // A trader already long and well in profit, closing.
         let winner = Pubkey::new_unique();
@@ -1016,64 +1062,51 @@ pub(crate) mod tests {
         assert_eq!(long_pos.size_usd, 10_000_000_000);
         assert_eq!(short_pos.size_usd, 5_000_000_000);
 
-        // The close cannot be paid from a spent budget, so it settles unfilled
-        // instead of reverting, and the position is left for a later batch or
-        // for deleveraging.
-        let close = batch_order(winner, false, 5_000_000_000, 0, 5_000_000_000, true);
-        let size = close_within_budget(&p, &winner_pos, &m, close.filled_usd, fill).unwrap();
-        assert_eq!(size, 0);
-        assert_eq!(winner_pos.size_usd, 5_000_000_000);
-
-        // And it is not stuck there: its profit is well inside its reserve,
-        // but the budget cannot pay it, so deleveraging may close it at the
-        // mark. It gets its collateral back and what the budget still has;
-        // the rest of the profit is not paid, and the market never costs the
-        // pool more than it was underwritten for.
+        // The close fills in full rather than reverting or sitting unfilled.
+        // A spent budget pays no profit: the winner gets its collateral back
+        // (less the fee), the profit is cut to nothing, and the market never
+        // costs the pool more than it was underwritten for.
         let whole = settle(&winner_pos, &m, winner_pos.size_usd, fill).unwrap();
-        assert!((whole.pnl_usd as u64) < winner_pos.locked_usd);
-        assert!(deleverage_due(&winner_pos, &m, &whole));
-        let payout = payable_usd(&m, &whole);
-        assert!(payout < whole.equity_usd, "the budget cannot cover all of it");
-        assert_eq!(payout, whole.collateral_share + m.remaining_budget_usd());
-        apply_settlement_to_pool(&mut p, &mut m, &whole, payout, 0,
-                                 winner_pos.size_usd, true).unwrap();
+        let closed = book_close(&mut p, &mut m, &mut winner_pos, 5_000_000_000, fill, 1).unwrap();
+        assert_eq!(winner_pos.size_usd, 0);
+        assert!(closed.payout_usd <= whole.collateral_share);
+        assert!(closed.haircut_usd > 0);
         assert_eq!(m.remaining_budget_usd(), 0);
         assert!(m.net_loss_usd as u64 <= m.loss_budget_usd, "never past the budget");
     }
 
     #[test]
-    fn a_winner_the_budget_can_pay_is_not_deleveraged() {
+    fn deleveraging_is_never_due() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
         book_open(&mut p, &mut m, &mut pos, Pubkey::new_unique(), 1, true,
                   1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
-        let up = PX + PX / 10;
-        let s = settle(&pos, &m, pos.size_usd, up).unwrap();
-        assert!(!deleverage_due(&pos, &m, &s), "$1m of budget covers $500");
-
-        // Leave less budget than the $500 it is owed and it becomes due.
-        m.charge_loss(m.remaining_budget_usd() - 400_000_000).unwrap();
-        assert!(deleverage_due(&pos, &m, &s));
-
-        // A loser never is, however empty the budget.
-        m.charge_loss(m.remaining_budget_usd()).unwrap();
-        let down = settle(&pos, &m, pos.size_usd, PX - PX / 10).unwrap();
-        assert!(!deleverage_due(&pos, &m, &down));
+        // Not with budget to spare, not with none, not up, not down: a winner
+        // the market cannot pay is haircut at close instead.
+        for spend in [0, 1] {
+            if spend == 1 {
+                m.charge_loss(m.remaining_budget_usd()).unwrap();
+            }
+            for price in [PX + PX / 10, PX * 3, PX - PX / 10] {
+                let s = settle(&pos, &m, pos.size_usd, price).unwrap();
+                assert!(!deleverage_due(&pos, &m, &s));
+            }
+        }
     }
 
     #[test]
-    fn a_winning_close_fills_only_as_far_as_the_pool_can_pay() {
+    fn a_winning_close_is_paid_only_what_the_pool_holds() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
         book_open(&mut p, &mut m, &mut pos, Pubkey::new_unique(), 1, true,
                   1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
         // Budget to spare, but $300 between LP liquidity and insurance against
-        // $500 owed. The full close would fail in `Pool::pay_out`.
+        // $500 owed. Paying it all would fail in `Pool::pay_out`.
         p.liquidity_usd = 200_000_000;
         p.insurance_usd = 100_000_000;
         let up = PX + PX / 10;
-        let size = close_within_budget(&p, &pos, &m, 5_000_000_000, up).unwrap();
-        assert!(size > 0 && size < 5_000_000_000, "partial fill, got {size}");
-        book_close(&mut p, &mut m, &mut pos, size, up, 1).unwrap();
-        assert!(p.liquidity_usd + p.insurance_usd < 1_000_000);
+        let closed = book_close(&mut p, &mut m, &mut pos, 5_000_000_000, up, 1).unwrap();
+        assert_eq!(pos.size_usd, 0, "fills in full");
+        assert_eq!(closed.haircut_usd, 200_000_000);
+        assert_eq!(p.liquidity_usd + p.insurance_usd, 0);
     }
 
     #[test]
@@ -1090,7 +1123,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_winning_close_fills_as_far_as_the_budget_reaches() {
+    fn a_winning_close_past_the_budget_fills_in_full_at_a_haircut() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
         m.close_fee_bps = 10;
         book_open(&mut p, &mut m, &mut pos, Pubkey::new_unique(), 1, true,
@@ -1099,14 +1132,40 @@ pub(crate) mod tests {
         // $200 of budget: under half of that.
         m.charge_loss(m.remaining_budget_usd() - 200_000_000).unwrap();
         let up = PX + PX / 10;
-        let size = close_within_budget(&p, &pos, &m, 5_000_000_000, up).unwrap();
-        assert!(size > 0 && size < 5_000_000_000, "partial fill, got {size}");
+        let closed = book_close(&mut p, &mut m, &mut pos, 5_000_000_000, up, 1).unwrap();
+        assert_eq!(closed.remaining_usd, 0);
+        // Paid exactly what was left, and the rest of the profit cut. The
+        // close fee's share comes back to the market, so a little budget is
+        // left afterwards: never more than the fee.
+        assert!(m.remaining_budget_usd() <= closed.fee_usd);
+        // $495 owed after the fee, paid at $200 / $500, the winners' share.
+        let owed = 500_000_000 - closed.fee_usd;
+        assert_eq!(closed.payout_usd, 1_000_000_000 + owed * 2 / 5);
+        assert_eq!(closed.haircut_usd, owed - owed * 2 / 5);
+    }
 
-        // What it chose must book under `Enforce`, and use most of what is
-        // left rather than a timid fraction of it.
-        let closed = book_close(&mut p, &mut m, &mut pos, size, up, 1).unwrap();
-        assert!(m.remaining_budget_usd() < 1_000_000, "left {}", m.remaining_budget_usd());
-        assert_eq!(closed.remaining_usd, 5_000_000_000 - size);
+    #[test]
+    fn winners_are_paid_the_same_share_whoever_closes_first() {
+        // Two equal longs, $500 of profit each at +10%, and $400 of budget
+        // between them: each is owed 40% of its profit, in either order.
+        for first_is_a in [true, false] {
+            let (mut p, mut m) = (pool(), market());
+            let (mut a, mut b) = (position(), position());
+            for pos in [&mut a, &mut b] {
+                book_open(&mut p, &mut m, pos, Pubkey::new_unique(), 1, true,
+                          1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
+            }
+            m.charge_loss(m.remaining_budget_usd() - 400_000_000).unwrap();
+            let up = PX + PX / 10;
+            let (x, y) = if first_is_a { (&mut a, &mut b) } else { (&mut b, &mut a) };
+            let one = book_close(&mut p, &mut m, x, 5_000_000_000, up, 1).unwrap();
+            let two = book_close(&mut p, &mut m, y, 5_000_000_000, up, 1).unwrap();
+            for c in [&one, &two] {
+                let paid = c.payout_usd - 1_000_000_000;
+                assert!(paid.abs_diff(200_000_000) <= 1, "paid {paid}");
+            }
+            assert!(m.net_loss_usd as u64 <= m.loss_budget_usd);
+        }
     }
 
     #[test]
@@ -1542,37 +1601,22 @@ pub(crate) mod tests {
         assert_eq!(p.liquidity_usd, liq, "nothing was paid");
     }
 
+    // Found by the Kani harness `a_winner_the_budget_holds_back_can_be_deleveraged`,
+    // when a spent budget left a close unfilled: a position whose gain is
+    // funding received rather than price could neither leave by the batch
+    // nor be deleveraged. A close now always fills, so it leaves with its
+    // collateral and the unpayable funding is cut.
     #[test]
-    fn a_profit_past_its_reserve_is_deleveraged() {
+    fn a_winner_by_funding_leaves_with_its_collateral_when_the_budget_is_spent() {
         let (mut p, mut m, mut pos) = long_at(PX, 5_000_000_000, 1_000_000_000);
-        // Reserve only $100 against the $500 a 10% move makes.
-        pos.locked_usd = 100_000_000;
-        let s = settle(&pos, &m, pos.size_usd, PX + PX / 10).unwrap();
-        assert!(deleverage_due(&pos, &m, &s), "budget is fine, but the reserve is breached");
-        // And it settles at the payable amount, which here is all of it.
-        let payout = payable_usd(&m, &s);
-        assert_eq!(payout, s.equity_usd);
-        apply_settlement_to_pool(&mut p, &mut m, &s, payout, 0, pos.size_usd, true).unwrap();
-    }
-
-    // Found by the Kani harness `a_winner_the_budget_holds_back_can_be_deleveraged`.
-    // A position whose gain is funding it received rather than price has
-    // equity past its collateral, so `close_within_budget` holds it back once
-    // the budget is spent. Before the fix `deleverage_due` returned false for
-    // any `pnl_usd <= 0`, so it could neither leave by the batch nor be
-    // deleveraged, and its collateral was stuck with it.
-    #[test]
-    fn a_winner_by_funding_is_not_stuck_when_the_budget_is_spent() {
-        let (p, mut m, pos) = long_at(PX, 5_000_000_000, 1_000_000_000);
         // Flat price, and longs have received $100 of funding since the open.
         m.cumulative_long_funding -= FUNDING_SCALE / 50;
         m.charge_loss(m.remaining_budget_usd()).unwrap();
-        let s = settle(&pos, &m, pos.size_usd, PX).unwrap();
-        assert_eq!((s.pnl_usd, s.equity_usd), (0, 1_100_000_000));
-        // The batch will not close any of it, collateral included...
-        assert_eq!(close_within_budget(&p, &pos, &m, pos.size_usd, PX).unwrap(), 0);
-        // ...so deleveraging has to be able to.
-        assert!(deleverage_due(&pos, &m, &s));
+        let size = pos.size_usd;
+        let closed = book_close(&mut p, &mut m, &mut pos, size, PX, 1).unwrap();
+        assert_eq!(pos.size_usd, 0);
+        assert_eq!(closed.payout_usd, 1_000_000_000);
+        assert_eq!(closed.haircut_usd, 100_000_000);
     }
 
     #[test]
@@ -1607,14 +1651,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_open_locks_its_reserve_share_in_the_position_the_pool_and_the_market() {
+    fn an_open_locks_nothing_whatever_its_reserve_setting() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
         m.pnl_reserve_bps = 5_000;
         book_open(&mut p, &mut m, &mut pos, Pubkey::default(), 1, true,
                   1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
-        assert_eq!(pos.locked_usd, 2_500_000_000);
-        assert_eq!(p.locked_usd, 2_500_000_000);
-        assert_eq!(m.locked_usd, 2_500_000_000);
+        assert_eq!((pos.locked_usd, p.locked_usd, m.locked_usd), (0, 0, 0));
     }
 
     #[test]
@@ -1647,12 +1689,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn two_closes_release_the_whole_lock_however_it_rounds() {
+    fn two_closes_release_a_lock_left_from_before_however_it_rounds() {
         let (mut p, mut m, mut pos) = (pool(), market(), position());
-        m.pnl_reserve_bps = 3_333;
         book_open(&mut p, &mut m, &mut pos, Pubkey::default(), 1, true,
                   1_000, 0, Pubkey::default(), 3_000, PX, 0).unwrap();
-        assert_eq!(pos.locked_usd, 999);
+        // A position opened while reserves were still taken carries one.
+        (pos.locked_usd, p.locked_usd, m.locked_usd) = (999, 999, 999);
         // A third of the size takes a third of the lock, rounded down...
         book_close(&mut p, &mut m, &mut pos, 1_000, PX, 1).unwrap();
         assert_eq!(p.locked_usd, 666);

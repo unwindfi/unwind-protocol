@@ -39,23 +39,21 @@ the market's remaining budget. As the budget is consumed by losses, that per
 window cap falls with it, and a market whose budget is exhausted stops
 quoting rather than quoting into exposure it cannot fund.
 
-The pool's participation is also capped by what is left to reserve. Every open
-position reserves part of the budget against the profit it might make, and the
-pool takes no more in a batch than the reserve behind it would fit under that
-cap. The budget is enforced at this point, when the batch clears, and not when
-its orders settle:
+Nothing is reserved against an open position. The budget is enforced on what
+winners are paid instead:
 
 * Traders who cross each other still trade when the budget is spent, because
   that fill adds no net exposure for the pool.
-* An open that no longer fits a limit at settlement (leverage, open interest,
-  pool utilization) goes back to its owner unfilled, with its collateral.
-* A reduce-only order fills as far as the remaining budget, and the money
-  behind it, can pay. Any part it cannot pay stays open, and a winning
-  position the budget cannot pay becomes eligible for deleveraging at the
-  oracle mark, where it is paid its collateral and whatever profit the budget
-  still covers, and no more.
+* An open that no longer fits a limit at settlement (leverage or open
+  interest) goes back to its owner unfilled, with its collateral.
+* A reduce-only order always fills in full. A winning close is paid its
+  collateral and its profit, cut to a fair share when the market cannot cover
+  every winner: each is paid `available / winners` of what it is owed, where
+  `available` is the remaining budget (or the money behind it, if less). See
+  [Profit haircuts](auto-deleveraging.md).
 
-So every batch settles, and a market with no budget left stays open for exits.
+So every batch settles, a market with no budget left stays open for exits,
+and no market pays out more than it was underwritten for.
 
 ## Numerical example
 

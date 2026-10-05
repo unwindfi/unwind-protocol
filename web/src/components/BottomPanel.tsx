@@ -152,8 +152,18 @@ export function BottomPanel({
     { key: "mark", header: "Mark", align: "right",
       cell: (r) => <span title={`Closes at ${pnum(r.exit)}`}>{pnum(r.mark)}</span> },
     { key: "pnl", header: "PnL (ROE)", align: "right", sortable: true,
-      cell: (r) => (<span className={tone(r.pnl)}>{money(r.pnl)}{" "}
-        <span className="text-muted-foreground">({pct(r.pnlPct)})</span></span>) },
+      cell: (r) => {
+        // A winner in a market that cannot cover every winner is paid a
+        // fair share of its profit on close; say so beside the figure.
+        const paid = bySymbol.get(r.symbol)?.payoutPct;
+        return (<span className={tone(r.pnl)}>{money(r.pnl)}{" "}
+          <span className="text-muted-foreground">({pct(r.pnlPct)})</span>
+          {r.pnl > 0 && paid != null && paid < 99.95 && (
+            <span className="block text-[11px] text-down" title="This market can't pay every winner in full right now">
+              paid at {paid.toFixed(0)}%
+            </span>
+          )}</span>);
+      } },
     { key: "liqPrice", header: "Liq. price", align: "right",
       cell: (r) => <span className="text-down">{r.liqPrice ? pnum(r.liqPrice) : "–"}</span> },
     { key: "collateral", header: "Margin", align: "right", cell: (r) => money(r.collateral) },

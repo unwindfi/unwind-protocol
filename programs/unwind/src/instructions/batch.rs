@@ -4,7 +4,7 @@ use crate::auction::{
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::trade::{
-    book_close_at, book_open, check_open, close_within_budget_at, BackerFeePaid,
+    book_close_at, book_open, check_open, BackerFeePaid, ProfitHaircut,
     PositionClosed,
 };
 use crate::math::*;
@@ -470,16 +470,12 @@ pub struct ClearBatch<'info> {
 /// under what is left. Settlement then books every fill without asking again,
 /// because a sealed batch that cannot settle is a market nobody can trade or
 /// leave. With no headroom the ceiling is zero, and the pool stops quoting.
-pub fn pool_quote_ceiling(pool: &Pool, market: &Market) -> Result<u64> {
-    let headroom = market
-        .lock_headroom_usd(pool.max_utilization_bps)
-        .min(pool.lock_headroom_usd());
-    if market.pnl_reserve_bps == 0 {
-        // Nothing is reserved against a fill, so no reserve cap can bind.
-        return Ok(u64::MAX);
-    }
-    let ceiling = (headroom as u128) * BPS / (market.pnl_reserve_bps as u128);
-    Ok(u64::try_from(ceiling).unwrap_or(u64::MAX))
+pub fn pool_quote_ceiling(_pool: &Pool, _market: &Market) -> Result<u64> {
+    // Nothing is reserved against a fill any more, so no reserve can run out:
+    // the pool's share of a batch is held to its slice of the remaining
+    // budget alone, and what a winner is eventually paid is held to what the
+    // market can cover by the haircut at close.
+    Ok(u64::MAX)
 }
 
 /// Seals a batch as two auctions: the buy flow, where takers buying meet
@@ -903,7 +899,7 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
         // next accrual charges this size for time before it existed -- priced
         // off a skew it did not yet contribute to. A top-up has the mirror
         // problem: its existing size would settle funding short of now.
-        let utilization = ctx.accounts.pool.utilization_bps();
+        let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
         ctx.accounts.market.accrue_funding(now, utilization)?;
         let market_key = ctx.accounts.market.key();
         // `open_fill` only returns a fill whose collateral covers its fee.
@@ -999,26 +995,17 @@ fn settle_close(
     // informed the clearing and then delivered less leaves the pool's books
     // consistent -- it only means one of the prices in that batch came from
     // someone who had already been closed out.
-    let mut close_size = ctx.accounts.position.closable_by(order.bid(), order.filled_usd);
+    let close_size = ctx.accounts.position.closable_by(order.bid(), order.filled_usd);
     let now = Clock::get()?.unix_timestamp;
 
     if close_size > 0 {
-        let utilization = ctx.accounts.pool.utilization_bps();
+        let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
         ctx.accounts.market.accrue_funding(now, utilization)?;
-        // A voluntary close keeps the budget promise, but it does so by
-        // filling only as far as the budget reaches rather than by failing:
-        // a failure here would hold the batch sealed, and with it every exit
-        // in this market. Whatever is left of the position stays open for a
-        // later batch, or for liquidation and deleveraging, which run past
-        // the budget because they are what runs once it is gone.
-        close_size = close_within_budget_at(
-            &ctx.accounts.pool,
-            &ctx.accounts.position,
-            &ctx.accounts.market,
-            close_size,
-            clearing,
-            route.discount_bps,
-        )?;
+        // A close always fills in full. The budget is kept by what it pays,
+        // not by how much of it fills: profit past what the market can cover
+        // is cut to a fair share in `book_close_at`. Filling only as far as
+        // the budget reached left winners holding positions they could not
+        // leave, and paid whoever closed first in full.
     }
 
     if close_size > 0 {
@@ -1065,6 +1052,15 @@ fn settle_close(
             fee_usd: closed.fee_usd,
             payout_usd: payout,
         });
+        if closed.haircut_usd > 0 {
+            emit!(ProfitHaircut {
+                position: ctx.accounts.position.key(),
+                owner: order.owner,
+                market: ctx.accounts.market.key(),
+                haircut_usd: closed.haircut_usd,
+                payout_usd: payout,
+            });
+        }
         if closed.backer_fee_usd > 0 {
             emit!(BackerFeePaid {
                 market: ctx.accounts.market.key(),

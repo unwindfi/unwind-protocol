@@ -84,7 +84,6 @@ const heatAuction = (ms = 30_000) => { auctionHotUntil = Math.max(auctionHotUnti
 /// How often the seeded testnet pools are moved to follow their real tokens.
 /// A few calls each per pass; two minutes keeps that well inside an RPC plan.
 const FLOW_MS = Number(process.env.FLOW_MS ?? 120_000);
-const KEEPER_MS = Number(process.env.KEEPER_MS ?? (IS_LOCAL ? 2_500 : 90_000));
 const CRANK_MS = Number(process.env.CRANK_MS ?? (IS_LOCAL ? 20_000 : 300_000));
 /// Trading calendars change a few times a day; checking every minute is ample.
 const SESSION_MS = Number(process.env.SESSION_MS ?? (IS_LOCAL ? 60_000 : 600_000));
@@ -1538,51 +1537,6 @@ async function liquidationCheck() {
   if (closed) { invalidatePositions(); accountMemo.clear(); }
 }
 
-/*
- * A position can be healthy and still be a problem: profit past the
- * liquidity reserved against it is exposure the pool never set aside for.
- * Closing it at the mark while the pool can pay is the point of ADL. There is
- * no cheap way to tell from here which positions qualify, so each one is
- * tried; that costs a call per position and stays on the slower keeper pass.
- */
-async function keeper() {
-  let all: any[];
-  try {
-    all = await openPositions();
-  } catch (e: any) {
-    console.warn(`keeper scan: ${e.message}`);
-    return;
-  }
-
-  const byMarket = new Map<string, MarketRt>();
-  for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
-
-  for (const entry of all) {
-    const pos = entry.account;
-    const m = byMarket.get(String(pos.market));
-    if (!m) continue;
-    try {
-      const owner = new PublicKey(String(pos.owner));
-      await program.methods.autoDeleverage().accounts({
-        keeper: authority.publicKey,
-        pool, market: m.address, position: entry.publicKey, owner,
-        priceUpdate: oracleOf(m),
-        usdcMint, usdcVault, ownerUsdc: ata(owner, usdcMint),
-        tokenProgram: TOKEN_PROGRAM_ID,
-      }).rpc();
-
-      deleverages.unshift({
-        t: Date.now(), symbol: m.symbol, owner: owner.toBase58(),
-        size: num(pos.sizeUsd) / 1e6, price: px(m),
-      });
-      deleverages.splice(20);
-      invalidatePositions();
-      console.log(`deleveraged ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
-    } catch {
-      /* still covered by its reserve, which is the normal case */
-    }
-  }
-}
 
 /// Fires any order whose trigger the index has reached.
 ///
@@ -2000,6 +1954,20 @@ app.get("/api/markets", async (_req, res) => {
   }
 });
 
+/// Mirrors `haircut_profit_usd`: the fraction of winners' profit the market
+/// can pay, as a percentage.
+function payoutPct(ma: any, p: any, price: number): number {
+  const side = (isLong: boolean, size: number, entry: number) =>
+    entry > 0 ? Math.max(0, size * ((price - entry) / entry) * (isLong ? 1 : -1)) : 0;
+  const winners =
+    side(true, num(ma.longSizeUsd) / 1e6, num(ma.longAvgEntryPrice) / 1e6) +
+    side(false, num(ma.shortSizeUsd) / 1e6, num(ma.shortAvgEntryPrice) / 1e6);
+  const remaining = Math.max(0, num(ma.lossBudgetUsd) / 1e6 - Math.max(0, num(ma.netLossUsd) / 1e6));
+  const cash = (num(ma.backingUsd) + num(p.liquidityUsd) + num(p.insuranceUsd)) / 1e6;
+  const available = Math.min(remaining, cash);
+  return winners <= available ? 100 : (available / winners) * 100;
+}
+
 async function marketsView() {
   {
     const markets = Object.values(rt);
@@ -2009,8 +1977,6 @@ async function marketsView() {
       program.account.market.fetchMultiple(markets.map((m) => m.address)),
     ]);
     const freeLiquidity = (num(p.liquidityUsd) - num(p.lockedUsd)) / 1e6;
-    const utilizationBps = num(p.liquidityUsd) > 0
-      ? Math.min(10_000, (num(p.lockedUsd) * 10_000) / num(p.liquidityUsd)) : 10_000;
     const out = await Promise.all(markets.map(async (m, i) => {
       const ma: any = accounts[i] ?? await marketAccount(m);
       const price = px(m);
@@ -2049,7 +2015,11 @@ async function marketsView() {
         // The rate each side pays right now, in bps an hour, positive to pay.
         // The cumulative indices above are totals since listing and cannot
         // be read as a rate.
-        ...fundingRates(ma, longSize, shortSize, utilizationBps),
+        // The program charges borrow on the book's imbalance against the
+        // pool (`Market::utilization_bps`), not on reserved liquidity.
+        ...fundingRates(ma, longSize, shortSize, num(p.liquidityUsd) > 0
+          ? Math.min(10_000, (Math.abs(longSize - shortSize) * 1e6 * 10_000) / num(p.liquidityUsd))
+          : (longSize === shortSize ? 0 : 10_000)),
         lastFundingTs: num(ma.lastFundingTs),
         maintenanceMarginBps: ma.maintenanceMarginBps,
         openFeeBps: ma.openFeeBps,
@@ -2066,8 +2036,10 @@ async function marketsView() {
         // `observed`, which only exists for markets opened on a pool.
         // The whole pot at the last prices, and what of it is held in kind.
         backingUsd: potUsd(m.address, ma.backingUsd),
-        // What of the pot open positions hold: backing above it can leave.
-        backingLockedUsd: num(ma.lockedUsd) / 1e6,
+        // The share of their profit winners would be paid if they all closed
+        // now, from `haircut_profit_usd`: what the market can still pay over
+        // the profit every winning side holds. 100 when it covers them all.
+        payoutPct: payoutPct(ma, p, price),
         backingInKind: books[m.address.toBase58()]?.amounts ?? {},
         lossBudgetUsd: num(ma.lossBudgetUsd) / 1e6,
         // Null for a market with a feed behind it. For one listed against a
@@ -2835,7 +2807,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     setTimeout(pass, AUCTION_MS);
   }
   loop("sessions", syncSessions, SESSION_MS);
-  loop("keeper", keeper, KEEPER_MS);
+  // No deleveraging pass: the program retired it. A winner its market cannot
+  // pay in full is haircut at close instead, so no position is ever due.
   // Every few seconds against the cached positions (see positionCache).
   setTimeout(() => loop("liquidations", liquidationCheck, LIQ_CHECK_MS), 3_000);
   loop("balance", watchBalance, 10 * 60_000);
@@ -3599,23 +3572,6 @@ app.post("/api/tx/unback-market", async (req, res) => {
     const want = all || pot === 0n ? held
       : (BigInt(Math.floor(usd * 1e6)) * totalShares) / pot;
     const shares = want > held ? held : want;
-    // The program keeps what open positions have reserved in the pot, and
-    // refused with "insufficient free liquidity", which read as the pool
-    // running dry. Said here in this market's own terms, with the most that
-    // can come out now.
-    const locked = BigInt(Math.floor(num(ma.lockedUsd)));
-    const value = totalShares > 0n ? (shares * pot) / totalShares : 0n;
-    if (pot - value < locked) {
-      const free = pot > locked ? pot - locked : 0n;
-      const mine = totalShares > 0n ? (held * pot) / totalShares : 0n;
-      const can = free < mine ? free : mine;
-      const usdOf = (v: bigint) => `$${(Number(v) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-      return res.status(400).json({
-        error: `${usdOf(locked)} of ${m.symbol}'s backing is held for its open positions. ` +
-          (can > 0n ? `You can withdraw up to ${usdOf(can)} now.` : "Nothing can come out until they close."),
-      });
-    }
-
     // Paid back in the mix it is held in, so every token needs somewhere to
     // land; wrapped SOL is unwrapped straight after.
     const payouts = custodies.flatMap((c) => [
@@ -4045,7 +4001,7 @@ app.listen(PORT, () => {
   // The query string is where RPC providers put the API key.
   // Hosts only: an Alchemy key sits in the path, a Helius one in the query.
   console.log(`  rpc ${RPC_ENDPOINTS.length} key(s): ${[...new Set(RPC_ENDPOINTS.map(rpcHost))].join(", ")}`);
-    console.log(`  ${LIVE.length} markets, live prices every ${TICK_MS}ms, keeper ${KEEPER_MS}ms`);
+    console.log(`  ${LIVE.length} markets, live prices every ${TICK_MS}ms, liquidation checks every ${LIQ_CHECK_MS}ms`);
     for (const m of Object.values(rt)) {
       console.log(m.quote
         ? `  ${m.symbol.padEnd(6)} $${px(m).toFixed(2)}` +

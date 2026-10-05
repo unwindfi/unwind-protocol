@@ -13,7 +13,7 @@ per side.
 
 | Leg | Paid by | Received by | Scales with |
 | --- | --- | --- | --- |
-| Borrow | Both sides | The pool | Pool utilization |
+| Borrow | Both sides | The pool | The book's imbalance against the pool |
 | Skew | The heavier side | The lighter side | Open interest imbalance |
 
 The borrow leg is charged to both sides because both sides are renting the
@@ -23,7 +23,9 @@ conserved, so no value is created by it.
 ## Technical details
 
 The borrow rate scales linearly with utilization from a configured rate at
-full utilization:
+full utilization. Utilization is the market's net open interest (longs minus
+shorts, either way) as a share of the pool's liquidity: a balanced book costs
+the pool nothing, so it borrows nothing.
 
 ```
 borrow_rate = borrow_rate_per_hour * utilization

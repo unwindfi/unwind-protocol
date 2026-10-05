@@ -42,13 +42,14 @@ Two cases refuse a deposit or change what it buys:
   outstanding, the pool is worth nothing and takes no new liquidity until that
   turns. New money cannot be priced against shares worth zero without paying
   for the hole under them.
-* If every LP has withdrawn, any USDC left behind that is not reserved for
-  open positions (a last withdrawal's fee, a trader's later loss) belongs to
+* If every LP has withdrawn, any USDC left behind (a last withdrawal's fee, a
+  trader's later loss) belongs to
   nobody. It is moved to the insurance fund before the next deposit lands,
   so the next depositor gets exactly what they paid for.
 
-Withdrawals pay a share of the pool's value, never more, and only from
-liquidity that is not reserved for open positions.
+Withdrawals pay a share of the pool's value, never more. Nothing is reserved
+for open positions: a winner is paid only out of its market's remaining
+budget, so LP liquidity that leaves is not owed to anyone's open profit.
 
 ## Batch reporting
 

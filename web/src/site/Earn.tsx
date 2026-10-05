@@ -216,12 +216,8 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   const fee = v.kind === "pool"
     ? (side === "in" ? pool?.addFeePct ?? 0 : pool?.removeFeePct ?? 0) : 0;
   const paying = v.kind === "market" && side === "in" ? payWith : "USDC";
-  // Backing that open positions hold cannot come out, so the way out of a
-  // market's vault is capped at what its pot can spare as well as at yours.
-  const lockedFree = v.kind === "market" && v.market && v.market.backingLockedUsd != null
-    ? Math.max(0, v.market.backingUsd - v.market.backingLockedUsd) : Infinity;
-  const ceiling = side === "in" ? (account?.usdc ?? 0) : Math.min(v.yours, lockedFree);
-  const heldBack = side === "out" && lockedFree < v.yours;
+  // Nothing is held back for open positions: all of a stake can come out.
+  const ceiling = side === "in" ? (account?.usdc ?? 0) : v.yours;
   // Only USDC has a balance this page knows; a SOL or USDT amount is checked
   // by the wallet instead.
   const over = paying === "USDC" && usd > ceiling + 1e-9;
@@ -314,9 +310,9 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                 <button type="button"
                   // Down to the cent, never up: rounded up, MAX asked for a
                   // fraction of a cent more than there was and was refused.
-                  onClick={() => { setAmount((Math.floor(ceiling * 100) / 100).toFixed(2)); setAll(side === "out" && !heldBack); }}
+                  onClick={() => { setAmount((Math.floor(ceiling * 100) / 100).toFixed(2)); setAll(side === "out"); }}
                   className="n text-[12px] text-dim transition-colors hover:text-foreground">
-                  {side === "in" ? "Wallet" : heldBack ? "Withdrawable now" : "Yours"} {money(Math.floor(ceiling * 100) / 100)}
+                  {side === "in" ? "Wallet" : "Yours"} {money(Math.floor(ceiling * 100) / 100)}
                   <span className="ml-1.5 font-medium text-foreground">MAX</span>
                 </button>
               )}
@@ -350,7 +346,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                            disabled:pointer-events-none disabled:opacity-35">
                 {busy ? "Confirm in wallet"
                   : over ? (side === "in" ? "Over your balance"
-                    : heldBack ? "Held for open positions" : "Over your deposit") : verb}
+                    : "Over your deposit") : verb}
               </button>
             )}
             {api.readOnly && (
@@ -388,7 +384,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
               ? "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
               : `First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
                 paying === "SOL" ? "; counts at 80%" : ""
-              }. Withdrawals come back in the same mix, minus what open positions still need.`}
+              }. Withdraw any time, in the same mix. Winners are paid only from what is left, so leaving early cuts their payout, not yours.`}
           </p>
         </div>
       </motion.div>

@@ -34,8 +34,6 @@ every open position in memory and checks each against the live price every
 batch that fills, and after every transaction the venue relays. A
 liquidation that fails is retried after 30 seconds.
 
-Auto-deleveraging is tried on a slower pass, every few minutes.
-
 The keeper that pushes marks moves one at most 10% a push. A larger move is
 held for one push, then walked toward 10% at a time, so a crash crosses each
 position's liquidation price on the way down instead of jumping past it.
@@ -48,4 +46,4 @@ position loses its collateral, pays no fee, and the pool books a smaller gain
 than the mark implied. Nothing is owed after that.
 
 A liquidated position that is in profit is never paid past its market's
-budget. See [Auto-deleveraging](auto-deleveraging.md).
+budget. See [Profit haircuts](auto-deleveraging.md).

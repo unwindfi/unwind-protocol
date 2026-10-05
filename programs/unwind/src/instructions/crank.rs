@@ -28,7 +28,7 @@ pub struct AccrueFunding<'info> {
 /// long one-sided stretch without ever paying for it.
 pub fn accrue_funding(ctx: Context<AccrueFunding>) -> Result<()> {
     let clock = Clock::get()?;
-    let utilization = ctx.accounts.pool.utilization_bps();
+    let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
     ctx.accounts
         .market
         .accrue_funding(clock.unix_timestamp, utilization)?;

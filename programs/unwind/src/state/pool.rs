@@ -186,6 +186,9 @@ impl Pool {
     }
 
     pub fn lock(&mut self, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
         self.check_lock(amount)?;
         self.locked_usd += amount;
         Ok(())
@@ -194,6 +197,12 @@ impl Pool {
     /// `lock` without the write, so a settlement can find out whether an open
     /// fits before it has touched anything.
     pub fn check_lock(&self, amount: u64) -> Result<()> {
+        // Nothing to hold, so nothing to refuse: a pool still carrying locks
+        // from positions opened before reserves were retired must not turn
+        // that leftover into a reason to refuse new opens.
+        if amount == 0 {
+            return Ok(());
+        }
         let new_locked = self
             .locked_usd
             .checked_add(amount)
@@ -459,7 +468,12 @@ mod tests {
                         let asked = p.check_lock(amount).is_ok();
                         let done = p.lock(amount).is_ok();
                         assert_eq!(asked, done);
-                        if done {
+                        if amount == 0 {
+                            // Nothing held: always allowed, and nothing moves,
+                            // however far past the cap a leftover lock sits.
+                            assert!(done);
+                            assert_eq!(p.locked_usd, locked);
+                        } else if done {
                             assert!(p.locked_usd <= liq);
                             assert!(p.locked_usd as u128 * BPS <= cap as u128 * liq as u128);
                             if liq > 0 {

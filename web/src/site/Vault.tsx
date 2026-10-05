@@ -112,8 +112,6 @@ export default function VaultPage() {
                   <h2 className="text-[16px] font-medium">Where the pool stands</h2>
                   <div className="mt-3 grid gap-x-8 sm:grid-cols-2">
                     <KV k="Liquidity">{money(account.pool.liquidity, 0)}</KV>
-                    <KV k="Locked against positions">{money(account.pool.locked, 0)}</KV>
-                    <KV k="Utilisation cap">{account.pool.maxUtilization}%</KV>
                     <KV k="Insurance fund">{money(account.pool.insurance, 0)}</KV>
                     <KV k="Traders' PnL against it">{money(account.pool.traderPnl, 0)}</KV>
                     <KV k="Exit fee">{account.pool.removeFeePct}%</KV>

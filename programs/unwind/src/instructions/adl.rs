@@ -1,7 +1,6 @@
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::trade::{apply_settlement_to_pool, payable_usd, settle, Settlement};
-use crate::math::*;
 use crate::instructions::batch::market_price;
 use crate::state::*;
 use anchor_lang::prelude::*;
@@ -80,13 +79,16 @@ pub struct AutoDeleverage<'info> {
 /// not its price PnL, because funding received counts too: a position up
 /// only on funding, at a flat price, is just as stuck when the budget is
 /// spent (the batch fills none of it) and is not liquidatable, being healthy.
-pub fn deleverage_due(position: &Position, market: &Market, settlement: &Settlement) -> bool {
-    let breached = settlement.pnl_usd > 0 && (settlement.pnl_usd as u64) > position.locked_usd;
-    let owed_past_collateral = settlement
-        .equity_usd
-        .saturating_sub(settlement.collateral_share);
-    let unpayable = owed_past_collateral > 0 && owed_past_collateral > market.remaining_budget_usd();
-    breached || unpayable
+///
+/// Both are retired, and this is never true. Nothing is reserved when a
+/// position opens, so there is no reserve to outgrow; and a close now always
+/// fills, paying profit past what the market can cover at a fair-share
+/// haircut (`haircut_profit_usd`), so a winner in a market that has spent its
+/// budget is no longer stuck. Forcing a winner out ahead of the others was
+/// what the haircut replaces. The instruction stays so its address and
+/// accounts do not change, and refuses every position.
+pub fn deleverage_due(_position: &Position, _market: &Market, _settlement: &Settlement) -> bool {
+    false
 }
 
 /// Force-closes a position whose profit has outgrown the liquidity reserved
@@ -109,7 +111,7 @@ pub fn auto_deleverage(ctx: Context<AutoDeleverage>) -> Result<()> {
     require!(ctx.accounts.position.is_open(), PerpError::PositionEmpty);
 
     let clock = Clock::get()?;
-    let utilization = ctx.accounts.pool.utilization_bps();
+    let utilization = ctx.accounts.market.utilization_bps(ctx.accounts.pool.liquidity_usd);
     ctx.accounts
         .market
         .accrue_funding(clock.unix_timestamp, utilization)?;

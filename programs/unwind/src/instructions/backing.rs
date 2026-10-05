@@ -18,7 +18,7 @@
 //! JLP pool holds each asset (`state/custody.rs`). A backer's share is a claim
 //! on the whole pot at the oracle, and comes back out in the same mix.
 use crate::constants::*;
-use crate::instructions::batch::{market_price, open_trader};
+use crate::instructions::batch::open_trader;
 use crate::errors::PerpError;
 use crate::state::*;
 use anchor_lang::prelude::*;
@@ -493,31 +493,13 @@ pub fn unback_market<'info>(
     let value_usd = part(pot_usd);
     require!(value_usd > 0, PerpError::ZeroAmount);
 
-    // What the market would be left with has to cover what its open positions
-    // have reserved, and what they are already up at the current price. The
-    // reserve alone let a backer who saw the market move against the pool
-    // leave first, shrinking the budget before the winners closed and handing
-    // their loss to the LPs.
-    //
-    // No price is read for a market with nobody in it, so the backers of a
-    // market whose source has died can still get their money out.
-    let owed_usd = if ctx.accounts.market.has_open_interest() {
-        let market_key = ctx.accounts.market.key();
-        let oracle = market_price(
-            &ctx.accounts.price_update.to_account_info(),
-            &ctx.accounts.pool,
-            &ctx.accounts.market,
-            &market_key,
-        )?;
-        ctx.accounts.market.accept_price(&oracle)?;
-        ctx.accounts.market.trader_pnl_usd(oracle.price)?.max(0) as u64
-    } else {
-        0
-    };
-    require!(
-        pot_usd.saturating_sub(value_usd) >= ctx.accounts.market.locked_usd.max(owed_usd),
-        PerpError::InsufficientLiquidity
-    );
+    // Nothing is held back for open positions. A backer may take out any part
+    // of the pot that losses have not already used. What that costs is
+    // carried by the winners rather than the LPs: withdrawing lowers the
+    // market's loss budget to what is left (below), and profit is only ever
+    // paid out of the remaining budget, shared fairly when it falls short
+    // (`haircut_profit_usd`). Holding the pot against every open position's
+    // full size froze it whenever the market had any open interest at all.
 
     let usdc_mint_key = ctx.accounts.pool.usdc_mint;
     let bump = ctx.accounts.pool.bump;

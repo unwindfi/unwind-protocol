@@ -86,8 +86,9 @@ Settlement and fees:
 | --- | --- |
 | Fee cuts never exceed the fee, move money without creating any, and each line gets its documented share | `fee_cuts_never_exceed_the_fee`, `fee_cuts_move_money_without_creating_any`, `each_fee_line_gets_its_documented_share` |
 | A forced close pays what is owed up to the budget, settles inside it, and moves exactly the payout out of the vault | `a_forced_close_pays_what_is_owed_up_to_the_budget`, `a_forced_close_settles_inside_the_budget`, `a_forced_close_moves_exactly_the_payout_out_of_the_vault` |
-| A close is cut to what the market can pay, always books when it can pay, and fills in full when it costs the pool nothing | `a_close_is_cut_to_what_the_market_can_pay`, `a_close_the_market_can_pay_always_books`, `a_close_that_costs_the_pool_nothing_fills_in_full` |
-| Any winner the budget holds back, from price or from funding, can be deleveraged, so no position is ever stuck | `a_price_winner_the_budget_holds_back_can_be_deleveraged`, `a_winner_the_budget_holds_back_can_be_deleveraged` |
+| A haircut never pays more than the profit owed or than the market can cover, and pays in full when it covers every winner | `a_haircut_pays_no_more_than_the_market_can` |
+| Every close books inside the budget whatever it costs, a close the market can pay always books, and a close that costs the pool nothing is never haircut | `every_close_books_inside_the_budget`, `a_close_the_market_can_pay_always_books`, `a_close_that_costs_the_pool_nothing_is_never_haircut` |
+| Deleveraging is retired: no position is ever due | `no_position_is_ever_due_for_deleveraging` |
 | Close reservations never promise more than a position holds, and a release gives back exactly what was reserved | `reservations_never_promise_more_than_the_position_holds`, `a_release_gives_back_exactly_what_was_reserved`, `a_settling_close_takes_only_what_is_there_on_its_own_side` |
 
 Listing and leverage tiers:

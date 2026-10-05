@@ -30,7 +30,7 @@
 * [Portfolio](portfolio.md)
 * [Margining](margining.md)
 * [Liquidations](liquidations.md)
-* [Auto-deleveraging](auto-deleveraging.md)
+* [Profit haircuts](auto-deleveraging.md)
 * [Funding](funding.md)
 
 ## Market edge cases

@@ -22,7 +22,7 @@ use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::adl::deleverage_due;
 use crate::instructions::trade::{
-    apply_settlement_to_pool, book_close, close_within_budget, fee_cuts_usd, payable_usd, settle,
+    apply_settlement_to_pool, book_close, fee_cuts_usd, haircut_profit_usd, payable_usd, settle,
     take_fee_cuts, Settlement,
 };
 use crate::math::bps_of;
@@ -415,13 +415,13 @@ fn a_forced_close_moves_exactly_the_payout_out_of_the_vault() {
     }
 }
 
-// How far a reduce-only order fills.
+// What a reduce-only order is paid.
 //
-// `settle_order` closes `close_within_budget(..)` of a filled reduce-only
-// order and then calls `book_close` on it. The two harnesses below prove the
-// two halves: what `close_within_budget` returns fits the budget and the cash,
-// and anything that fits both books. Together: a close cut to the budget
-// always settles, which is what keeps a sealed batch from being held.
+// `settle_order` closes the whole filled size of a reduce-only order with
+// `book_close`, which pays profit past the collateral at the market's
+// fair-share rate (`haircut_profit_usd`). The harnesses below prove that the
+// haircut never pays more than the market can, and that every close books
+// inside the budget, which is what keeps a sealed batch from being held.
 //
 // Bounds for everything that runs `settle`: size, collateral and reserve up
 // to 7, entry and fill prices 1 to 4, funding up to two quarter-steps of the
@@ -474,37 +474,107 @@ fn close_cost(pos: &Position, m: &Market, size: u64, fill: u64) -> u64 {
     (s.equity_usd - fee).saturating_sub(s.collateral_share)
 }
 
-/// What `close_within_budget` hands back is never more than was asked, and
-/// closing it costs no more than the market's remaining budget or the money
-/// there is to pay with (the market's backing, LP liquidity and the insurance
-/// fund).
+/// The haircut never pays more than the profit owed, nor more than the
+/// market's remaining budget or the money there is to pay with (the market's
+/// backing, LP liquidity and the insurance fund).
 #[kani::proof]
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
-#[kani::unwind(6)]
 #[kani::solver(cadical)]
-fn a_close_is_cut_to_what_the_market_can_pay() {
+fn a_haircut_pays_no_more_than_the_market_can() {
     let p = documented_pool();
+    let mut m = any_market();
+    let _pos = any_open_position(&mut m, -2);
+    assume_small_books(&p, &m);
+    let owed = small(7);
+    let fill = any_fill();
+
+    let paid = haircut_profit_usd(&p, &m, owed, fill).unwrap();
+    let cash = m.backing_usd + p.liquidity_usd + p.insurance_usd;
+    assert!(paid <= owed);
+    assert!(paid <= m.remaining_budget_usd().min(cash));
+    // And in full whenever the market can cover every winner.
+    if m.winning_pnl_usd(fill).unwrap().max(owed) <= m.remaining_budget_usd().min(cash) {
+        assert!(paid == owed);
+    }
+}
+
+/// Every close books, whatever it costs: a close fills in full and pays what
+/// the market can, so it never fails and never takes the market past its
+/// budget. This is what replaced filling a winning close only as far as the
+/// budget reached, which left winners in a spent market unable to leave.
+#[kani::proof]
+#[kani::stub(PerpError::name, no_name)]
+#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
+#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::solver(cadical)]
+fn every_close_books_inside_the_budget() {
+    let mut p = documented_pool();
+    let mut m = any_market();
+    let mut pos = any_open_position(&mut m, -2);
+    assume_small_books(&p, &m);
+    assume_books_consistent(&p, &m);
+    kani::assume(p.trader_collateral_usd >= pos.collateral_usd);
+    kani::assume(m.collateral_usd >= pos.collateral_usd);
+    let size = small(7);
+    kani::assume(size >= 1 && size <= pos.size_usd);
+    let fill = any_fill();
+    let cost = close_cost(&pos, &m, size, fill);
+
+    let closed = book_close(&mut p, &mut m, &mut pos, size, fill, 1);
+    assert!(closed.is_ok());
+    let closed = closed.unwrap();
+    assert!(closed.haircut_usd <= cost);
+    assert!(m.net_loss_usd <= m.loss_budget_usd as i64);
+}
+
+/// A close that costs the pool nothing, one whose equity after the fee is no
+/// more than the collateral it releases, is never haircut: there is no
+/// profit to cut.
+#[kani::proof]
+#[kani::stub(PerpError::name, no_name)]
+#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
+#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::solver(cadical)]
+fn a_close_that_costs_the_pool_nothing_is_never_haircut() {
+    let mut p = documented_pool();
+    let mut m = any_market();
+    let mut pos = any_open_position(&mut m, -2);
+    assume_small_books(&p, &m);
+    assume_books_consistent(&p, &m);
+    kani::assume(p.trader_collateral_usd >= pos.collateral_usd);
+    kani::assume(m.collateral_usd >= pos.collateral_usd);
+    let size = small(7);
+    kani::assume(size >= 1 && size <= pos.size_usd);
+    let fill = any_fill();
+    kani::assume(close_cost(&pos, &m, size, fill) == 0);
+
+    let closed = book_close(&mut p, &mut m, &mut pos, size, fill, 1).unwrap();
+    assert!(closed.haircut_usd == 0);
+}
+
+/// Deleveraging is retired: no position is ever due, whatever its profit and
+/// whatever is left of the budget. A winner the market cannot pay in full is
+/// haircut at close instead.
+#[kani::proof]
+#[kani::stub(PerpError::name, no_name)]
+#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
+#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::solver(cadical)]
+fn no_position_is_ever_due_for_deleveraging() {
+    let p = any_pool();
     let mut m = any_market();
     let pos = any_open_position(&mut m, -2);
     assume_small_books(&p, &m);
-    let close_size = small(7);
-    kani::assume(close_size >= 1 && close_size <= pos.size_usd);
     let fill = any_fill();
-
-    let size = close_within_budget(&p, &pos, &m, close_size, fill).unwrap();
-    assert!(size <= close_size);
-    if size > 0 {
-        let cash = m.backing_usd + p.liquidity_usd + p.insurance_usd;
-        assert!(close_cost(&pos, &m, size, fill) <= m.remaining_budget_usd().min(cash));
-    }
+    let whole = settle(&pos, &m, pos.size_usd, fill).unwrap();
+    assert!(!deleverage_due(&pos, &m, &whole));
 }
 
 /// Any close whose cost fits the remaining budget and the money there is to
 /// pay it with books: `book_close` does not fail, and the market's net loss
-/// stays inside its budget. With the harness above, a close cut by
-/// `close_within_budget` always settles.
+/// stays inside its budget.
 #[kani::proof]
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
@@ -527,91 +597,6 @@ fn a_close_the_market_can_pay_always_books() {
 
     assert!(book_close(&mut p, &mut m, &mut pos, size, fill, 1).is_ok());
     assert!(m.net_loss_usd <= m.loss_budget_usd as i64);
-}
-
-/// A close that costs the pool nothing, one whose equity after the fee is no
-/// more than the collateral it releases, fills in full however empty the
-/// budget and the pool are. A market with no budget left stays open for exits
-/// (docs/loss-budget.md).
-#[kani::proof]
-#[kani::stub(PerpError::name, no_name)]
-#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
-#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
-#[kani::unwind(6)]
-#[kani::solver(cadical)]
-fn a_close_that_costs_the_pool_nothing_fills_in_full() {
-    let p = any_pool();
-    let mut m = any_market();
-    let pos = any_open_position(&mut m, -2);
-    assume_small_books(&p, &m);
-    let close_size = small(7);
-    kani::assume(close_size >= 1 && close_size <= pos.size_usd);
-    let fill = any_fill();
-    kani::assume(close_cost(&pos, &m, close_size, fill) == 0);
-
-    assert!(close_within_budget(&p, &pos, &m, close_size, fill).unwrap() == close_size);
-}
-
-/// No price winner is stuck. If the budget stops a close from filling in full
-/// for a position whose funding has cost it something or nothing, the same
-/// position at the same price is due for deleveraging, which pays it at the
-/// mark with what the budget has left. Without this a winner in a market that
-/// has spent its budget could neither leave by the batch nor be deleveraged
-/// (docs/auto-deleveraging.md). Holds when the budget, not the pool's cash,
-/// is what binds. For a position that has received funding it does not hold:
-/// see the disabled harness below.
-#[kani::proof]
-#[kani::stub(PerpError::name, no_name)]
-#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
-#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
-#[kani::unwind(6)]
-#[kani::solver(cadical)]
-fn a_price_winner_the_budget_holds_back_can_be_deleveraged() {
-    let p = any_pool();
-    let mut m = any_market();
-    let pos = any_open_position(&mut m, 0);
-    assume_small_books(&p, &m);
-    let fill = any_fill();
-    let remaining = m.remaining_budget_usd();
-    kani::assume(remaining <= m.backing_usd + p.liquidity_usd + p.insurance_usd);
-
-    let size = close_within_budget(&p, &pos, &m, pos.size_usd, fill).unwrap();
-    if size < pos.size_usd {
-        let whole = settle(&pos, &m, pos.size_usd, fill).unwrap();
-        assert!(deleverage_due(&pos, &m, &whole));
-    }
-}
-
-/// The same property for any funding: a position the budget holds back is
-/// always one deleveraging can close, whatever share of its gain is funding.
-///
-/// This failed before the fix, and is kept as the record of it: a long at a
-/// flat price (fill equal to entry, so `pnl_usd` is 0) that had received
-/// funding had equity past its collateral. With the budget spent,
-/// `close_within_budget` filled none of it, collateral included, but
-/// `deleverage_due` returned false for any `pnl_usd <= 0`. The position could
-/// neither leave by the batch nor be deleveraged, and was not liquidatable
-/// because it was healthy. `deleverage_due` now reads equity past collateral.
-#[kani::proof]
-#[kani::stub(PerpError::name, no_name)]
-#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
-#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
-#[kani::unwind(6)]
-#[kani::solver(cadical)]
-fn a_winner_the_budget_holds_back_can_be_deleveraged() {
-    let p = any_pool();
-    let mut m = any_market();
-    let pos = any_open_position(&mut m, -2);
-    assume_small_books(&p, &m);
-    let fill = any_fill();
-    let remaining = m.remaining_budget_usd();
-    kani::assume(remaining <= m.backing_usd + p.liquidity_usd + p.insurance_usd);
-
-    let size = close_within_budget(&p, &pos, &m, pos.size_usd, fill).unwrap();
-    if size < pos.size_usd {
-        let whole = settle(&pos, &m, pos.size_usd, fill).unwrap();
-        assert!(deleverage_due(&pos, &m, &whole));
-    }
 }
 
 // Close reservations.

@@ -21,7 +21,10 @@ export interface Market {
   /// Any market can be backed, whatever prices it.
   backingUsd: number; lossBudgetUsd: number;
   /// What of the backing open positions hold; absent from an older server.
-  backingLockedUsd?: number;
+  /// The share of their profit winners would be paid if they all closed now:
+  /// what the market can still pay over what every winning side is up. 100
+  /// when it covers them all; below that, profit is cut to a fair share.
+  payoutPct?: number;
   sparkline: number[];
   /// Age of the price this market last posted on chain, and the age at which
   /// the program starts rejecting orders against it.
