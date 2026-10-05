@@ -109,7 +109,12 @@ pub struct Pool {
     /// `carve_rewards`), so it is never LP money and never reads as such.
     pub rewards_usd: u64,
 
-    pub _reserved: [u8; 3],
+    /// Bumped (wrapping) whenever `markets_with_oi` changes, so an AUM
+    /// checkpoint taken under a different set of markets is never accepted,
+    /// even one whose count happens to match.
+    pub oi_version: u16,
+
+    pub _reserved: [u8; 1],
     // Note: the account grew when the chain-fee fields were added. Pools are
     // recreated rather than migrated — there is no deployment this breaks.
 }
@@ -278,7 +283,8 @@ mod tests {
             num_custodies: 0,
             markets_with_oi: 0,
             rewards_usd: 0,
-            _reserved: [0; 3],
+            oi_version: 0,
+            _reserved: [0; 1],
         }
     }
 

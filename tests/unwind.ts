@@ -107,6 +107,16 @@ describe("unwind", () => {
     ];
   };
 
+  /// Deposits and withdrawals price LP shares from the pool's AUM
+  /// checkpoint, so one is taken, over every market with open interest,
+  /// before each.
+  const checkpoint = async (price = "at_200") =>
+    program.methods.checkpointAum(true)
+      .accounts({ payer: lp.publicKey, pool })
+      .remainingAccounts(await allMarkets(oracle(price)))
+      .signers([lp])
+      .rpc();
+
   before(async () => {
     for (const kp of [lp, trader, liquidator]) {
       const sig = await provider.connection.requestAirdrop(kp.publicKey, 2e9);
@@ -216,8 +226,9 @@ describe("unwind", () => {
       authority.publicKey, 100_000e6);
   });
 
-  const addLiquidity = async (amount: BN, price = "at_200") =>
-    program.methods
+  const addLiquidity = async (amount: BN, price = "at_200") => {
+    await checkpoint(price);
+    return program.methods
       .addLiquidity(amount, new BN(0))
       .accounts({
         owner: lp.publicKey,
@@ -225,9 +236,10 @@ describe("unwind", () => {
         ownerUsdc: lpUsdc, ownerLp: lpLp,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .remainingAccounts(await allMarkets(oracle(price)))
+      .remainingAccounts([])
       .signers([lp])
       .rpc();
+  };
 
   const batchPda = () =>
     PublicKey.findProgramAddressSync(
@@ -506,8 +518,9 @@ describe("unwind", () => {
   });
 
   it("leaves a market nobody trades out of the LP share price", async () => {
-    // No open interest: the market owes nothing whatever its price, so a
-    // deposit prices without it (`Pool::markets_with_oi`).
+    // No open interest: the market owes nothing whatever its price, so the
+    // checkpoint counts no markets and the deposit prices without it.
+    await checkpoint();
     await program.methods
       .addLiquidity(USD(1_000), new BN(0))
       .accounts({
@@ -523,7 +536,11 @@ describe("unwind", () => {
     assert.equal(p.marketsWithOi, 0);
   });
 
-  it("requires every market with open interest when pricing LP shares", async () => {
+  it("refuses to price LP shares from a checkpoint taken before the open interest moved", async () => {
+    // A checkpoint with no markets, then a position opens: the pool's set of
+    // markets with open interest has changed, so a deposit priced from the
+    // old checkpoint would ignore what that market owes.
+    await checkpoint();
     await open(true, USD(1_000), USD(5_000));
     assert.equal((await program.account.pool.fetch(pool)).marketsWithOi, 1);
     try {
@@ -535,15 +552,16 @@ describe("unwind", () => {
           ownerUsdc: lpUsdc, ownerLp: lpLp,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .remainingAccounts([]) // the traded market omitted
+        .remainingAccounts([])
         .signers([lp])
         .rpc();
-      assert.fail("expected the market list check to fail");
+      assert.fail("expected the stale checkpoint to be refused");
     } catch (e) {
-      assert.include(e.toString(), "IncompleteMarketList");
+      assert.include(e.toString(), "AumCheckpointStale");
     }
-    await close(new BN(0), "at_200");
-    assert.equal((await program.account.pool.fetch(pool)).marketsWithOi, 0);
+    // A pass over the traded market makes it priceable again.
+    await addLiquidity(USD(1_000));
+    await close(new BN(0));
   });
 
   it("carries a position through a stock split unchanged", async () => {
@@ -597,6 +615,7 @@ describe("unwind", () => {
     const lpSupply = (await getAccount(provider.connection, lpLp)).amount;
     const half = new BN((lpSupply / 2n).toString());
     const before = (await getAccount(provider.connection, lpUsdc)).amount;
+    await checkpoint();
     await program.methods
       .removeLiquidity(half, new BN(0))
       .accounts({
@@ -605,7 +624,7 @@ describe("unwind", () => {
         ownerUsdc: lpUsdc, ownerLp: lpLp,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .remainingAccounts(await allMarkets(oracle("at_200")))
+      .remainingAccounts([])
       .signers([lp])
       .rpc();
     const after = (await getAccount(provider.connection, lpUsdc)).amount;

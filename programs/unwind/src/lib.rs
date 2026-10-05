@@ -89,6 +89,15 @@ pub mod unwind {
 
     /// Sets an observed market's mark to the keeper's price. The first push
     /// makes the market tradeable. Mark keeper only.
+    /// Adds markets to the pool's AUM checkpoint, which deposits and
+    /// withdrawals price LP shares from. Permissionless.
+    pub fn checkpoint_aum<'info>(
+        ctx: Context<'_, '_, 'info, 'info, CheckpointAum<'info>>,
+        restart: bool,
+    ) -> Result<()> {
+        instructions::aum_checkpoint::checkpoint_aum(ctx, restart)
+    }
+
     pub fn push_mark(ctx: Context<PushMark>, price: u64) -> Result<()> {
         instructions::observe::push_mark(ctx, price)
     }

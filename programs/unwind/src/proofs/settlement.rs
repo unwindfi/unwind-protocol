@@ -94,7 +94,8 @@ fn any_pool() -> Pool {
         backing_usd: small(MAX_BAL),
         num_custodies: 0,
         markets_with_oi: kani::any(),
-        _reserved: [0; 3],
+        oi_version: 0,
+        _reserved: [0; 1],
     };
     kani::assume(
         p.protocol_fee_share_bps as u128

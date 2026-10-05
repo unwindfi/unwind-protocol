@@ -87,7 +87,8 @@ fn pool() -> Pool {
         backing_usd: byte(),
         num_custodies: 0,
         markets_with_oi: kani::any::<u8>() as u16,
-        _reserved: [0; 3],
+        oi_version: 0,
+        _reserved: [0; 1],
     }
 }
 

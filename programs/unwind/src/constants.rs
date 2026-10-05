@@ -35,6 +35,14 @@ pub const OBSERVATION_SEED: &[u8] = b"observation";
 pub const MARK_KEEPER_SEED: &[u8] = b"mark_keeper";
 pub const BACKING_SEED: &[u8] = b"backing";
 pub const BATCH_SEED: &[u8] = b"batch";
+pub const AUM_SEED: &[u8] = b"aum";
+
+/// How long a checkpoint pass may take before anyone may start it again.
+pub const AUM_PASS_MAX_SEC: i64 = 30;
+/// How old a completed checkpoint may be when a deposit or withdrawal prices
+/// LP shares from it. The marks it read are themselves up to a minute or two
+/// old, so this adds little to what pricing already accepts.
+pub const AUM_MAX_AGE_SEC: i64 = 60;
 pub const CUSTODY_SEED: &[u8] = b"custody";
 pub const CUSTODY_VAULT_SEED: &[u8] = b"custody_vault";
 pub const BACKING_BOOK_SEED: &[u8] = b"backing_book";

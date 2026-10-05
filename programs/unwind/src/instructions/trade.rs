@@ -296,6 +296,7 @@ fn book_planned(
             .markets_with_oi
             .checked_add(1)
             .ok_or(PerpError::MathOverflow)?;
+        pool.oi_version = pool.oi_version.wrapping_add(1);
     }
     market.collateral_usd = market
         .collateral_usd
@@ -553,6 +554,7 @@ pub fn apply_settlement_to_pool(
     }
     if had_open_interest && !market.has_open_interest() {
         pool.markets_with_oi = pool.markets_with_oi.saturating_sub(1);
+        pool.oi_version = pool.oi_version.wrapping_add(1);
     }
     market.collateral_usd = market
         .collateral_usd
@@ -872,7 +874,8 @@ pub(crate) mod tests {
             num_custodies: 0,
             markets_with_oi: 0,
             rewards_usd: 0,
-            _reserved: [0; 3],
+            oi_version: 0,
+            _reserved: [0; 1],
         }
     }
 

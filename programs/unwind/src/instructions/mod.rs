@@ -1,5 +1,6 @@
 pub mod adl;
 pub mod admin;
+pub mod aum_checkpoint;
 pub mod backing;
 pub mod batch;
 pub mod crank;
@@ -13,6 +14,7 @@ pub mod trade;
 pub use adl::*;
 pub use backing::*;
 pub use admin::*;
+pub use aum_checkpoint::*;
 pub use batch::*;
 pub use crank::*;
 pub use liquidate::*;

@@ -1,3 +1,4 @@
+pub mod aum_checkpoint;
 pub mod batch;
 pub mod custody;
 pub mod market;
@@ -7,6 +8,7 @@ pub mod pool;
 pub mod position;
 pub mod trader;
 
+pub use aum_checkpoint::*;
 pub use batch::*;
 pub use custody::*;
 pub use market::*;

@@ -90,13 +90,14 @@ describe("system", () => {
   }
 
   async function seedLiquidity(amount: number) {
+    await checkpointAum();
     const ix = await perps.methods
       .addLiquidity(USD(amount), new BN(0))
       .accounts({
         owner: lp.publicKey, pool, usdcMint, usdcVault, lpMint,
         ownerUsdc: lpUsdc, ownerLp: lpLp, tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .remainingAccounts(await oiMarketAccounts())
+      .remainingAccounts([])
       .instruction();
     await sendV0(conn, lp, [
       ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }), ix,
@@ -122,6 +123,24 @@ describe("system", () => {
       );
     }
     return out;
+  };
+
+  /// Deposits and withdrawals price LP shares from the pool's AUM
+  /// checkpoint: a pass over every market with open interest, in increasing
+  /// address order, ten to a transaction.
+  const checkpointAum = async () => {
+    const pairs = await oiMarketAccounts();
+    const byMarket: (typeof pairs)[] = [];
+    for (let i = 0; i < pairs.length; i += 2) byMarket.push([pairs[i], pairs[i + 1]]);
+    byMarket.sort((a, b) => Buffer.compare(a[0].pubkey.toBuffer(), b[0].pubkey.toBuffer()));
+    for (let k = 0; k === 0 || k < byMarket.length; k += 10) {
+      await perps.methods.checkpointAum(k === 0)
+        .accounts({ payer: lp.publicKey, pool })
+        .remainingAccounts(byMarket.slice(k, k + 10).flat())
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 })])
+        .signers([lp])
+        .rpc();
+    }
   };
 
   const adlAccounts = (sym: string, owner: PublicKey) => ({
@@ -537,13 +556,14 @@ describe("system", () => {
       const loaded = await loadLookupTable(conn, table);
       assert.equal(loaded.state.addresses.length, SYMBOLS.length * 2);
 
+      await checkpointAum();
       const ix = await perps.methods
         .addLiquidity(USD(1_000_000), new BN(0))
         .accounts({
           owner: lp.publicKey, pool, usdcMint, usdcVault, lpMint,
           ownerUsdc: lpUsdc, ownerLp: lpLp, tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .remainingAccounts(await oiMarketAccounts())
+        .remainingAccounts([])
         .instruction();
 
       const before = (await perps.account.pool.fetch(pool)).liquidityUsd.toNumber();

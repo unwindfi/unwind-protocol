@@ -108,4 +108,6 @@ pub enum PerpError {
     RewardsPoolMismatch,
     #[msg("This wallet holds an LP stake; show its LP token account")]
     LpAccountRequired,
+    #[msg("The pool's valuation checkpoint is stale or incomplete; run checkpoint_aum and try again")]
+    AumCheckpointStale,
 }

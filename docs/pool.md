@@ -72,6 +72,20 @@ Withdrawals pay a share of the pool's value, never more. Nothing is reserved
 for open positions: a winner is paid only out of its market's remaining
 budget, so LP liquidity that leaves is not owed to anyone's open profit.
 
+What traders are up is read from the pool's valuation checkpoint rather than
+from every market inside the deposit itself. A deposit or withdrawal that
+carried every market with open interest stopped fitting in a Solana
+transaction once about two dozen markets had positions, and then nobody could
+enter or leave the pool. The checkpoint is a pass anyone may run
+(`checkpoint_aum`): it adds the markets with open interest in increasing
+address order over as many transactions as it needs, and completes when it
+has counted all of them. A deposit or withdrawal accepts only a completed
+checkpoint under a minute old, taken while the same set of markets carried
+open interest; the pool records a version that changes whenever that set
+does, so a checkpoint from before a market gained or lost its positions is
+refused. The venue's server runs a pass every twenty seconds, and before
+building a deposit or withdrawal if the last one is older than 45 seconds.
+
 ## Batch reporting
 
 Each batch publishes the portion of the fill taken by the pool. Where makers

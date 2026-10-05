@@ -379,15 +379,28 @@ async function main() {
     console.log(`  liquidity  already ${(already.liquidityUsd.toNumber() / 1e6).toLocaleString()} USD`);
   }
 
+  // Deposits price LP shares from the pool's AUM checkpoint: a pass over the
+  // markets somebody holds a position in, which on a fresh pool is none of
+  // them. A resumed run may find some.
+  const oi = await oiOnly(remaining);
+  const byMarket: (typeof oi)[] = [];
+  for (let i = 0; i < oi.length; i += 2) byMarket.push([oi[i], oi[i + 1]]);
+  byMarket.sort((a, b) => Buffer.compare(a[0].pubkey.toBuffer(), b[0].pubkey.toBuffer()));
+  for (let k = 0; k === 0 || k < byMarket.length; k += 10) {
+    await program.methods.checkpointAum(k === 0)
+      .accounts({ payer: lp.publicKey, pool })
+      .remainingAccounts(byMarket.slice(k, k + 10).flat())
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 })])
+      .signers([lp])
+      .rpc();
+  }
   const seedIx = await program.methods
     .addLiquidity(USD(10_000_000), new BN(0))
     .accounts({
       owner: lp.publicKey, pool, usdcMint, usdcVault, lpMint,
       ownerUsdc: lpUsdc, ownerLp: lpLp, tokenProgram: TOKEN_PROGRAM_ID,
     })
-    // Priced against the markets somebody holds a position in, which on a
-    // fresh pool is none of them. A resumed run may find some.
-    .remainingAccounts(await oiOnly(remaining))
+    .remainingAccounts([])
     .instruction();
 
   // Pricing every market in one instruction costs more than the default budget

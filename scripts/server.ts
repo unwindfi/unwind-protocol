@@ -1301,21 +1301,83 @@ async function tablesFor(accounts: { pubkey: PublicKey }[]): Promise<AddressLook
 /// them -- the program counts them (`Pool::markets_with_oi`) and refuses a list
 /// that is short or padded with empty ones. Read fresh each time, because a
 /// position opened a second ago changes the answer.
-async function allMarketAccounts() {
-  const listed: any[] = await program.account.market.all([
-    { memcmp: { offset: 9, bytes: pool.toBase58() } },
-  ]);
-  const pairs = [];
-  for (const { publicKey, account } of listed) {
-    if (account.longSizeUsd.isZero() && account.shortSizeUsd.isZero()) continue;
-    const m = Object.values(rt).find((r) => r.address.equals(publicKey));
-    if (!m) throw new Error(`market ${publicKey.toBase58()} has open interest but no known price account`);
-    pairs.push(
-      { pubkey: m.address, isWritable: false, isSigner: false },
-      { pubkey: oracleOf(m), isWritable: false, isSigner: false },
-    );
+/*
+ * The pool's AUM checkpoint (`AumCheckpoint`), which deposits and withdrawals
+ * price LP shares from instead of carrying every market with open interest.
+ * They used to carry them, two accounts each, and past about two dozen such
+ * markets that broke Solana's 64-account lock limit: in the 100-wallet load
+ * test every deposit and withdrawal failed with TooManyAccountLocks.
+ *
+ * A pass adds those markets in increasing address order, AUM_CHUNK a
+ * transaction, and completes when it has counted all of them; the keeper
+ * runs one every AUM_EVERY_MS, and a deposit that finds the last one older
+ * than AUM_FRESH_MS runs one first. Anyone may run or finish a pass.
+ */
+const aumCheckpointPda = PublicKey.findProgramAddressSync(
+  [Buffer.from("aum"), pool.toBuffer()], program.programId)[0];
+const AUM_CHUNK = 12;
+const AUM_EVERY_MS = 20_000;
+const AUM_FRESH_MS = 45_000;
+let aumPassing: Promise<void> | null = null;
+
+function refreshAum(): Promise<void> {
+  if (!aumPassing) {
+    aumPassing = rpcWho.run("aum", runAumPass).finally(() => { aumPassing = null; });
   }
-  return [...pairs, ...custodyPairs(false)];
+  return aumPassing;
+}
+
+async function runAumPass() {
+  const markets = Object.values(rt);
+  const accounts = await program.account.market.fetchMultiple(markets.map((m) => m.address));
+  const withOi = markets
+    .filter((m, i) => {
+      const a: any = accounts[i];
+      return a && !(a.longSizeUsd.isZero() && a.shortSizeUsd.isZero());
+    })
+    .sort((a, b) => Buffer.compare(a.address.toBuffer(), b.address.toBuffer()));
+  const c: any = await program.account.aumCheckpoint.fetchNullable(aumCheckpointPda);
+  const p: any = await program.account.pool.fetch(pool);
+  const now = Date.now() / 1000;
+  // Continue a pass that is open, fresh and under the pool's current set of
+  // markets; otherwise start one.
+  const resume = c && c.passOpen && now - num(c.passStartedTs) <= 25
+    && c.passVersion === p.oiVersion && c.passMarkets === p.marketsWithOi;
+  const after = resume ? new PublicKey(c.passLastMarket).toBuffer() : null;
+  const todo = after ? withOi.filter((m) => Buffer.compare(m.address.toBuffer(), after) > 0) : withOi;
+  let restart = !resume;
+  for (let k = 0; k === 0 || k < todo.length; k += AUM_CHUNK) {
+    const chunk = todo.slice(k, k + AUM_CHUNK);
+    await program.methods.checkpointAum(restart)
+      .accounts({ payer: authority.publicKey, pool, checkpoint: aumCheckpointPda,
+                  systemProgram: SystemProgram.programId } as any)
+      .remainingAccounts(chunk.flatMap((m) => [
+        { pubkey: m.address, isWritable: false, isSigner: false },
+        { pubkey: oracleOf(m), isWritable: false, isSigner: false },
+      ]))
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 })])
+      .rpc();
+    restart = false;
+  }
+}
+
+/// Before a deposit or withdrawal is built, a checkpoint the program will
+/// accept: under a minute old, with the margin AUM_FRESH_MS leaves for the
+/// trader to sign.
+async function aumReady() {
+  const c: any = await program.account.aumCheckpoint.fetchNullable(aumCheckpointPda);
+  const p: any = await program.account.pool.fetch(pool);
+  const fresh = c && Date.now() / 1000 - num(c.doneTs) < AUM_FRESH_MS / 1000
+    && c.doneVersion === p.oiVersion && c.doneMarkets === p.marketsWithOi;
+  if (!fresh) await refreshAum();
+}
+
+/// What a deposit or withdrawal carries besides its named accounts: the
+/// custodies, which the LPs may hold tokens in. Markets come from the AUM
+/// checkpoint.
+async function allMarketAccounts() {
+  await aumReady();
+  return [...custodyPairs(false)];
 }
 
 const batchPda = (market: PublicKey) =>
@@ -1421,7 +1483,7 @@ const pendingStakePoints = (usd: number, perDay: number, since: number, now: num
   since > 0 && now > since ? (usd * perDay * (now - since)) / 86_400 : 0;
 
 const liquidityAccounts = (owner: PublicKey) => ({
-  owner, pool, usdcMint, usdcVault, lpMint,
+  owner, pool, usdcMint, usdcVault, lpMint, checkpoint: aumCheckpointPda,
   ownerUsdc: ata(owner, usdcMint), ownerLp: ata(owner, lpMint),
   tokenProgram: TOKEN_PROGRAM_ID,
 });
@@ -2949,6 +3011,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   // Every few seconds against the cached list (see orderCache).
   setTimeout(() => loop("orders", orderKeeper, ORDER_CHECK_MS), 5_000);
   loop("crank", crank, CRANK_MS);
+  // The AUM checkpoint deposits and withdrawals are priced from.
+  loop("aum", () => refreshAum(), AUM_EVERY_MS);
   // Pushing marks needs the keeper record first. Failing here is loud but
   // not fatal: without it every push is refused, and the loop says so.
   await ensureMarkKeeper().catch((e: any) => console.warn(`mark keeper: ${e?.message ?? e}`));
