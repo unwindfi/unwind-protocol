@@ -240,7 +240,6 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
     { title: "Community", links: [
       { label: "X", href: X_URL, out: true },
       { label: "GitHub", href: REPO, out: true },
-      { label: "Superteam Nepal", href: SUPERTEAM_NP, out: true },
     ] },
   ];
   // Brand marks come from simple-icons; lucide carries none.
@@ -311,13 +310,24 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
               the assets its markets track.
             </p>
           </div>
-          <div className="flex flex-none items-center gap-5">
-            {socials.map(({ label, href, Icon }) => (
-              <a key={label} href={href} {...out} aria-label={label}
-                className="text-foreground/70 transition-colors hover:text-foreground">
-                <Icon size={18} aria-hidden />
-              </a>
-            ))}
+          <div className="flex flex-none flex-col items-start gap-4 md:items-end">
+            <div className="flex items-center gap-5">
+              {socials.map(({ label, href, Icon }) => (
+                <a key={label} href={href} {...out} aria-label={label}
+                  className="text-foreground/70 transition-colors hover:text-foreground">
+                  <Icon size={18} aria-hidden />
+                </a>
+              ))}
+            </div>
+            {/* Superteam's own lockup, from np.superteam.fun: white for dark,
+                the same with the wordmark in black for light. */}
+            <a href={SUPERTEAM_NP} {...out} aria-label="Superteam Nepal"
+              className="opacity-80 transition-opacity hover:opacity-100">
+              <img src="/footer/superteam-np-light.webp" alt="" width={568} height={72}
+                className="h-[18px] w-auto dark:hidden" />
+              <img src="/footer/superteam-np-dark.webp" alt="" width={568} height={72}
+                className="hidden h-[18px] w-auto dark:block" />
+            </a>
           </div>
         </div>
       </div>
