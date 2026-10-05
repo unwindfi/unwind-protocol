@@ -339,13 +339,11 @@ export default function Markets() {
           className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-45
                      [mask-image:linear-gradient(to_bottom,black_45%,transparent)] dark:opacity-70" />
         <Shell className="relative py-10 text-center sm:py-12 md:py-16">
-          {/* The two things this page does, in the order it offers them: the
-              field below, and the link beside the table under it. The second
-              sentence is the whole claim -- the listing is not ours to grant
-              -- put as something you can go and do rather than argued. */}
-          <h1 className="text-balance font-serif-display mx-auto max-w-[13ch] text-[clamp(2.6rem,10vw,3.4rem)]
+          {/* The pitch line, alone: what the venue lets you do, with nothing
+              under it to explain it. */}
+          <h1 className="text-balance font-serif-display mx-auto max-w-[18ch] text-[clamp(2.6rem,10vw,3.4rem)]
                          leading-[1] tracking-[-.025em] md:text-[80px]">
-            Find a market. Or open one.
+            List any Solana token, with leverage.
           </h1>
           {/*
            * The road is a decoration of this row, not of the section, so it
