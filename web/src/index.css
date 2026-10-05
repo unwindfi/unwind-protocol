@@ -140,37 +140,39 @@
 :root[data-theme="light"] {
   --glow: transparent;
   --grain: 0;
-  /* A pale blue-grey page with frosted white cards on it and black type:
-     the palette of the prediction-market terminals (world.xyz), cool and
-     flat, with the only colour the green and red of a price. */
-  --background: #e4eaee;
-  --foreground: #000000;
+  /* Crisp white: white panels on a near-white neutral page, held apart by
+     hairlines rather than by tone, with near-black type. The earlier
+     blue-grey page sat so close to its off-white panels that cards, the
+     terminal's panes and the page ran together. Neutral greys throughout, so
+     the only colour is the brand violet and the green and red of a price. */
+  --background: #f6f6f7;
+  --foreground: #0b0b0f;
   --card: #ffffff;
-  --card-foreground: #000000;
+  --card-foreground: #0b0b0f;
   --popover: #ffffff;
-  --popover-foreground: #000000;
-  --primary: #000000;
+  --popover-foreground: #0b0b0f;
+  --primary: #0b0b0f;
   --primary-foreground: #ffffff;
-  --secondary: #eef2f5;
-  --secondary-foreground: #000000;
-  --muted: #eef2f5;
-  --muted-foreground: #3d484f;
-  --accent: #eef2f5;
-  --accent-foreground: #000000;
+  --secondary: #f1f1f3;
+  --secondary-foreground: #0b0b0f;
+  --muted: #f1f1f3;
+  --muted-foreground: #52525b;
+  --accent: #f1f1f3;
+  --accent-foreground: #0b0b0f;
   --destructive: #d12f2f;
-  --border: #d6dde2;
-  --input: #d6dde2;
-  --ring: #000000;
+  --border: #e3e3e8;
+  --input: #dcdce2;
+  --ring: #0b0b0f;
 
-  --color-panel: #f7f9fb;
-  --color-panel2: #eceff2;
-  --color-panel3: #dfe5e9;
-  --color-line: #d6dde2;
-  --color-linesoft: #e6ebef;
-  --color-dim: #656d72;
-  --color-up: #027e36;
+  --color-panel: #ffffff;
+  --color-panel2: #f3f3f5;
+  --color-panel3: #e9e9ed;
+  --color-line: #e3e3e8;
+  --color-linesoft: #eeeef1;
+  --color-dim: #71717a;
+  --color-up: #047a3a;
   --color-down: #cd2e2e;
-  --color-brand: #000000;
+  --color-brand: #0b0b0f;
 
   /* The road inverts with the page: dark tarmac under a pale sky. */
   --color-road-1: #aeb6c6;
