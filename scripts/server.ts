@@ -21,6 +21,7 @@ import {
 import {
   AddressLookupTableAccount, ComputeBudgetProgram, Transaction, TransactionInstruction,
   TransactionMessage, VersionedTransaction,
+  TransactionExpiredBlockheightExceededError, TransactionExpiredTimeoutError,
 } from "@solana/web3.js";
 import { createLookupTable, extendLookupTable, loadLookupTable, sendV0 } from "./alt";
 import express from "express";
@@ -301,6 +302,83 @@ const conn = new Connection(RPC_URL, {
   commitment: "confirmed", fetch: rpcFetch, disableRetryOnRateLimit: true,
   wsEndpoint: RPC_WS_URL,
 });
+/*
+ * Confirmation by polling, not by websocket. Every transaction this process
+ * waits on, its own and the ones it relays, is checked in one batched
+ * `getSignatureStatuses` every CONFIRM_POLL_MS, and the block height every
+ * two seconds for expiry.
+ *
+ * web3.js confirms through a `signatureSubscribe` per transaction on the
+ * websocket. Under the 100-wallet load test the free websocket endpoint
+ * started closing; every confirmation then hung on a socket that would never
+ * answer, piled up in memory, and the process aborted at 2.2 GB. Confirms
+ * also took the 30s timeout far more often than a transaction took to land.
+ * Replacing `confirmTransaction` on the shared connection covers every
+ * caller: Anchor's `.rpc()`, `sendAndConfirm` and the relay endpoint.
+ */
+const CONFIRM_POLL_MS = 500;
+type Waiter = { resolve: (r: any) => void; reject: (e: any) => void; lastValid?: number; deadline: number };
+const unconfirmed = new Map<string, Waiter[]>();
+let height = { at: 0, value: 0 };
+let confirming = false;
+async function confirmPass() {
+  if (confirming || !unconfirmed.size) return;
+  confirming = true;
+  try {
+    const needHeight = [...unconfirmed.values()].some((ws) => ws.some((w) => w.lastValid));
+    if (needHeight && Date.now() - height.at > 2_000) {
+      try { height = { at: Date.now(), value: await conn.getBlockHeight("confirmed") }; } catch { /* next pass */ }
+    }
+    const sigs = [...unconfirmed.keys()];
+    for (let k = 0; k < sigs.length; k += 256) {
+      const chunk = sigs.slice(k, k + 256);
+      let res: any;
+      try { res = await conn.getSignatureStatuses(chunk); } catch { continue; }
+      chunk.forEach((sig, i) => {
+        const ws = unconfirmed.get(sig);
+        if (!ws) return;
+        const st = res.value[i];
+        if (st && (st.err || st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+          unconfirmed.delete(sig);
+          ws.forEach((w) => w.resolve({ context: { slot: res.context.slot }, value: { err: st.err ?? null } }));
+          return;
+        }
+        const now = Date.now();
+        const left = ws.filter((w) => {
+          if (w.lastValid && height.value > w.lastValid) {
+            w.reject(new TransactionExpiredBlockheightExceededError(sig)); return false;
+          }
+          if (now > w.deadline) { w.reject(new TransactionExpiredTimeoutError(sig, 60)); return false; }
+          return true;
+        });
+        if (left.length) unconfirmed.set(sig, left); else unconfirmed.delete(sig);
+      });
+    }
+  } finally { confirming = false; }
+}
+setInterval(() => { void confirmPass().catch(() => { /* next pass */ }); }, CONFIRM_POLL_MS).unref();
+(conn as any).confirmTransaction = (strategy: any) => new Promise((resolve, reject) => {
+  const sig: string = typeof strategy === "string" ? strategy : strategy.signature;
+  const lastValid: number | undefined = typeof strategy === "string" ? undefined : strategy.lastValidBlockHeight;
+  const list = unconfirmed.get(sig) ?? [];
+  list.push({ resolve, reject, lastValid, deadline: Date.now() + (lastValid ? 150_000 : 60_000) });
+  unconfirmed.set(sig, list);
+});
+
+/// One blockhash shared for BLOCKHASH_MS: every transaction this process
+/// built or sent fetched its own, about one RPC call in nine, and a
+/// blockhash stays valid for about a minute.
+const BLOCKHASH_MS = 5_000;
+let blockhashRead: { at: number; body: Promise<any> } | null = null;
+const latestBlockhash = conn.getLatestBlockhash.bind(conn);
+(conn as any).getLatestBlockhash = (commitment?: any) => {
+  if (blockhashRead && Date.now() - blockhashRead.at < BLOCKHASH_MS) return blockhashRead.body;
+  const body = latestBlockhash(commitment);
+  blockhashRead = { at: Date.now(), body };
+  body.catch(() => { blockhashRead = null; });
+  return body;
+};
+
 const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(authority), {
   commitment: "confirmed",
 });
