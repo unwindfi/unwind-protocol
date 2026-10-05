@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import "@/site/serif.css";
+import { Wordmark } from "@/components/Wordmark";
 import {
   ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
@@ -118,7 +118,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
       <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
           <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-8 w-8" />
-          <span className="font-serif-display text-[23px] leading-none tracking-[-.02em]">unwind</span>
+          <Wordmark height={18} />
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
@@ -263,7 +263,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
           <div>
             <a href="/markets" className="flex items-center gap-2.5">
               <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-7 w-7" />
-              <span className="font-serif-display text-[28px] leading-none tracking-[-.02em]">unwind</span>
+              <Wordmark height={21} />
             </a>
             <p className="mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">
               Every market clears by auction. Anyone can open one.

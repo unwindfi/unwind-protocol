@@ -1,4 +1,4 @@
-import "@/site/serif.css";
+import { Wordmark } from "@/components/Wordmark";
 import { Mark } from "./Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletActions } from "@/components/WalletActions";
@@ -21,7 +21,7 @@ export function Nav() {
                     bg-panel px-3 safe-t md:h-[42px]">
       <a href="/" className="flex items-center gap-2 md:mr-5" aria-label="unwind home">
         <Mark size={25} />
-        <span className="font-serif-display text-[22px] leading-none tracking-[-.02em]">unwind</span>
+        <Wordmark height={17} />
       </a>
       {/* The section links are a desktop affordance. On a phone the bottom tab
           bar moves around this market, and the menu at the end of the bar
