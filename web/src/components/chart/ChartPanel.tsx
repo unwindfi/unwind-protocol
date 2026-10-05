@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Eraser, Maximize2, Minimize2, PenLine } from "lucide-react";
 import { Chart, INDICATOR_COLORS, type ChartIndicators } from "@/components/Chart";
+import { ChartBoundary } from "@/components/ChartBoundary";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { getBatch, useHasBackend, type Account, type Batch, type Market } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -241,10 +242,12 @@ export function ChartPanel({
           keeps the bars loaded and wherever the viewer had scrolled to. */}
       <div className={cn("relative min-h-0 flex-1 flex-col", view === "chart" ? "flex" : "hidden")}>
         <Legend ind={prefs.ind} trim={prefs.trim && shown === "candles"} drawMode={drawMode} />
-        <Chart symbol={symbol} price={market.price} tf={tf} compact={compact}
-          kind={prefs.kind} indicators={prefs.ind} logScale={prefs.log} trimWicks={prefs.trim}
-          lines={lines ?? accountLines(account, symbol)}
-          drawings={marks} drawMode={drawMode} onDraw={drawn} onModeChange={setMode} />
+        <ChartBoundary resetKey={`${symbol}:${tf}`}>
+          <Chart symbol={symbol} price={market.price} tf={tf} compact={compact}
+            kind={prefs.kind} indicators={prefs.ind} logScale={prefs.log} trimWicks={prefs.trim}
+            lines={lines ?? accountLines(account, symbol)}
+            drawings={marks} drawMode={drawMode} onDraw={drawn} onModeChange={setMode} />
+        </ChartBoundary>
       </div>
       {view === "depth" && <DepthView m={market} batch={batch} hasBackend={hasBackend} />}
       {view === "funding" && <FundingView m={market} samples={samples} />}

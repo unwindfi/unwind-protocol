@@ -71,6 +71,10 @@ export function Chart({
   const raw = useRef<Bar[]>([]);
   const cap = useRef<number | null>(null);
   const fit = useRef(false);
+  /// What the series last drew, as "symbol:tf". Between a timeframe switch
+  /// and its redraw the series still holds the old timeframe's bars, and a
+  /// tick folded into it then lands behind its newest bar.
+  const drawn = useRef("");
   const priceLines = useRef<IPriceLine[]>([]);
   // Which market the series holds. Without it a poll can append one market's
   // price to another's bars during a switch and blow out the scale.
@@ -222,6 +226,7 @@ export function Chart({
         ? bars.map((b) => trimBar(b, cap.current))
         : bars.map((b) => ({ time: b.time, value: b.close }))) as never
     );
+    drawn.current = `${symbol}:${tf}`;
     if (!fit.current) return;
     fit.current = false;
     c.timeScale().applyOptions({ secondsVisible: tf < 60 });
@@ -296,6 +301,7 @@ export function Chart({
   // Fold the latest price into the forming bar so it grows between fetches.
   useEffect(() => {
     if (!series.current || price == null || loaded.current !== symbol) return;
+    if (drawn.current !== `${symbol}:${tf}`) return;
     const bars = raw.current;
     const bucket = Math.floor(Date.now() / 1000 / tf) * tf;
     const b = bars[bars.length - 1];
@@ -306,16 +312,20 @@ export function Chart({
                                 low: Math.min(b.low, price), close: price };
     } else return;
     const last = bars[bars.length - 1];
-    series.current.update(
-      (mode.current === "candles"
-        ? trimBar(last, cap.current)
-        : { time: last.time, value: price }) as never
-    );
-    const { ma20, ema50 } = studies.current;
-    const m = ma20 && sma(bars.slice(-20), 20).pop();
-    if (ma20 && m) ma20.update(m as never);
-    const e = ema50 && ema(bars, 50).pop();
-    if (ema50 && e) ema50.update(e as never);
+    // The library throws on a bar older than its newest, and a throw here
+    // would take the whole page down; a tick skipped is redrawn on the next.
+    try {
+      series.current.update(
+        (mode.current === "candles"
+          ? trimBar(last, cap.current)
+          : { time: last.time, value: price }) as never
+      );
+      const { ma20, ema50 } = studies.current;
+      const m = ma20 && sma(bars.slice(-20), 20).pop();
+      if (ma20 && m) ma20.update(m as never);
+      const e = ema50 && ema(bars, 50).pop();
+      if (ema50 && e) ema50.update(e as never);
+    } catch { /* out of order: the next draw replaces it */ }
   }, [price, symbol, tf]);
 
   const levels = lines ?? (position ? positionLevels(position) : []);

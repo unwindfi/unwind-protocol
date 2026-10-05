@@ -4,6 +4,7 @@ import { Nav } from "@/components/Nav";
 import { MarketHeader } from "@/components/MarketHeader";
 import { MarketPalette } from "@/components/MarketPalette";
 import { Chart } from "@/components/Chart";
+import { ChartBoundary } from "@/components/ChartBoundary";
 import { ChartPanel } from "@/components/chart/ChartPanel";
 import { BookPanel } from "@/components/BookPanel";
 import { AccountPanel, OrderTicket } from "@/components/OrderTicket";
@@ -265,8 +266,10 @@ export default function App() {
                   Reference <span className="n text-foreground">{market.price.toFixed(2)}</span>
                 </span>
               </div>
-              <Chart symbol={market.symbol} price={market.price} tf={tf} compact
-                position={account?.positions[market.symbol]} />
+              <ChartBoundary resetKey={`${market.symbol}:${tf}`}>
+                <Chart symbol={market.symbol} price={market.price} tf={tf} compact
+                  position={account?.positions[market.symbol]} />
+              </ChartBoundary>
             </>
           )}
           {view === "book" && (
