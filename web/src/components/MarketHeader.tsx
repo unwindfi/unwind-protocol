@@ -72,7 +72,7 @@ export function MarketHeader({
   }
 
   return (
-    <header className="strip-scroll flex flex-none items-center gap-5 border-b border-line
+    <header className="strip-scroll fade-right flex flex-none items-center gap-5 border-b border-line pr-10
                        bg-panel px-4 py-2">
       <button onClick={onOpen} className="flex flex-none items-center gap-2.5">
         <TickerLogo m={m} size={26} />
@@ -94,9 +94,9 @@ export function MarketHeader({
         {/* Only a tokenised equity is an xStock; a crypto market wearing the
             badge was saying something untrue about it. */}
         {/x$/.test(m.symbol) && (
-          <span className="rounded-full border border-line px-2 py-px text-[11px] text-muted-foreground">xStock</span>
+          <span className="text-[12px] text-dim">xStock</span>
         )}
-        <span className="rounded-full border border-line px-2 py-px text-[11px] font-medium">
+        <span className="n text-[12px] text-dim">
           {m.maxLeverage}x
         </span>
       </div>

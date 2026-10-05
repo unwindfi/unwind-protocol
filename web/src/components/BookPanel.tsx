@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { BatchClock, useNow } from "@/components/BatchClock";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/Tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/motion/tabs";
+
+/// The book's tabs: words on the panel's rule, the open one underlined.
+const TAB = "min-h-[38px] px-3 text-[12.5px] font-medium first:pl-0";
 import { Gauge } from "@/components/market/Gauge";
 import { Ripeness, statusOf } from "@/components/Ripeness";
-import type { Batch, Market, Trade } from "@/lib/api";
+import { useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
 import { compact, hhmmss } from "@/lib/format";
 
 /// Caption over figure, the stat tiles' manner without the tile: the wide
@@ -16,6 +19,15 @@ const Stat = ({ k, v, cls = "" }: { k: string; v: string; cls?: string }) => (
 );
 
 const px = (p: number | null | undefined) => (p ? p.toFixed(2) : "–");
+
+/// Caption over figure, small, for the book's three-up row.
+const Fig = ({ k, v, cls = "", sub }: { k: string; v: string; cls?: string; sub?: string }) => (
+  <div className="min-w-0">
+    <div className="text-[11px] text-muted-foreground">{k}</div>
+    <div className={`n mt-1 truncate text-[15px] font-medium leading-none ${cls}`}>{v}</div>
+    {sub && <div className="n mt-1 text-[10.5px] text-dim">{sub}</div>}
+  </div>
+);
 
 /// One resting order. Size is drawn as a bar behind the row, so relative
 /// weight reads without anyone having to compare the numbers. Makers are
@@ -105,18 +117,6 @@ function usePoolShareHistory(symbol: string, last: Batch["last"] | undefined) {
   return h.symbol === symbol ? h.list : [];
 }
 
-/// One flow's clearing price, the largest type in the panel: this is what
-/// every order in that flow got, whoever it was and whenever it arrived.
-const FlowPrice = ({ k, p, cls }: { k: string; p: number | null | undefined; cls: string }) => (
-  <div className="min-w-0">
-    <div className="text-[12.5px] text-muted-foreground">{k}</div>
-    <div className={`n mt-1.5 truncate text-[24px] font-medium leading-none tracking-[-.02em]
-                     ${p ? cls : "text-dim"}`}>
-      {p ? p.toFixed(2) : p === null ? "no cross" : "–"}
-    </div>
-  </div>
-);
-
 /// The auction, as it is happening.
 ///
 /// This is the one screen that shows what the venue actually does differently:
@@ -126,10 +126,15 @@ const FlowPrice = ({ k, p, cls }: { k: string; p: number | null | undefined; cls
 /// The pool fills only the takers the makers leave standing.
 function BatchTab({ m, batch, narrow }: { m: Market; batch: Batch | null; narrow: boolean }) {
   const history = usePoolShareHistory(m.symbol, batch?.last);
+  const backend = useHasBackend();
   if (!batch) {
+    // With a server behind the page, a missing batch is a read that has not
+    // come back yet (devnet's RPC rate-limits at busy times), not a missing chain.
     return (
       <div className="px-5 py-8 text-center text-[12.5px] leading-relaxed text-dim">
-        No chain connected.
+        {backend === false ? "No chain connected." : backend === null ? "Loading the batch." : (
+          <>Reading this batch from devnet.<br />The page keeps trying; it fills in when the read lands.</>
+        )}
       </div>
     );
   }
@@ -162,90 +167,73 @@ function BatchTab({ m, batch, narrow }: { m: Market; batch: Batch | null; narrow
    */
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 sm:px-6">
-        <BatchClock m={m} batch={batch} />
+      {/* One line: the clock, then when the last batch cleared. What the
+          batch is waiting for is the clock's own caption. */}
+      <div className="flex items-center justify-between gap-3 px-4 pt-3 sm:px-5">
+        <BatchClock m={m} batch={batch} compact />
         {last && (
-          <span className="n text-[12px] text-muted-foreground">
-            Last clear <Ago t={last.t} /> · {last.orders} {last.orders === 1 ? "order" : "orders"}
+          <span className="n text-[11.5px] text-muted-foreground">
+            Last clear <Ago t={last.t} />
           </span>
         )}
       </div>
 
       {batch.opening && (
-        <div className="px-5 pt-4 sm:px-6">
+        <div className="px-4 pt-3 sm:px-5">
           <OpeningClock opening={batch.opening} indicative={batch.indicative} />
         </div>
       )}
 
-      <div className={`grid grid-cols-2 gap-x-6 gap-y-5 px-5 py-5 ${
-        narrow ? "" : "sm:grid-cols-[1fr_1fr_1.4fr] sm:px-6"}`}>
-        <FlowPrice k="Buy flow" p={last?.buyPrice} cls="text-up" />
-        <FlowPrice k="Sell flow" p={last?.sellPrice} cls="text-down" />
-        {/* Matched, and who it was matched against: makers or the pool. */}
-        <div className={`col-span-2 min-w-0 ${narrow ? "" : "sm:col-span-1"}`}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[12.5px] text-muted-foreground">Matched</span>
-            {lastShare != null && (
-              <span className={`n text-[12px] ${lastShare > 50 ? "text-down" : "text-muted-foreground"}`}>
-                pool {lastShare.toFixed(0)}%
-              </span>
-            )}
-          </div>
-          <div className="n mt-1.5 text-[24px] font-medium leading-none tracking-[-.02em]">
-            {last ? compact(last.matched) : "–"}
-          </div>
-          <div className="mt-3 flex h-[5px] gap-[2px] overflow-hidden rounded-full bg-panel3">
-            {last && last.matched > 0 && <>
-              <i className="block h-full rounded-full bg-foreground"
-                style={{ width: `${(book / last.matched) * 100}%` }} />
-              <i className="block h-full rounded-full bg-dim"
-                style={{ width: `${(pool / last.matched) * 100}%` }} />
-            </>}
-          </div>
-          <div className="n mt-1.5 flex justify-between text-[11.5px] text-muted-foreground">
-            <span>Makers {compact(book)}</span>
-            <span>Pool {compact(pool)}</span>
-          </div>
-        </div>
+      {/*
+       * The last clear as three figures in a row. Before anything has
+       * cleared there is one dash per column and nothing else: a bar of
+       * zero split between makers and pool, and a pool share of nothing
+       * over no clears, were five ways of saying "not yet".
+       */}
+      <div className="grid grid-cols-3 gap-x-3 px-4 py-3 sm:px-5">
+        <Fig k="Buy" v={last?.buyPrice ? last.buyPrice.toFixed(2) : "–"} cls={last?.buyPrice ? "text-up" : "text-dim"} />
+        <Fig k="Sell" v={last?.sellPrice ? last.sellPrice.toFixed(2) : "–"} cls={last?.sellPrice ? "text-down" : "text-dim"} />
+        <Fig k="Matched" v={last && last.matched > 0 ? compact(last.matched) : "–"}
+          cls={last && last.matched > 0 ? "" : "text-dim"}
+          sub={lastShare != null ? `pool ${lastShare.toFixed(0)}%` : undefined} />
       </div>
 
-      {/* The same share over time. If it does not fall as real makers
-          arrive, the pool is still the price. */}
-      <div className="flex items-end gap-6 border-t border-line px-5 py-4 sm:px-6">
-        <div className="flex-none">
-          <div className="text-[12.5px] text-muted-foreground">Pool share</div>
-          <div className={`n mt-1.5 text-[16px] font-medium
-                           ${share != null && share > 50 ? "text-down" : ""}`}>
-            {share != null ? `${share.toFixed(1)}%` : "–"}
-            <span className="ml-1.5 text-[11.5px] font-normal text-muted-foreground">all clears</span>
+      {last && last.matched > 0 && (
+        <div className="px-4 pb-3 sm:px-5">
+          <div className="flex h-[3px] gap-[2px] overflow-hidden rounded-full bg-panel3">
+            <i className="block h-full rounded-full bg-foreground"
+              style={{ width: `${(book / last.matched) * 100}%` }} />
+            <i className="block h-full rounded-full bg-dim"
+              style={{ width: `${(pool / last.matched) * 100}%` }} />
           </div>
+          <div className="n mt-1.5 flex justify-between text-[11px] text-muted-foreground">
+            <span>Makers {compact(book)}</span>
+            <span>Pool {compact(pool)}{share != null && <> · {share.toFixed(1)}% all clears</>}</span>
+          </div>
+          {history.length > 1 && (
+            <div className="mt-2 flex h-6 items-end gap-[2px] overflow-hidden"
+              aria-label={`Pool share of the last ${history.length} clears`}>
+              {history.map((x) => (
+                <i key={x.t} title={`${x.share.toFixed(0)}%`}
+                  className={`block w-[4px] flex-none rounded-[1px]
+                              ${x.share > 50 ? "bg-down/70" : "bg-foreground/60"}`}
+                  style={{ height: `${Math.max(2, x.share)}%` }} />
+              ))}
+            </div>
+          )}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex h-8 items-end justify-end gap-[2px] overflow-hidden"
-            aria-label={`Pool share of the last ${history.length} clears`}>
-            {history.map((x) => (
-              <i key={x.t} title={`${x.share.toFixed(0)}%`}
-                className={`block w-[5px] flex-none rounded-[1px]
-                            ${x.share > 50 ? "bg-down/70" : "bg-foreground/60"}`}
-                style={{ height: `${Math.max(2, x.share)}%` }} />
-            ))}
-          </div>
-          <div className="mt-1 text-right text-[10.5px] text-dim">
-            {history.length ? `last ${history.length} ${history.length === 1 ? "clear" : "clears"}` : "since this page opened"}
-          </div>
-        </div>
-      </div>
+      )}
 
       <div className="border-t border-line">
         {batch.resting.length === 0
-          ? <div className="px-5 py-6 text-center text-[12.5px] leading-relaxed text-dim">
+          ? <div className="px-4 py-5 text-[12px] text-dim sm:px-5">
               {batch.opening
                 ? "Nothing resting. Orders clear together at open."
                 : "Nothing resting."}
             </div>
           : <>
-              <div className="grid grid-cols-2 gap-1.5 px-5 py-2 text-[11.5px] text-dim sm:px-6">
-                <span>Resting · price</span><span className="text-right">Size</span>
+              <div className="grid grid-cols-2 gap-1.5 px-4 py-2 text-[11px] text-dim sm:px-5">
+                <span>Resting</span><span className="text-right">Size</span>
               </div>
               <div className="pane-scroll max-h-[240px] pb-2">
                 {asks.map((o, i) => <Order key={`a${i}`} {...o} bid={false} widest={widest} />)}
@@ -288,12 +276,12 @@ export function BookPanel({
      * constraint: a book under the chart pushes positions out of view.
      */
     <section className="flex min-h-0 flex-1 flex-col">
-      <Tabs defaultValue="batch" className="flex min-h-0 flex-1 flex-col">
-        <div className={`flex-none border-b border-line ${narrow ? "px-3 py-2" : "px-5 py-3 sm:px-6"}`}>
-          <TabsList soft>
-            <TabsTrigger soft value="batch">Batch</TabsTrigger>
-            <TabsTrigger soft value="trades">Trades</TabsTrigger>
-            <TabsTrigger soft value="liquidity">Liquidity</TabsTrigger>
+      <Tabs defaultValue="batch" variant="underline" className="flex min-h-0 flex-1 flex-col">
+        <div className={`flex-none border-b border-line ${narrow ? "px-4" : "px-5 sm:px-6"}`}>
+          <TabsList className="-mb-px gap-0 border-0">
+            <TabsTrigger value="batch" className={TAB} indicatorClassName="bg-foreground">Batch</TabsTrigger>
+            <TabsTrigger value="trades" className={TAB} indicatorClassName="bg-foreground">Trades</TabsTrigger>
+            <TabsTrigger value="liquidity" className={TAB} indicatorClassName="bg-foreground">Liquidity</TabsTrigger>
           </TabsList>
         </div>
 

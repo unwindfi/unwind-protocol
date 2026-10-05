@@ -112,6 +112,21 @@ const ROUTES: Record<string, Loader> = UNLOCKED
         ]);
         return { default: () => <WalletRoot><Page /></WalletRoot> };
       },
+      // One vault's page, off /earn: deposits sign, so it carries the wallet.
+      "/vault": async () => {
+        const [{ default: Page }, { WalletRoot }] = await Promise.all([
+          import("./site/Vault"),
+          import("./lib/wallet"),
+        ]);
+        return { default: () => <WalletRoot><Page /></WalletRoot> };
+      },
+      "/risk": async () => {
+        const [{ default: Page }, { WalletRoot }] = await Promise.all([
+          import("./site/Risk"),
+          import("./lib/wallet"),
+        ]);
+        return { default: () => <WalletRoot><Page /></WalletRoot> };
+      },
       "/trade": async () => {
         const [{ default: App }, { WalletRoot }] = await Promise.all([
           import("./App"),

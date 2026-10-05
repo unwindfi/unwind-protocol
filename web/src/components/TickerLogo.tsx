@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 import type { Market } from "@/lib/api";
 
 /// Real logo when one exists at /logos/<symbol>.svg, monogram otherwise.
-export function TickerLogo({ m, size = 26 }: { m: Market; size?: number }) {
+export function TickerLogo({ m, size = 26, bare = false }: {
+  m: Market; size?: number;
+  /// No dark disc behind a real logo: for a small icon beside a word, where
+  /// a disc reads as a second, darker shape.
+  bare?: boolean;
+}) {
   // Official xStocks artwork ships as PNG; the hand-drawn SVGs are the
   // fallback for anything it does not cover.
   const [src, setSrc] = useState<string | null>(null);
@@ -29,9 +34,9 @@ export function TickerLogo({ m, size = 26 }: { m: Market; size?: number }) {
 
   return (
     <span className="grid flex-none place-items-center overflow-hidden rounded-full font-bold text-white"
-      style={{ width: size, height: size, background: src ? "#111826" : m.color,
+      style={{ width: size, height: size, background: src ? (bare ? "transparent" : "#111826") : m.color,
                fontSize: size * 0.45 }}>
-      {src ? <img src={src} alt="" style={{ width: "86%", height: "86%" }} />
+      {src ? <img src={src} alt="" style={{ width: bare ? "100%" : "86%", height: bare ? "100%" : "86%" }} />
            : m.mono}
     </span>
   );

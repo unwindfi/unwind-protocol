@@ -321,9 +321,10 @@ export default function App() {
   const header = (
     <SiteHeader here="/trade" actions={<WalletActions />} />
   );
-  // Panels in the site header's treatment: flush, a 2px seam of page between
-  // them, small corners, one bottom rule.
-  const PANE = "min-h-0 overflow-hidden rounded-[10px] border-b border-line bg-panel";
+  // Panes divided by hairlines, the way a terminal is ruled: the gap between
+  // them shows the line colour behind, and nothing has a corner. Rounded
+  // panes a seam apart left a notch of page wherever four corners met.
+  const PANE = "min-h-0 overflow-hidden bg-panel";
 
   if (isWide) {
     return (
@@ -343,15 +344,20 @@ export default function App() {
           {readOnly && <ReadOnlyNotice />}
         </div>
 
-        <main className="flex min-h-0 flex-1 gap-[2px] px-[2px] pt-[2px]">
-          <MarketList markets={markets} current={market.symbol} onPick={setSymbol}
-            onPalette={() => setPaletteOpen(true)} />
+        <main className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
+          {/* The list needs a column of its own. Under 1280px that column
+              comes out of the chart, so the list waits for a wider window
+              and the header's switcher and the palette do its job. */}
+          <div className="hidden xl:contents">
+            <MarketList markets={markets} current={market.symbol} onPick={setSymbol}
+              onPalette={() => setPaletteOpen(true)} />
+          </div>
 
-          <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
-            <div className="flex-none overflow-hidden rounded-[10px] bg-panel">
+          <div className="flex min-w-0 flex-1 flex-col gap-px">
+            <div className="flex-none overflow-hidden bg-panel">
               <MarketHeader m={market} onOpen={() => setPaletteOpen(true)} batch={batch} />
             </div>
-            <div className="flex min-h-0 flex-1 gap-[2px]">
+            <div className="flex min-h-0 flex-1 gap-px">
               <section className={`${PANE} flex min-w-0 flex-1 flex-col px-3 pt-2.5 pb-2`}>
                 {chart}
               </section>
@@ -369,13 +375,13 @@ export default function App() {
 
           {/* The rail scrolls as one column; the ticket and the account keep
               their own heights inside it rather than being squeezed to fit. */}
-          <aside className="pane-scroll relative flex w-[320px] flex-none flex-col gap-[2px] xl:w-[340px]
+          <aside className="pane-scroll relative flex w-[300px] flex-none flex-col gap-px xl:w-[340px]
                             [&>*]:flex-none">
             {ticket}
             {accountBox}
             {/* The rest of the rail is an empty panel rather than bare page,
                 so the column ends level with the positions beside it. */}
-            <div aria-hidden className="min-h-0 !flex-1 rounded-[10px] border-b border-line bg-panel" />
+            <div aria-hidden className="min-h-0 !flex-1 bg-panel" />
           </aside>
         </main>
 
@@ -396,11 +402,11 @@ export default function App() {
         {header}
         {readOnly && <ReadOnlyNotice />}
       </div>
-      <main className="flex flex-1 flex-col gap-[2px] p-[2px]">
-        <div className="overflow-hidden rounded-[10px] bg-panel">
+      <main className="flex flex-1 flex-col gap-px border-y border-line bg-line">
+        <div className="overflow-hidden bg-panel">
           <MarketHeader m={market} onOpen={() => setPaletteOpen(true)} batch={batch} />
         </div>
-        <div className="flex gap-[2px]">
+        <div className="flex gap-px">
           <section className={`${PANE} flex min-h-[460px] min-w-0 flex-1 flex-col px-3 pt-2.5 pb-2`}>
             {chart}
           </section>
@@ -422,11 +428,11 @@ export default function App() {
 /// Grey panes in the terminal's layout, shown for the second before the
 /// first market list arrives.
 function TradeSkeleton({ wide }: { wide: boolean }) {
-  const pane = "rounded-[10px] border-b border-line bg-panel";
+  const pane = "bg-panel";
   const bar = (w: string) => <div className={`h-3 animate-pulse rounded-full bg-panel2 ${w}`} />;
   if (!wide) {
     return (
-      <div className="flex h-full flex-col gap-[2px] bg-background">
+      <div className="flex h-full flex-col gap-px bg-background">
         <div className={`${pane} flex h-[70px] flex-none items-center gap-3 px-4`}>{bar("w-24")}</div>
         <div className={`${pane} flex-1 animate-pulse`} />
         <div className={`${pane} h-[72px] flex-none`} />
@@ -436,15 +442,15 @@ function TradeSkeleton({ wide }: { wide: boolean }) {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background" aria-busy="true">
       <SiteHeader here="/trade" actions={<WalletActions />} />
-      <main className="flex min-h-0 flex-1 gap-[2px] pt-[2px]">
+      <main className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
         <div className={`${pane} hidden w-[248px] flex-none flex-col gap-3 p-4 lg:flex 2xl:w-[272px]`}>
           {bar("w-full")}{bar("w-2/3")}{bar("w-5/6")}{bar("w-3/4")}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
+        <div className="flex min-w-0 flex-1 flex-col gap-px">
           <div className={`${pane} flex h-[60px] flex-none items-center gap-6 px-4`}>
             {bar("w-28")}{bar("w-16")}{bar("w-16")}{bar("w-16")}
           </div>
-          <div className="flex min-h-0 flex-1 gap-[2px]">
+          <div className="flex min-h-0 flex-1 gap-px">
             <div className={`${pane} flex-1 animate-pulse`} />
             <div className={`${pane} w-[300px] flex-none`} />
           </div>

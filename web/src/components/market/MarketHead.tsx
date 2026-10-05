@@ -147,7 +147,10 @@ function Funding({ m }: { m: Market }) {
     <Stat label="1h funding" help="Per hour. Positive: longs pay shorts. Both pay the pool to borrow.">
       {/* Signed, because which side is paying is the entire content of a
           funding rate: an unsigned "0.004%" is a number you cannot act on. */}
-      <span className={tone(-f)}>{(f >= 0 ? "+" : "") + f.toFixed(4)}%</span>
+      {/* A rate that rounds to zero is zero: no sign, no colour. */}
+      <span className={Math.abs(f) < 0.00005 ? "" : tone(-f)}>
+        {Math.abs(f) < 0.00005 ? "0.0000" : (f >= 0 ? "+" : "") + f.toFixed(4)}%
+      </span>
       <span className="ml-2 text-muted-foreground">{clock(toNextHour(now))}</span>
     </Stat>
   );
@@ -174,9 +177,13 @@ export function StatTiles({ m, dense = false }: {
         <DigitSwap value={price(mark)} animationKey={mark}
           direction={m.change >= 0 ? "up" : "down"} />
       </Stat>
-      <Stat label="Reference" help="Oracle price. Breaks ties, never prices fills.">
-        {price(m.price)}
-      </Stat>
+      {/* Only when it says something: equal to the mark, it is the same figure
+          twice and pushes funding off the end of the row. */}
+      {price(m.price) !== price(mark) && (
+        <Stat label="Reference" help="Oracle price. Breaks ties, never prices fills.">
+          {price(m.price)}
+        </Stat>
+      )}
       <Stat label="24h change" help="Since the session opened.">
         <span className={tone(m.changePct)}>
           {m.change >= 0 ? "+" : ""}{m.change.toFixed(2)} / {pct(m.changePct)}

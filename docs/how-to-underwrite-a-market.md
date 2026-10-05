@@ -76,6 +76,15 @@ instruction hands the backers back what the recovery earned. It is
 permissionless, since it only moves a market's backing to where the books
 already say it belongs.
 
+## Each vault's page
+
+Every row on Earn opens a page of its own (`/vault?id=<symbol>`, or
+`pool`): what it holds, its APY and utilisation, your share, a chart of its
+value per share from the server's tape (one point every two minutes, served
+by `/api/apy?series=1`), and the market it stands behind with that market's
+leverage, maintenance margin and budget. Deposit and withdraw from there or
+from the row.
+
 ## Withdrawing
 
 A backer may withdraw at any time, bounded twice: by what their shares are

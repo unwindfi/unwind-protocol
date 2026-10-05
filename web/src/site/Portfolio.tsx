@@ -30,10 +30,10 @@ import { money, price, tone } from "@/lib/format";
 
 const BTN = "press h-[48px] rounded-full bg-foreground px-6 text-[14px] font-medium text-background " +
   "transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-35";
-const SMALL = "press h-8 rounded-full border border-line px-3.5 text-[12.5px] font-medium " +
-  "transition-colors hover:border-foreground/40 disabled:pointer-events-none disabled:opacity-35";
+const SMALL = "press h-8 rounded-full bg-panel2 px-3.5 text-[12.5px] font-medium " +
+  "transition-colors hover:bg-panel3 disabled:pointer-events-none disabled:opacity-35";
 const LINK = "underline decoration-line underline-offset-4 transition-colors hover:text-foreground";
-const CAPS = "text-[11px] font-medium uppercase tracking-[.08em] text-muted-foreground";
+const CAPS = "text-[12.5px] text-muted-foreground";
 const DASH = <span className="font-normal text-dim">–</span>;
 
 const NO_BACKINGS: Backing[] = [];
@@ -107,10 +107,11 @@ export default function PortfolioPage() {
     <div className="site min-h-full">
       <SiteHeader here="/portfolio" actions={<WalletActions />} />
 
-      <Shell className="pb-14 pt-4 sm:pt-8">
+      <Shell main className="pb-14 pt-4 sm:pt-8">
+        {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
-                        lg:grid-cols-[minmax(0,1fr)_440px]">
-          <section className="relative min-h-[320px] overflow-hidden">
+                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
+          <section className="relative min-h-[260px] overflow-hidden bg-gradient-to-br from-panel to-panel2 dark:from-transparent dark:to-transparent">
             {/* The same violet field /rewards carries, without the mark: this
                 page is a statement, not a pitch. */}
             <img src="/waitlist/field.webp" alt="" aria-hidden
@@ -118,9 +119,17 @@ export default function PortfolioPage() {
                          opacity-45 dark:block" />
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r
                                         from-panel via-panel/75 via-45% to-transparent to-70%" />
+            {/* A pearl wallet with two cards up out of it, the front one violet, in
+                the same kit as the Earn coins (brand/x/3d/herosuite.py wallet).
+                One render for both themes. */}
+            <img src="/earn/wallet.webp" alt="" aria-hidden width={806} height={741}
+              draggable={false}
+              className="pointer-events-none absolute right-10 top-1/2 z-[1] hidden h-auto
+                         w-[min(34%,256px)] -translate-y-1/2 select-none
+                         drop-shadow-[0_24px_40px_rgba(0,0,0,.35)] sm:block" />
 
             <div className="relative flex h-full flex-col justify-center px-5 py-9
-                            sm:max-w-[min(460px,60%)] sm:px-9">
+                            sm:max-w-[min(460px,58%)] sm:px-9">
               <h1 className="font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
                              tracking-[-.025em]">
                 Portfolio
@@ -146,9 +155,9 @@ export default function PortfolioPage() {
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     <a href="/trade" className={BTN + " inline-flex items-center"}>Trade</a>
-                    <a href="/earn" className="press inline-flex h-[48px] items-center rounded-full border
-                                                border-line px-6 text-[14px] font-medium transition-colors
-                                                hover:border-foreground/40">
+                    <a href="/earn" className="press inline-flex h-[48px] items-center rounded-full
+                                                bg-panel2 px-6 text-[14px] font-medium transition-colors
+                                                hover:bg-panel3">
                       Earn
                     </a>
                   </div>
@@ -170,7 +179,9 @@ export default function PortfolioPage() {
               {ready ? <AnimatedNumber value={total} duration={0.9} format={(n) => money(n)} /> : DASH}
             </div>
 
-            <div className="mt-5">
+            {/* Two columns of figures rather than eight rows: the hero is as
+                tall as this column, and eight rows left half of it empty. */}
+            <div className="mt-3 grid gap-x-8 sm:grid-cols-2 [&>*:nth-child(2)]:border-t-0">
               <Stat k="Position equity">{ready ? money(posEquity) : DASH}</Stat>
               <Stat k="Unrealized PnL">
                 {ready ? <span className={tone(account!.unrealized)}>{signed(account!.unrealized)}</span> : DASH}
@@ -183,7 +194,7 @@ export default function PortfolioPage() {
               <Stat k="Volume">{rewards ? money(rewards.volume, 0) : DASH}</Stat>
             </div>
 
-            <div className="mt-auto pt-6">
+            <div className="mt-auto pt-4">
               {rewards && rewards.claimable > 0 && self ? (
                 <a href="/rewards" className={`${BTN} flex w-full items-center justify-center`}>
                   Claim on Rewards
@@ -199,15 +210,32 @@ export default function PortfolioPage() {
           </aside>
         </div>
 
-        <Positions rows={positions} owner={owner} loaded={ready} />
-        <Orders orders={account?.orders ?? []} owner={owner} loaded={ready}
-          canAct={canAct} busy={busy} onCancel={cancel} />
-        {/* Each card waits only for what it reads. The account read is the
-            slow one (a few round trips to the RPC), and holding the fills
-            and backings behind it left every card blank for seconds. */}
-        <Holdings account={account} backings={backings} rewards={rewards} owner={owner}
-          loaded={!!owner && (!!account || backingsRaw !== null)} />
-        <History fills={fills} account={account} owner={owner} loaded={!!owner && fillsRaw !== null} />
+        {owner ? (
+          <>
+            <Positions rows={positions} owner={owner} loaded={ready} />
+            <Orders orders={account?.orders ?? []} owner={owner} loaded={ready}
+              canAct={canAct} busy={busy} onCancel={cancel} />
+            <Holdings account={account} backings={backings} rewards={rewards} owner={owner}
+              loaded={!!owner && (!!account || backingsRaw !== null)} />
+            <History fills={fills} account={account} owner={owner} loaded={!!owner && fillsRaw !== null} />
+          </>
+        ) : (
+          /* Four cards each saying "connect a wallet" said it four times.
+             Once, with the two places to go. Connecting signs nothing. */
+          <div className="mt-4 rounded-[24px] border border-line bg-panel px-6 py-14 text-center">
+            <h2 className="text-[20px] font-medium tracking-[-.01em]">Connect a wallet to see your portfolio</h2>
+            <p className="mx-auto mt-2 max-w-[46ch] text-[14px] leading-[1.55] text-muted-foreground">
+              What you hold, what rests in a batch, what you back and how close a position is to
+              liquidation, read from the chain. Connecting signs nothing and moves nothing.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <a href="/earn" className="press inline-flex h-[48px] items-center rounded-full bg-panel2 px-6
+                                         text-[14px] font-medium transition-colors hover:bg-panel3">
+                Explore Earn
+              </a>
+            </div>
+          </div>
+        )}
       </Shell>
 
       <SiteFooter />
@@ -218,8 +246,8 @@ export default function PortfolioPage() {
 /// One key and its figure, as /rewards writes them.
 const Stat = ({ k, children }: { k: string; children: ReactNode }) => (
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
-    <span className="flex-none text-[12.5px] text-muted-foreground">{k}</span>
-    <span className="n truncate text-right text-[12.5px] font-semibold">{children}</span>
+    <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
+    <span className="n truncate text-right text-[13.5px] font-semibold">{children}</span>
   </div>
 );
 

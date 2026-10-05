@@ -700,11 +700,10 @@ async function realMintOf(m: MarketRt): Promise<string | null> {
 /*
  * The real token's price, for the keeper to mark a devnet test copy at.
  *
- * Percolator's devnet keeper reads each token's mainnet pool and pushes that
- * price straight to the devnet market. Ours did it the long way round: a bot
- * swapped the devnet pool toward the real price every few minutes, and the
- * keeper pushed a median of that pool, minutes behind and only as right as
- * the last swap that landed. Now the mark is the real price itself (Jupiter,
+ * Marking from the devnet pool meant a bot swapping it toward the real price
+ * every few minutes and the keeper pushing a median of it: minutes behind,
+ * and only as right as the last swap that landed. The mark is now the real
+ * price itself (Jupiter,
  * one batched call a pass, by mainnet mint), and the devnet pool is kept
  * only for the depth the program reads on chain. A pass where Jupiter fails
  * falls back to the pool.
@@ -1596,7 +1595,7 @@ async function ensureMarkKeeper() {
 /// market the first push is the spot itself, which is what lets it open at
 /// once.
 /*
- * A circuit breaker on what the keeper pushes, as Percolator's keeper has.
+ * A circuit breaker on what the keeper pushes.
  *
  * A mark more than BREAKER_PCT from the one on chain is held at the old mark
  * (re-pushed, so the market stays fresh rather than going stale) until
@@ -3488,13 +3487,25 @@ function apyOf(get: (r: TapeRow) => number | undefined) {
   return { apy: (now / get(first)! - 1) * (8760 / hours) * 100, hours };
 }
 
-app.get("/api/apy", (_req, res) => {
+app.get("/api/apy", (req, res) => {
   const markets: Record<string, { apy: number | null; hours: number }> = {};
   for (const m of Object.values(rt)) {
     const a = apyOf((r) => r.markets[m.symbol]);
     if (a) markets[m.symbol] = a;
   }
-  res.json({ pool: apyOf((r) => r.pool), markets });
+  const out: any = { pool: apyOf((r) => r.pool), markets };
+  // `?series=1` adds the tape itself, value per share over time, for the
+  // vault page's chart: at most 400 points a series, evenly thinned.
+  if (req.query.series) {
+    const step = Math.max(1, Math.ceil(tape.length / 400));
+    const rows = tape.filter((_, i) => i % step === 0 || i === tape.length - 1);
+    out.series = {
+      pool: rows.map((r) => [r.t, r.pool]),
+      markets: Object.fromEntries(Object.values(rt).map((m) =>
+        [m.symbol, rows.filter((r) => r.markets[m.symbol] != null).map((r) => [r.t, r.markets[m.symbol]])])),
+    };
+  }
+  res.json(out);
 });
 
 app.post("/api/tx/order", async (req, res) => {

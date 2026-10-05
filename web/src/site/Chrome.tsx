@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import "@/site/serif.css";
 import {
-  ArrowLeftRight, ArrowUpRight, BookOpen, ChartPie, Gift, LayoutGrid, Menu, Sprout, X,
+  ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { NavIcon } from "@/components/NavIcon";
 import { useHasBackend } from "@/lib/api";
 
 export const REPO = "https://github.com/prarimz/unwind";
@@ -11,23 +12,27 @@ export const REPO = "https://github.com/prarimz/unwind";
 /// The two button looks, after the /list card: an inverted pill for the one
 /// thing a page wants you to do, and an outlined pill for everything else.
 export const SOLID =
-  "press rounded-full bg-foreground px-5 py-2.5 text-[13.5px] font-medium " +
-  "text-background transition-opacity hover:opacity-90";
+  "press inline-flex h-11 items-center justify-center rounded-full bg-foreground px-7 text-[15px] " +
+  "font-medium text-background transition-opacity hover:opacity-85";
 export const OUTLINE =
-  "press rounded-full border border-line px-5 py-2.5 text-[13.5px] " +
-  "font-medium transition-colors hover:border-foreground/40";
+  "press inline-flex h-11 items-center justify-center rounded-full bg-panel2 px-6 " +
+  "text-[15px] font-medium transition-colors hover:bg-panel3";
 
 /// beUI's pill tabs in the house look: no track, and the sliding indicator
 /// is the same inverted pill as the buttons, with its label flipped to match.
-export const PILL_LIST = "bg-transparent p-0";
+export const PILL_LIST = "rounded-full bg-panel2 p-1 gap-0.5";
 export const PILL_TRIGGER =
-  "h-9 px-4 text-[13.5px] font-normal [&_[data-tabs-label]]:font-medium " +
-  "[&_[data-tabs-label]]:text-background";
-export const PILL_INDICATOR = "bg-foreground";
+  "h-9 px-4 text-[14px] font-normal text-muted-foreground [&_[data-tabs-label]]:font-medium " +
+  "[&_[data-tabs-label]]:text-foreground";
+export const PILL_INDICATOR = "bg-panel3";
 
-export const Shell = ({ children, className = "" }: {
-  children: ReactNode; className?: string;
-}) => <div className={`mx-auto w-full max-w-[1180px] px-5 sm:px-6 ${className}`}>{children}</div>;
+// `main` marks the page's own content, so a screen reader can jump past the header.
+export const Shell = ({ children, className = "", main = false }: {
+  children: ReactNode; className?: string; main?: boolean;
+}) => {
+  const Tag = main ? "main" : "div";
+  return <Tag className={`mx-auto w-full max-w-[1180px] px-5 sm:px-6 ${className}`}>{children}</Tag>;
+};
 
 export const DOCS = "https://unwind.gitbook.io/unwind-docs";
 
@@ -43,13 +48,13 @@ export const X_URL = "https://x.com/unwindfi";
 /// Each link carries a small lucide icon beside its label, after the
 /// panelled nav the user shared as the reference (2026-09-26).
 const NAV = [
-  { label: "Markets", href: "/markets", Icon: LayoutGrid },
-  { label: "Trade", href: "/trade", Icon: ArrowLeftRight },
-  { label: "Earn", href: "/earn", Icon: Sprout },
-  { label: "Portfolio", href: "/portfolio", Icon: ChartPie },
-  { label: "Rewards", href: "/rewards", Icon: Gift },
-  { label: "Docs", href: DOCS, out: true, Icon: BookOpen },
-];
+  { label: "Markets", href: "/markets", icon: "markets" },
+  { label: "Trade", href: "/trade", icon: "trade" },
+  { label: "Earn", href: "/earn", icon: "earn" },
+  { label: "Portfolio", href: "/portfolio", icon: "portfolio" },
+  { label: "Rewards", href: "/rewards", icon: "rewards" },
+  { label: "List", href: "/list", icon: "list" },
+] as { label: string; href: string; icon: string; out?: boolean }[];
 
 /*
  * One header and one footer for every page on the site.
@@ -77,10 +82,6 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
    */
   actions?: ReactNode;
 }) {
-  // A backend that answers is the devnet venue; without one the site is a
-  // read-only preview, which is still "Beta".
-  const backend = useHasBackend();
-  const current = NAV.find((l) => l.href === here);
   return (
     /*
      * The bar is a row of cells rather than a strip with things floating in
@@ -103,75 +104,64 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
      */
     // Above everything a page lays over its hero (the search on /markets sits
     // at z-30), so the phone menu that opens under the bar is never cut.
+    /*
+     * The bar the prediction-market terminals use: the mark and a search
+     * field on the left, the wallet on the right, and under it one row of
+     * the site's parts as words with their icons, the current one in full
+     * ink. No panels, no rules: the page's pale ground is the frame.
+     */
     <header className="relative z-50 bg-background safe-t">
-      {/* Not sticky: the bar sits at the top of the page and scrolls away with it. */}
-      {/*
-       * Full bleed, and the gap between panels is the divider.
-       *
-       * The panels were inset inside a padded bar, which floats them and
-       * leaves a margin of background on every side. Run to the edges
-       * instead and let a few pixels of the page show between them: the
-       * separation is the same line a border would draw, without the bar
-       * having to be a tray holding three cards.
-       */}
-      {/* Three panels flush at the top, split by a hairline of page that flares
-          into a small curve where each panel's bottom corner rounds off. */}
-      <div className="flex h-[80px] items-stretch gap-[2px]">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-b-[10px] border-b border-line bg-panel px-3 lg:flex-none sm:gap-2 sm:px-4">
-          <a href="/markets" aria-label="unwind"
-            className="flex flex-none items-center gap-2 pr-1 sm:pr-2">
-            {/* The glass logo on its own in a small tile; the page carries the name. */}
-            <span className="grid h-[48px] w-[48px] place-items-center rounded-[13px] border
-                             border-line bg-panel2">
-              <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-[30px] w-[30px]" />
-            </span>
-            <span className="ml-1 hidden rounded-full border border-brand/40 bg-brand/10 px-2 py-[3px]
-                             text-[10.5px] font-medium leading-none tracking-[.02em] text-foreground/85 md:block">
-              {backend === true ? "Devnet" : "Beta"}
-            </span>
-          </a>
-          {current && (
-            <span className="hidden min-w-0 items-center gap-2 truncate px-2 text-[15px] font-medium
-                             min-[440px]:flex lg:hidden">
-              <current.Icon size={17} strokeWidth={1.8} aria-hidden className="flex-none text-muted-foreground" />
-              {current.label}
-            </span>
-          )}
-          <nav className="strip-scroll hidden min-w-0 items-center gap-0.5 lg:flex">
-            {NAV.map((l) => (
-              <a key={l.href} href={l.href === "/trade" ? tradeHref : l.href}
-                {...(l.out ? { target: "_blank", rel: "noreferrer" } : {})}
-                aria-current={here === l.href ? "page" : undefined}
-                className={`flex h-[46px] flex-none items-center gap-2 rounded-full border px-4
-                            text-[15px] transition-colors sm:px-4 ${here === l.href
-                  ? "border-line bg-panel2 font-medium text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-                <l.Icon size={17} strokeWidth={1.8} aria-hidden />
-                {l.label}
-              </a>
-            ))}
-          </nav>
-        </div>
-
-        {/* The empty stretch is a panel of its own, which is what makes it
-            read as intended rather than as room nobody used -- but only once
-            there is enough width for it to be a panel. Squeezed to a sliver
-            between the two ends it reads as something that failed to load. */}
-        <div className="hidden min-w-0 flex-1 rounded-b-[10px] border-b border-line bg-panel lg:block" />
-
-        {/*
-         * Two quiet pills rather than one loud one. A saturated button at the
-         * end of the bar is the brightest thing on every page, including the
-         * ones whose whole job is a table of numbers.
-         */}
-        <div className="flex flex-none items-center gap-2 rounded-b-[10px] border-b border-line bg-panel px-3 sm:px-4">
+      <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
+        <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
+          <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-8 w-8" />
+          <span className="text-[17px] font-semibold tracking-[-.02em]">unwind</span>
+        </a>
+        {/* Not on /markets, whose own search is the page's hero: two search
+            fields on one screen asked which one to use. */}
+        {here !== "/markets" && <a href="/markets" aria-label="Search markets"
+          className="hidden h-10 w-[300px] items-center gap-2.5 rounded-full bg-panel px-4 text-[14px]
+                     text-muted-foreground transition-colors hover:bg-panel2 md:flex lg:w-[340px]">
+          <Search size={16} strokeWidth={2} aria-hidden />
+          Search markets
+        </a>}
+        <div className="ml-auto flex flex-none items-center gap-2">
           {actions}
-          {/* A bare icon at the far end, after the actions. */}
-          <ThemeToggle className="h-[40px] w-[40px] border-transparent bg-transparent" />
+          <ThemeToggle className="h-10 w-10" />
           <PageMenu here={here} tradeHref={tradeHref} className="lg:hidden" />
         </div>
       </div>
-
+      <nav className="strip-scroll hidden items-center gap-1 px-4 pb-3 sm:px-6 lg:flex" aria-label="Pages">
+        {NAV.filter((l) => l.href !== "/list").map((l) => (
+          <Fragment key={l.href}>
+          <a href={l.href === "/trade" ? tradeHref : l.href}
+            {...(l.out ? { target: "_blank", rel: "noreferrer" } : {})}
+            aria-current={here === l.href ? "page" : undefined}
+            className={`flex h-9 flex-none items-center gap-2 rounded-full px-3 text-[14.5px]
+                        transition-colors ${l.href === "/list"
+              /* The one thing anyone can add to the venue, set apart by a
+                 rule and in full ink. */
+              ? "font-medium text-foreground hover:opacity-80"
+              : here === l.href
+                ? "font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground"}`}>
+            <NavIcon name={l.icon} size={18} />
+            {l.label}
+          </a>
+          </Fragment>
+        ))}
+        {/* List sits on the right, under the wallet: the venue's other way
+            in, apart from the pages you browse. */}
+        <span className="ml-auto flex items-center gap-3">
+          {here !== "/list" && (
+          <a href="/list" 
+            className="flex h-9 flex-none items-center gap-2 rounded-full px-3 text-[14.5px] font-medium
+                       text-foreground hover:opacity-80">
+            <NavIcon name="list" size={18} />
+            List
+          </a>
+          )}
+        </span>
+      </nav>
     </header>
   );
 }
@@ -218,7 +208,7 @@ export function PageMenu({ here, tradeHref = "/trade", className = "" }: {
               className={`flex h-[52px] items-center gap-3 rounded-[10px] px-4 text-[16px] transition-colors ${
                 here === l.href ? "bg-panel2 font-medium text-foreground"
                   : "text-muted-foreground hover:bg-panel2 hover:text-foreground"}`}>
-              <l.Icon size={19} strokeWidth={1.8} aria-hidden />
+              <NavIcon name={l.icon} size={20} />
               {l.label}
               {l.out && <ArrowUpRight size={15} strokeWidth={1.8} aria-hidden className="ml-auto" />}
             </a>
@@ -229,81 +219,69 @@ export function PageMenu({ here, tradeHref = "/trade", className = "" }: {
   );
 }
 
-export function SiteFooter({ tradeHref = "/trade" }: { tradeHref?: string }) {
-  const backend = useHasBackend();
-  const cols: { title: string; links: { label: string; href: string; out?: boolean }[] }[] = [
-    { title: "Product", links: [
-      { label: "Markets", href: "/markets" },
-      { label: "Trade", href: tradeHref },
-      { label: "Earn", href: "/earn" },
-      { label: "Portfolio", href: "/portfolio" },
-      { label: "Rewards", href: "/rewards" },
-      { label: "List a market", href: "/list" },
-    ] },
-    { title: "Resources", links: [
-      { label: "Docs", href: DOCS, out: true },
-      { label: "Source", href: REPO, out: true },
-    ] },
-    { title: "Follow", links: [
-      { label: "X", href: X_URL, out: true },
-    ] },
+export function SiteFooter(_: { tradeHref?: string } = {}) {
+  const left = [
+    { label: "Markets", href: "/markets" },
+    { label: "Earn", href: "/earn" },
+    { label: "List a market", href: "/list" },
   ];
+  const right = [
+    { label: "Documentation", href: DOCS, out: true },
+    { label: "Risk Hub", href: "/risk" },
+    { label: "Rewards", href: "/rewards" },
+  ];
+  const A = ({ l }: { l: { label: string; href: string; out?: boolean } }) => (
+    <a href={l.href} {...(l.out ? { target: "_blank", rel: "noreferrer" } : {})}
+      className="text-[13.5px] text-muted-foreground hover:text-foreground">{l.label}</a>
+  );
   return (
     /*
-     * A panel in the brand's own light, like the front page: the glass logo
-     * and the line, the links in three labelled columns, then the name set
-     * big in the serif across the foot, cropped by the panel's edge.
+     * One card at the foot of the page: where to follow on the left, two
+     * short columns of links on the right, and the name set huge across the
+     * bottom, cropped by the card, with a violet light rising behind it.
      */
-    /* The navbar's treatment, mirrored: full bleed and flush with the bottom
-       of the window, rounded only on the corners that face the page. */
-    <footer className="safe-b">
-      <div className="relative overflow-hidden rounded-t-[10px] border-t border-line bg-panel">
-        <img src="/waitlist/field.webp" alt="" aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-[70%] w-full object-cover opacity-55
-                     [mask-image:linear-gradient(to_top,black_35%,transparent)]" />
-        <div className="relative grid gap-10 px-6 pt-12 sm:px-10 md:grid-cols-[1.2fr_2fr] md:pt-16">
+    <footer className="mt-auto px-3 pb-3 safe-b sm:px-5 sm:pb-5">
+      <div className="relative isolate overflow-hidden rounded-[20px] border border-line bg-panel">
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10
+          bg-[radial-gradient(70%_80%_at_85%_105%,rgba(106,77,244,.35),transparent_70%)]" />
+        <div className="grid gap-10 px-7 pt-10 sm:px-12 sm:pt-14 md:grid-cols-[1fr_auto]">
           <div>
-            <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-11 w-11" />
-            <p className="mt-5 max-w-[34ch] text-[15px] leading-relaxed text-foreground/85">
-              Every market clears by auction. Anyone can open one.
-            </p>
+            <p className="text-[20px] font-medium tracking-[-.01em]">Join the community</p>
+            <div className="mt-5 flex flex-col gap-3 text-[13.5px] text-muted-foreground">
+              <a href={X_URL} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 hover:text-foreground">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+                Follow on X
+              </a>
+            </div>
           </div>
-          <nav className="grid grid-cols-2 gap-8 sm:grid-cols-3" aria-label="Footer">
-            {cols.map((c) => (
-              <div key={c.title}>
-                <p className="text-[11px] font-medium uppercase tracking-[.14em] text-foreground/55">{c.title}</p>
-                <ul className="mt-4 flex flex-col gap-2.5">
-                  {c.links.map((l) => (
-                    <li key={l.label}>
-                      <a href={l.href} {...(l.out ? { target: "_blank", rel: "noreferrer" } : {})}
-                        className="text-[14px] text-muted-foreground transition-colors hover:text-foreground">
-                        {l.label}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-20 gap-y-3.5 md:text-right">
+            <div className="flex flex-col gap-3.5">{left.map((l) => <A key={l.label} l={l} />)}</div>
+            <div className="flex flex-col gap-3.5">{right.map((l) => <A key={l.label} l={l} />)}</div>
           </nav>
         </div>
-
-        <p className="relative mt-12 max-w-[70ch] px-6 text-[11.5px] leading-relaxed text-foreground/55 sm:px-10">
-          Unaudited.{" "}
-          {backend === true && "Devnet, test USDC. "}
-          {backend === false && "Live prices, trading off. "}
-          Not investment advice.
-        </p>
-
-        {/* The name across the foot, cropped by the panel so it reads as a mark, not a line. */}
-        <div aria-hidden className="font-serif-display relative -mb-[.1em] mt-4 select-none px-4
-                                    leading-[.85] tracking-[-.035em] text-[#e2d9ff] sm:px-8"
-          style={{ fontSize: "clamp(96px, 22vw, 330px)" }}>
-          unwind
+        {/*
+         * The lockup across the foot, cropped by the card: the mark as a solid
+         * grey silhouette, then the name. Big
+         * enough that the card's edge cuts both.
+         */}
+        <div aria-hidden className="relative mt-12 flex select-none items-end gap-[.03em] whitespace-nowrap px-5
+                                    font-medium leading-[.8] tracking-[-.06em] text-foreground/30 sm:px-10"
+          style={{ fontSize: "clamp(72px, 22vw, 360px)" }}>
+          <span className="relative mb-[-.3em] mr-[.02em] h-[.95em] w-[.95em] flex-none">
+            <span className="absolute inset-0 bg-current"
+              style={{ WebkitMaskImage: "url(/waitlist/logo-glass-mark.webp)", maskImage: "url(/waitlist/logo-glass-mark.webp)",
+                       WebkitMaskSize: "contain", maskSize: "contain", WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
+                       WebkitMaskPosition: "center", maskPosition: "center" }} />
+          </span>
+          <span className="-mb-[.2em]">unwind</span>
         </div>
       </div>
     </footer>
   );
 }
+
 
 /// The masthead every page below the landing page opens with.
 export function PageHead({ label, title, lede }: {
@@ -312,7 +290,7 @@ export function PageHead({ label, title, lede }: {
   return (
     <section className="border-b border-line">
       <Shell className="py-11 md:py-14">
-        <p className="rise text-[10.5px] font-medium uppercase tracking-[.16em] text-dim"
+        <p className="rise text-[12px] font-medium uppercase tracking-[.16em] text-dim"
           style={{ animationDelay: "60ms" }}>
           {label}
         </p>

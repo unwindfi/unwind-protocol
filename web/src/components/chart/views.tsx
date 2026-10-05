@@ -157,26 +157,76 @@ export function FundingView({ m, samples }: { m: Market; samples: FundingSample[
 const SESSIONS = ["Regular", "Extended", "Closed"];
 const bps = (n: number) => `${(n / 100).toFixed(2)}%`;
 
-/// The market's parameters as the program holds them.
+/// The market's parameters as the program holds them: a grid of facts, then
+/// the band a position lives in and what $100 of margin does here.
 export function InfoView({ m }: { m: Market }) {
   const o = m.observed;
   return (
-    <div className="pane-scroll min-h-0 flex-1 px-1">
-      <Row k="Price source">{o ? "Pool, observed" : "Oracle feed"}</Row>
-      {o && <Row k="Pool">{o.source.slice(0, 4)}...{o.source.slice(-4)}</Row>}
-      {m.mint && <Row k="Mint">{m.mint.slice(0, 4)}...{m.mint.slice(-4)}</Row>}
-      <Row k="Session">{SESSIONS[m.session] ?? m.session}</Row>
-      <Row k="Max leverage">{m.maxLeverage.toFixed(m.maxLeverage % 1 ? 1 : 0)}x</Row>
-      <Row k="Open fee">{bps(m.openFeeBps)}</Row>
-      <Row k="Maintenance margin">{bps(m.maintenanceMarginBps)}</Row>
-      <Row k="Open interest" hint="long / short">{compact(m.longSize)} / {compact(m.shortSize)}</Row>
-      <Row k="Room under OI cap" hint="long / short">
-        {compact(Math.max(0, m.capLong))} / {compact(Math.max(0, m.capShort))}
-      </Row>
-      <Row k="Free liquidity">{compact(m.freeLiquidity)}</Row>
-      <Row k="Backing" hint="of budget">{compact(m.backingUsd)} / {compact(m.lossBudgetUsd)}</Row>
-      <Row k="Max price age">{m.maxPriceAgeSec}s</Row>
-      {o && <Row k="Seasoning">{o.seasoned ? "Done" : `${o.readings}/${o.readingsNeeded} readings`}</Row>}
+    <div className="pane-scroll min-h-0 flex-1">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-3">
+        <Fact k="Price source" sub={o ? `${o.source.slice(0, 4)}…${o.source.slice(-4)}` : "Pyth feed"}>
+          {o ? "Pool, observed" : "Oracle"}
+        </Fact>
+        <Fact k="Max leverage" sub={`Open at up to ${m.maxLeverage.toFixed(m.maxLeverage % 1 ? 1 : 0)}x`}>
+          {m.maxLeverage.toFixed(m.maxLeverage % 1 ? 1 : 0)}x
+        </Fact>
+        <Fact k="Maintenance margin" sub="Liquidated under this" tone="text-down">{bps(m.maintenanceMarginBps)}</Fact>
+        <Fact k="Open fee" sub="Same to close">{bps(m.openFeeBps)}</Fact>
+        <Fact k="Open interest" sub={`${compact(m.longSize)} long · ${compact(m.shortSize)} short`}>{compact(m.oi)}</Fact>
+        <Fact k="Free liquidity" sub={`Room ${compact(Math.max(0, m.capLong))} / ${compact(Math.max(0, m.capShort))}`}>
+          {compact(m.freeLiquidity)}
+        </Fact>
+        <Fact k="Backing" sub={`of ${compact(m.lossBudgetUsd)} budget`}>{compact(m.backingUsd)}</Fact>
+        <Fact k="Session" sub={`Feed at most ${m.maxPriceAgeSec}s old`}>{SESSIONS[m.session] ?? m.session}</Fact>
+        {o
+          ? <Fact k="Seasoning" sub={o.seasoned ? "Priced by the keeper" : "Opening auction"}>
+              {o.seasoned ? "Done" : `${o.readings}/${o.readingsNeeded}`}
+            </Fact>
+          : m.mint
+            ? <Fact k="Mint" sub="On Solscan">{m.mint.slice(0, 4)}…{m.mint.slice(-4)}</Fact>
+            : <Fact k="Market" sub="Pyth priced">{m.symbol}</Fact>}
+      </div>
+      <Band m={m} />
+    </div>
+  );
+}
+
+/*
+ * Where a position stands, as a bar: open while its margin is above the
+ * initial requirement, held but not grown between that and the maintenance
+ * margin, liquidatable under it. The figures are the market's own, so the
+ * sentence under it is arithmetic rather than a disclaimer.
+ */
+function Band({ m }: { m: Market }) {
+  const L = m.maxLeverage;
+  const initial = 100 / L;
+  const mm = m.maintenanceMarginBps / 100;
+  const move = Math.max(0, initial - mm);
+  const lev = L.toFixed(L % 1 ? 1 : 0);
+  return (
+    <div className="mt-3 rounded-[10px] border border-line px-4 py-4">
+      <div className="text-[14px] font-medium">What $100 of margin does here</div>
+      <p className="mt-1.5 text-[12.5px] leading-[1.55] text-muted-foreground">
+        Opens up to {compact(100 * L)} of {m.symbol} at {lev}x. Above {initial.toFixed(1)}% margin you can add
+        to it; between {initial.toFixed(1)}% and {mm.toFixed(1)}% you can hold or reduce but not add; under{" "}
+        {mm.toFixed(1)}% it can be liquidated, which at {lev}x is a move of about {move.toFixed(1)}% against you.
+        The liquidation fee comes out of what is left, never out of the pool.
+      </p>
+      <div className="mt-3 flex h-9 gap-1 text-[11.5px] font-medium">
+        <span className="flex flex-[3] items-center rounded-[7px] bg-up/15 px-3 text-up">Above {initial.toFixed(1)}% · open</span>
+        <span className="flex flex-[1.2] items-center rounded-[7px] bg-[#f5b8201f] px-3 text-[#d9a21b]">Hold only</span>
+        <span className="flex flex-[1.6] items-center rounded-[7px] bg-down/15 px-3 text-down">Under {mm.toFixed(1)}% · liquidatable</span>
+      </div>
+    </div>
+  );
+}
+
+function Fact({ k, sub, tone = "", children }: { k: string; sub?: string; tone?: string; children: ReactNode }) {
+  return (
+    <div className="bg-panel px-4 py-3">
+      <div className="text-[11.5px] text-muted-foreground">{k}</div>
+      <div className={`n mt-1 text-[16px] font-semibold leading-none ${tone}`}>{children}</div>
+      {sub && <div className="n mt-1.5 truncate text-[11px] text-dim">{sub}</div>}
     </div>
   );
 }

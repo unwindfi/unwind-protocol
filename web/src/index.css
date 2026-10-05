@@ -27,33 +27,31 @@
 :root {
   --radius: 0.5rem;
 
-  /* Deep indigo rather than near-black navy (the purple rebrand, 2026-09-26): the
-     avatar's dark corner (#140b4a) taken down until it reads as a page, not a colour.
-     Every surface, line and grey below carries the same violet bias. */
-  --background: #0c0a1c;
-  /* A violet glow falling from the top of the page; nothing in light mode. */
-  --glow: rgba(106, 77, 244, .16);
-  /* How strong the film grain over every page is (see body::after). */
-  --grain: .13;
-  --foreground: #ece9fb;
-  --card: #121028;
-  --card-foreground: #ece9fb;
-  --popover: #171432;
-  --popover-foreground: #ece9fb;
-  --primary: #6a4df4;
-  /* The brand violet is dark enough that a label on top of it wants white, not
-     the page's near-black -- ink that dark clears 4.5:1 only on a lighter violet. */
-  --primary-foreground: #ffffff;
-  --secondary: #201c42;
-  --secondary-foreground: #ece9fb;
-  --muted: #171432;
-  --muted-foreground: #9d97c0;
-  --accent: #201c42;
-  --accent-foreground: #ece9fb;
-  --destructive: #f6465d;
-  --border: #29244f;
-  --input: #29244f;
-  --ring: #6a4df4;
+  /* Neutral charcoal, the dark side of the prediction-market terminals
+     (world.xyz): a cool near-black page, graphite panels a step up from it,
+     white type, and the only colour in the green and red of a price. The
+     violet lives in the brand images now, not in the surfaces. */
+  --background: #0e1012;
+  /* No glow and next to no grain: the page is flat. */
+  --glow: transparent;
+  --grain: .04;
+  --foreground: #f2f4f6;
+  --card: #16191c;
+  --card-foreground: #f2f4f6;
+  --popover: #1c2024;
+  --popover-foreground: #f2f4f6;
+  --primary: #f2f4f6;
+  --primary-foreground: #0e1012;
+  --secondary: #22272b;
+  --secondary-foreground: #f2f4f6;
+  --muted: #1c2024;
+  --muted-foreground: #9aa3aa;
+  --accent: #22272b;
+  --accent-foreground: #f2f4f6;
+  --destructive: #ef4444;
+  --border: #272c31;
+  --input: #272c31;
+  --ring: #f2f4f6;
 }
 
 @theme inline {
@@ -100,15 +98,15 @@
  * than carrying a second copy of the palette in TypeScript.
  */
 @theme {
-  --color-panel: #121028;
-  --color-panel2: #171432;
-  --color-panel3: #201c42;
-  --color-line: #29244f;
-  --color-linesoft: #1b1838;
-  --color-dim: #6c6696;
-  --color-up: #0ecb81;
-  --color-down: #f6465d;
-  --color-brand: #6a4df4;
+  --color-panel: #16191c;
+  --color-panel2: #1d2126;
+  --color-panel3: #272c31;
+  --color-line: #272c31;
+  --color-linesoft: #1d2126;
+  --color-dim: #81898f;
+  --color-up: #2fc46b;
+  --color-down: #f04d4d;
+  --color-brand: #f2f4f6;
 
   /*
    * The road behind the search on /markets. Its tarmac is painted, not
@@ -116,9 +114,9 @@
    * is invisible, and this is the one graphic on the site that cannot take
    * its colour from a surface token.
    */
-  --color-road-1: #f4f6fa;
-  --color-road-2: #d5dae4;
-  --color-road-3: #98a1b2;
+  --color-road-1: #dcdedb;
+  --color-road-2: #b8bbb6;
+  --color-road-3: #7f837e;
 }
 
 
@@ -142,37 +140,37 @@
 :root[data-theme="light"] {
   --glow: transparent;
   --grain: 0;
-  --background: #f6f7fb;
-  --foreground: #0b1018;
+  /* A pale blue-grey page with frosted white cards on it and black type:
+     the palette of the prediction-market terminals (world.xyz), cool and
+     flat, with the only colour the green and red of a price. */
+  --background: #e4eaee;
+  --foreground: #000000;
   --card: #ffffff;
-  --card-foreground: #0b1018;
+  --card-foreground: #000000;
   --popover: #ffffff;
-  --popover-foreground: #0b1018;
-  --primary: #6a4df4;
+  --popover-foreground: #000000;
+  --primary: #000000;
   --primary-foreground: #ffffff;
-  --secondary: #e7ebf3;
-  --secondary-foreground: #0b1018;
-  --muted: #eef1f7;
-  --muted-foreground: #5b6578;
-  --accent: #e7ebf3;
-  --accent-foreground: #0b1018;
-  --destructive: #cf2438;
-  --border: #dee3ed;
-  --input: #dee3ed;
-  --ring: #6a4df4;
+  --secondary: #eef2f5;
+  --secondary-foreground: #000000;
+  --muted: #eef2f5;
+  --muted-foreground: #3d484f;
+  --accent: #eef2f5;
+  --accent-foreground: #000000;
+  --destructive: #d12f2f;
+  --border: #d6dde2;
+  --input: #d6dde2;
+  --ring: #000000;
 
-  --color-panel: #ffffff;
-  --color-panel2: #f1f4f9;
-  --color-panel3: #e4e9f2;
-  --color-line: #dee3ed;
-  --color-linesoft: #edf0f6;
-  --color-dim: #767f92;
-  /* Binance green and red are tuned for a black screen; on white they are a
-     highlighter and a pink. These are the same hues taken down until small
-     figures in them are legible. */
-  --color-up: #0a7f55;
-  --color-down: #cf2438;
-  --color-brand: #6a4df4;
+  --color-panel: #f7f9fb;
+  --color-panel2: #eceff2;
+  --color-panel3: #dfe5e9;
+  --color-line: #d6dde2;
+  --color-linesoft: #e6ebef;
+  --color-dim: #656d72;
+  --color-up: #027e36;
+  --color-down: #cd2e2e;
+  --color-brand: #000000;
 
   /* The road inverts with the page: dark tarmac under a pale sky. */
   --color-road-1: #aeb6c6;
@@ -246,7 +244,7 @@
    * The site pages are the app's palette at reading sizes: the body font-size
    * is 11.5px for a trading screen, which is not a size to set prose in.
    */
-  .site { font-size: 14px; }
+  .site { font-size: 15px; }
 
   /*
    * Staggered entrance. One keyframe plus an inline `animation-delay` per
@@ -281,6 +279,9 @@
    */
   .pane-scroll {
     overflow-y: auto;
+    /* A pane scrolls one way. Anything wider than it is a layout fault to
+       fix, not a second scrollbar to show. */
+    overflow-x: hidden;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
@@ -313,10 +314,72 @@
    * from a tap that missed, and the screen reads as unresponsive while the
    * order is in flight.
    */
-  .press {
-    transition: transform 160ms var(--ease-out-strong);
+  /*
+   * Every control changes colour over the same short ease, so a hover never
+   * snaps. Zero specificity (`:where`), so any element that names its own
+   * transition keeps it.
+   */
+  :where(a, button, [role="tab"], [role="radio"], input, select, summary) {
+    transition-property: color, background-color, border-color, opacity, box-shadow;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-out-strong);
   }
-  .press:active { transform: scale(0.97); }
+  .press {
+    transition: transform 160ms var(--ease-out-strong), color 150ms, background-color 150ms,
+      border-color 150ms, opacity 150ms;
+  }
+
+  /*
+   * A keyboard user sees where they are; a mouse user does not get a ring
+   * on every click. Nothing on the site drew one before.
+   */
+  :focus-visible {
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+  }
+  /* An input drawn inside a styled field (the ticket's amount, the market
+     search) leaves its own outline off and rings the field instead. */
+  .field-ring:has(:is(input, select, textarea):focus-visible) {
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+  }
+
+  ::selection { background: color-mix(in srgb, var(--foreground) 18%, transparent); }
+
+  /*
+   * The wallet picker is the adapter's own modal, in its own navy and
+   * purple. Same panel, line, radius and type as everything else here.
+   */
+  .wallet-adapter-modal-wrapper {
+    background: var(--color-panel) !important;
+    border: 1px solid var(--color-line);
+    border-radius: 24px !important;
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .5) !important;
+    font-family: var(--font-sans) !important;
+  }
+  .wallet-adapter-modal-overlay { background: rgba(0, 0, 0, .55) !important; backdrop-filter: blur(4px); }
+  .wallet-adapter-modal-title { color: var(--foreground) !important; font-size: 20px !important; font-weight: 600 !important; }
+  .wallet-adapter-modal-button-close { background: var(--color-panel2) !important; }
+  .wallet-adapter-modal-button-close svg { fill: var(--muted-foreground) !important; }
+  .wallet-adapter-modal-list .wallet-adapter-button {
+    color: var(--foreground) !important; font-family: var(--font-sans) !important;
+    font-weight: 500 !important; border-radius: 14px !important;
+  }
+  .wallet-adapter-modal-list .wallet-adapter-button:not([disabled]):hover { background: var(--color-panel2) !important; }
+  .wallet-adapter-modal-list-more { color: var(--muted-foreground) !important; font-family: var(--font-sans) !important; }
+  /* The picker's no-wallet state draws a gradient wallet in a ring; the
+     sentence above it already says what to do. */
+  .wallet-adapter-modal-middle-image { display: none !important; }
+  .wallet-adapter-modal-title { font-size: 18px !important; line-height: 1.4 !important; }
+  .wallet-adapter-modal-list-more svg { fill: var(--muted-foreground) !important; }
+  .wallet-adapter-button-end-icon, .wallet-adapter-modal-list .wallet-adapter-button span {
+    color: var(--muted-foreground) !important; font-size: 12.5px !important;
+  }
+
+  /* A strip that scrolls sideways fades at its end, so a cut-off figure reads
+     as more to the right rather than as a broken layout. */
+  .fade-right { mask-image: linear-gradient(to right, black calc(100% - 40px), transparent); }
+  .press:active { transform: scale(0.96); }
   .press:disabled:active { transform: none; }
 
   /*
@@ -340,7 +403,17 @@
   @media (pointer: coarse) {
     ::-webkit-scrollbar { width: 0; height: 0; }
   }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: var(--color-panel3); border-radius: 4px; }
+  /*
+   * Scrollbars are overlays: thin, invisible until the pointer is over the
+   * pane that scrolls, and never a white corner square where two meet. A
+   * gutter of grey bar drawn down every panel was the loudest line on a
+   * screen built out of hairlines.
+   */
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  *:hover { scrollbar-color: var(--color-panel3) transparent; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+  *:hover::-webkit-scrollbar-thumb { background: var(--color-panel3); }
   ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-corner { background: transparent; }
 }

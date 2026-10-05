@@ -55,6 +55,17 @@ wallet counted once and capped, so trading your own market from many
 wallets adds little. The exact scoring, the discount and its length are
 published here before mainnet.
 
+## First connection
+
+The first time a wallet connects, the site shows three screens once: what
+the venue is, the two ways in (trading, or backing a market and the pool),
+and the risks: liquidation, backing's first loss, and the price feed. The
+last screen asks the wallet to sign a short message recording that these
+were read. It is a message, not a transaction, so it costs nothing and moves
+nothing. The acceptance is kept in that browser for that wallet; closing the
+screens without signing is kept too, so they are not shown again. The text
+is in `web/src/components/Welcome.tsx`.
+
 ## What differs from mainnet
 
 - Prices for the equities come from a relay that posts Jupiter quotes on

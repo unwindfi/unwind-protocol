@@ -238,7 +238,7 @@ export function TabsList({
           if (event.target instanceof HTMLElement && event.target.getAttribute("role") === "tab") reveal(event.target);
         }}
       >
-        <div ref={listRef} role="tablist" className={cn(listClasses[variant], "w-max", className)}>
+        <div ref={listRef} role="tablist" onKeyDown={onArrows} className={cn(listClasses[variant], "w-max", className)}>
           {children}
         </div>
       </motion.div>
@@ -255,6 +255,21 @@ export function TabsList({
       )}
     </div>
   );
+}
+
+/// The tablist keyboard pattern: Tab reaches the selected tab only, and the
+/// arrow keys, Home and End move between tabs, selecting as they go.
+function onArrows(event: React.KeyboardEvent<HTMLDivElement>) {
+  const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]:not([disabled])')];
+  const at = tabs.indexOf(document.activeElement as HTMLElement);
+  if (at < 0 || !tabs.length) return;
+  event.preventDefault();
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+    : (at + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus();
+  tabs[next].click();
 }
 
 export function TabsTrigger({
@@ -279,6 +294,7 @@ export function TabsTrigger({
         type="button"
         role="tab"
         aria-selected={active}
+        tabIndex={active ? 0 : -1}
         onClick={() => setValue(value)}
         className={cn(
           "relative isolate px-3 pb-2.5 pt-1 -mb-px text-sm font-medium transition-colors min-h-[44px] inline-flex items-center whitespace-nowrap shrink-0",
@@ -322,10 +338,11 @@ export function TabsTrigger({
         type="button"
         role="tab"
         aria-selected={active}
+        tabIndex={active ? 0 : -1}
         data-tabs-value={value}
         onClick={() => setValue(value)}
         className={cn(
-          "relative z-10 inline-flex items-center justify-center whitespace-nowrap bg-transparent px-3.5 py-1.5 text-sm font-medium outline-none",
+          "relative z-10 inline-flex items-center justify-center whitespace-nowrap bg-transparent px-3.5 py-1.5 text-sm font-medium",
           "text-muted-foreground hover:text-foreground",
           radius,
           className,

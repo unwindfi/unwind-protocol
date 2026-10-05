@@ -348,6 +348,14 @@ export const getApy = async () => {
   return get<{ pool: Apy | null; markets: Record<string, Apy> }>("/api/apy");
 };
 
+/// `[unix ms, value per share]`, oldest first, for the pool and each market.
+export interface ApySeries { pool: [number, number][]; markets: Record<string, [number, number][]> }
+export const getApySeries = async () => {
+  if (!(await hasBackend())) return null;
+  const r = await get<{ series?: ApySeries }>("/api/apy?series=1");
+  return r.series ?? null;
+};
+
 export const getTrades = async (symbol: string) => {
   if (await hasBackend()) return get<Trade[]>(`/api/trades/${symbol}`);
   return (await import("./live")).liveTrades();

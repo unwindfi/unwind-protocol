@@ -80,6 +80,10 @@ export function Chart({
   const [seriesVersion, setSeriesVersion] = useState(0);
   // Read from the click handler, which is subscribed once per chart.
   const draw = useRef({ drawMode, onDraw, onModeChange });
+  // Decimals the axis prints, from the price's own size: at two, a PENGU
+  // chart at $0.0098 labelled every gridline "0.01".
+  const decimals = useRef(2);
+  decimals.current = decimalsFor(price);
   draw.current = { drawMode, onDraw, onModeChange };
   /*
    * The chart is a canvas, so it is the one surface a CSS variable cannot
@@ -131,7 +135,7 @@ export function Chart({
       handleScroll: { mouseWheel: false, pressedMouseMove: true,
                       horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true },
-      localization: { priceFormatter: (p: number) => p.toFixed(2) },
+      localization: { priceFormatter: (p: number) => p.toFixed(decimals.current) },
     });
     const click = (e: MouseEventParams) => {
       const { drawMode, onDraw } = draw.current;
@@ -209,6 +213,10 @@ export function Chart({
     }
 
     cap.current = trimWicks ? wickCap(bars) : null;
+    // The scale's step too, or gridlines stay a cent apart on a sub-cent token.
+    series.current!.applyOptions({
+      priceFormat: { type: "price", precision: decimals.current, minMove: 10 ** -decimals.current },
+    } as never);
     series.current!.setData(
       (want === "candles"
         ? bars.map((b) => trimBar(b, cap.current))
@@ -330,6 +338,32 @@ export function Chart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelKey, symbol, seriesVersion, theme]);
 
-  return <div ref={box} className={`min-h-0 min-w-0 flex-1 overflow-hidden
-                                   ${drawMode ? "cursor-crosshair" : ""}`} />;
+  // Under three bars there is no chart to read, only a dot under a
+  // crosshair: say so. Mostly a listed market whose pool has barely traded,
+  // whose tape starts when the server first saw it.
+  const sparse = loaded.current === symbol && raw.current.length < 3;
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1">
+      <div ref={box} className={`min-h-0 min-w-0 flex-1 overflow-hidden
+                                 ${drawMode ? "cursor-crosshair" : ""}`} />
+      {sparse && (
+        <div className="absolute inset-0 z-10 grid place-items-center bg-panel px-6 text-center">
+          <div className="max-w-[300px]">
+            <p className="text-[14px] font-medium text-foreground">Too little history to chart</p>
+            <p className="mt-1.5 text-pretty text-[12.5px] leading-relaxed text-muted-foreground">
+              This price comes from the market's pool, which has barely traded. The chart fills
+              in a bar at a time.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/// Decimals that show a price's movement: two from a dollar up, then enough
+/// that the first four significant figures survive.
+function decimalsFor(p: number): number {
+  if (!(p > 0) || p >= 1) return 2;
+  return Math.min(10, Math.max(2, 3 - Math.floor(Math.log10(p))));
 }

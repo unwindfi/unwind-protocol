@@ -71,7 +71,7 @@ function PositionCard({
         <b className="text-[14px] font-medium">{r.symbol}</b>
         <span className={`rounded-full px-2 py-px text-[11px] font-medium ${
           r.isLong ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
-          {r.isLong ? "LONG" : "SHORT"} {r.leverage.toFixed(1)}x
+          {r.isLong ? "Long" : "Short"} {r.leverage.toFixed(1)}x
         </span>
         <span className={`n ml-auto text-[13px] font-semibold ${tone(r.pnl)}`}>
           {money(r.pnl)} <span className="text-[11px] font-normal">({pct(r.pnlPct)})</span>
@@ -140,25 +140,27 @@ export function BottomPanel({
   );
 
   const posCols: TableColumn<PosRow>[] = [
-    { key: "symbol", header: "Market", width: "150px",
+    { key: "symbol", header: "Market", width: "124px",
       cell: (r) => (<span><b>{r.symbol}</b>{" "}
         <span className="text-muted-foreground">{r.leverage.toFixed(1)}x</span></span>) },
-    { key: "side", header: "Side", width: "80px",
-      cell: (r) => (<span className={`font-semibold ${r.isLong ? "text-up" : "text-down"}`}>
-        {r.isLong ? "LONG" : "SHORT"}</span>) },
-    { key: "size", header: "Position Value", align: "right", sortable: true,
+    { key: "side", header: "Side", width: "64px",
+      cell: (r) => (<span className={r.isLong ? "text-up" : "text-down"}>
+        {r.isLong ? "Long" : "Short"}</span>) },
+    { key: "size", header: "Value", align: "right", sortable: true,
       cell: (r) => money(r.size, 0) },
-    { key: "entry", header: "Entry Price", align: "right", cell: (r) => r.entry.toFixed(2) },
-    { key: "mark", header: "Mark Price", align: "right", cell: (r) => r.mark.toFixed(2) },
-    { key: "pnl", header: "PNL (ROE %)", align: "right", sortable: true,
+    { key: "entry", header: "Entry", align: "right", cell: (r) => r.entry.toFixed(2) },
+    { key: "mark", header: "Mark", align: "right", cell: (r) => r.mark.toFixed(2) },
+    { key: "pnl", header: "PnL (ROE)", align: "right", sortable: true,
       cell: (r) => (<span className={tone(r.pnl)}>{money(r.pnl)}{" "}
         <span className="text-muted-foreground">({pct(r.pnlPct)})</span></span>) },
-    { key: "liqPrice", header: "Liq. Price", align: "right",
+    { key: "liqPrice", header: "Liq. price", align: "right",
       cell: (r) => <span className="text-down">{r.liqPrice ? r.liqPrice.toFixed(2) : "–"}</span> },
     { key: "collateral", header: "Margin", align: "right", cell: (r) => money(r.collateral) },
-    { key: "funding", header: "Funding", align: "right",
-      cell: (r) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> },
-    { key: "act", header: "", width: "80px",
+    // Funding paid so far has a tab of its own; in the docked table it was
+    // the column that pushed Close off the panel's edge.
+    ...(docked ? [] : [{ key: "funding", header: "Funding", align: "right" as const,
+      cell: (r: PosRow) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> }]),
+    { key: "act", header: "", width: "76px",
       cell: (r) => (
         <button disabled={busy} onClick={() => onClose(r.symbol)}
           className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
@@ -173,8 +175,8 @@ export function BottomPanel({
     { key: "symbol", header: "Market", width: "110px", cell: (r) => <b>{r.symbol}</b> },
     { key: "kind", header: "Action", width: "110px" },
     { key: "side", header: "Side", width: "90px",
-      cell: (r) => (<span className={`font-semibold ${r.side === "buy" ? "text-up" : "text-down"}`}>
-        {r.side.toUpperCase()}</span>) },
+      cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
+        {r.side === "buy" ? "Buy" : "Sell"}</span>) },
     { key: "size", header: "Size", align: "right", sortable: true, cell: (r) => money(r.size, 0) },
     { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
   ];
@@ -185,8 +187,8 @@ export function BottomPanel({
       cell: (r) => <span className="text-muted-foreground">{hhmmss(r.t)}</span> },
     { key: "symbol", header: "Market", width: "110px", cell: (r) => <b>{r.symbol}</b> },
     { key: "isLong", header: "Side", width: "90px",
-      cell: (r) => (<span className={`font-semibold ${r.isLong ? "text-up" : "text-down"}`}>
-        {r.isLong ? "LONG" : "SHORT"}</span>) },
+      cell: (r) => (<span className={r.isLong ? "text-up" : "text-down"}>
+        {r.isLong ? "Long" : "Short"}</span>) },
     { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
     { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
     { key: "returned", header: "Returned", align: "right", cell: (r) => money(r.returned) },
@@ -196,8 +198,8 @@ export function BottomPanel({
     { key: "symbol", header: "Market", width: "130px", cell: (r) => <b>{r.symbol}</b> },
     { key: "kind", header: "Type", width: "120px", cell: (r) => orderKind(r) },
     { key: "isLong", header: "Side", width: "80px",
-      cell: (r) => (<span className={`font-semibold ${r.isLong ? "text-up" : "text-down"}`}>
-        {r.isLong ? "LONG" : "SHORT"}</span>) },
+      cell: (r) => (<span className={r.isLong ? "text-up" : "text-down"}>
+        {r.isLong ? "Long" : "Short"}</span>) },
     { key: "triggerPrice", header: "Trigger", align: "right",
       cell: (r) => `${r.triggerAbove ? "≥" : "≤"} ${price(r.triggerPrice)}` },
     // A take profit or stop with no size closes the whole position.
@@ -226,9 +228,9 @@ export function BottomPanel({
   const fundCols: TableColumn<PosRow>[] = [
     { key: "symbol", header: "Market", width: "130px", cell: (r) => <b>{r.symbol}</b> },
     { key: "side", header: "Side", width: "80px",
-      cell: (r) => (<span className={`font-semibold ${r.isLong ? "text-up" : "text-down"}`}>
-        {r.isLong ? "LONG" : "SHORT"}</span>) },
-    { key: "size", header: "Position Value", align: "right", cell: (r) => money(r.size, 0) },
+      cell: (r) => (<span className={r.isLong ? "text-up" : "text-down"}>
+        {r.isLong ? "Long" : "Short"}</span>) },
+    { key: "size", header: "Value", align: "right", cell: (r) => money(r.size, 0) },
     { key: "rate", header: "Rate / 1h", align: "right",
       cell: (r) => {
         const v = rateOf(bySymbol.get(r.symbol), r.isLong);
@@ -249,8 +251,8 @@ export function BottomPanel({
     { key: "symbol", header: "Market", width: "110px", cell: (r) => <b>{r.symbol}</b> },
     { key: "kind", header: "Action", width: "110px", cell: (r) => FILL_ACTION[r.kind] ?? r.kind },
     { key: "side", header: "Side", width: "90px",
-      cell: (r) => (<span className={`font-semibold ${r.side === "buy" ? "text-up" : "text-down"}`}>
-        {r.side.toUpperCase()}</span>) },
+      cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
+        {r.side === "buy" ? "Buy" : "Sell"}</span>) },
     { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
     { key: "price", header: "Price", align: "right", cell: (r) => r.price.toFixed(2) },
   ];

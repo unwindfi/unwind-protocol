@@ -3,15 +3,12 @@ import {
   Tabs as BeTabs, TabsContent, TabsList as BeTabsList, TabsTrigger as BeTabsTrigger,
 } from "@/components/motion/tabs";
 import { cn } from "@/lib/utils";
-import { PILL_INDICATOR, PILL_LIST, PILL_TRIGGER } from "@/site/Chrome";
 
 /*
- * beUI's tabs, in the house pill look.
- *
- * The classes are the site's own (`PILL_*` in Chrome), so every tab row on
- * /trade is the same control as the ones on /list and /earn: no track, and
- * the selected tab an inverted pill that slides between the options. Wrapped
- * once so the rows on this page cannot drift apart.
+ * beUI's tabs, as one control everywhere on /trade: a soft track with the
+ * chosen option a lighter chip that slides between them, the way /markets
+ * picks a sort or a source. Never an inverted pill: on a screen of figures a
+ * white chip is the loudest thing on it.
  */
 export function Tabs({
   value, defaultValue, onValueChange, children, className,
@@ -42,7 +39,7 @@ export function TabsList({ children, className, soft = false }: {
   children: ReactNode; className?: string; soft?: boolean;
 }) {
   return (
-    <BeTabsList className={cn(soft ? SOFT_LIST : cn(PILL_LIST, "gap-1"), className)}>
+    <BeTabsList className={cn(SOFT_LIST, className)}>
       {children}
     </BeTabsList>
   );
@@ -54,8 +51,8 @@ export function TabsTrigger({ value, children, className, soft = false }: {
   value: string; children: ReactNode; className?: string; soft?: boolean;
 }) {
   return (
-    <BeTabsTrigger value={value} className={cn(soft ? SOFT_TRIGGER : PILL_TRIGGER, className)}
-      indicatorClassName={soft ? SOFT_INDICATOR : PILL_INDICATOR}>
+    <BeTabsTrigger value={value} className={cn(SOFT_TRIGGER, className)}
+      indicatorClassName={SOFT_INDICATOR}>
       {children}
     </BeTabsTrigger>
   );

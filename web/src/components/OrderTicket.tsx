@@ -37,7 +37,7 @@ const CHECK =
 /// The settings chips at the top of the ticket: the /list pill at its
 /// smallest, outlined at rest and inverted when open.
 const CHIP =
-  "inline-flex h-8 items-center rounded-full border border-line px-3 text-[12.5px] " +
+  "inline-flex h-8 items-center rounded-full bg-panel2 px-3.5 text-[12.5px] " +
   "font-medium transition-colors pointer-coarse:h-9";
 
 const levText = (L: number) => `${L % 1 === 0 ? L.toFixed(0) : L.toFixed(1)}x`;
@@ -50,7 +50,7 @@ const levText = (L: number) => `${L % 1 === 0 ? L.toFixed(0) : L.toFixed(1)}x`;
  */
 const FIELD =
   "flex h-[44px] items-center gap-2 rounded-[12px] border border-line bg-panel2 px-3.5 " +
-  "transition-colors focus-within:border-foreground/40 pointer-coarse:h-[48px]";
+  "field-ring transition-colors focus-within:border-foreground/40 pointer-coarse:h-[48px]";
 
 /// "25000.5" as "25,000.5", keeping whatever is typed after the point so a
 /// half-typed decimal is not rounded away under the cursor.
@@ -246,16 +246,19 @@ export function OrderTicket({
 
   // A reduce-only order posts no margin and takes no capacity (it hands size
   // back), so it is measured against the position instead of the account.
+  // Said once, under the button, in the words a desk would use. The button
+  // itself keeps its name: a control that turns into a red sentence reads
+  // as an alarm, and the trader still has to find out what to press.
   const warn =
-    stale ? `Price feed stale (${Math.round(ageSec!)}s). Orders paused.`
+    stale ? `Price feed ${ageSec! >= 120 ? `${Math.round(ageSec! / 60)} min` : `${Math.round(ageSec!)}s`} behind. Orders paused.`
     : reduceOnly
-      ? !pos ? `No ${m.symbol} position to reduce`
+      ? !pos ? `No ${m.symbol} position to reduce.`
         : pos.isLong === (side === "long")
-          ? `Choose ${pos.isLong ? "Short" : "Long"} to reduce a ${pos.isLong ? "long" : "short"}`
+          ? `Choose ${pos.isLong ? "Short" : "Long"} to reduce a ${pos.isLong ? "long" : "short"}.`
           : ""
     : size <= 0 ? ""
-    : account && calc.debit > avail ? `Needs ${money(calc.debit)} margin`
-    : calc.capped ? `Above ${side} capacity for this market`
+    : account && calc.debit > avail ? `Not enough margin. ${money(calc.debit)} needed, ${money(avail)} free.`
+    : calc.capped ? `Over this market's ${side} capacity.`
     : "";
 
   /*
@@ -316,7 +319,7 @@ export function OrderTicket({
         // In the rail it is an object on the page, the /list card: the page
         // scrolls it, so it has no scroller, and it is bounded on all four
         // sides rather than hung off a shared edge.
-        ? "flex flex-col overflow-hidden rounded-[14px] border-b border-line bg-panel"
+        ? "flex flex-col overflow-hidden bg-panel"
         : "pane-scroll flex w-[262px] flex-none flex-col border-l border-line bg-panel xl:w-[296px]"}>
 
       {/*
@@ -334,9 +337,7 @@ export function OrderTicket({
           </Tooltip>
           <button type="button" onClick={() => setLevOpen((o) => !o)} aria-expanded={levOpen}
             aria-label={`Leverage ${levText(L)}`}
-            className={`${CHIP} gap-1 ${levOpen
-              ? "border-foreground bg-foreground text-background"
-              : "hover:border-foreground/40"}`}>
+            className={`${CHIP} gap-1 ${levOpen ? "bg-panel3" : "hover:bg-panel3"}`}>
             <span className="n">{levText(L)}</span>
             <ChevronDown className={`size-3.5 transition-transform ${levOpen ? "rotate-180" : ""}`} />
           </button>
@@ -367,19 +368,22 @@ export function OrderTicket({
 
       {/*
        * The side is the first decision, so it leads, full width: two pills in
-       * a quiet tray. The chosen one fills with the side's own colour, the
-       * one place the ticket uses colour at all, so that "long" and "short"
-       * are told apart by more than a word before the button repeats it.
+       * a quiet tray. The chosen one is a raised tile with its word in the
+       * side's colour; the only solid fill on the ticket is the button that
+       * places the order, so there is one thing on it that reads as "press me".
        */}
       <div className="px-5 pt-4">
         <Tabs value={side} onValueChange={(v) => setSide(v as "long" | "short")}>
           <TabsList className={`grid w-full grid-cols-2 rounded-full border border-line p-1
-                                [&_[data-tabs-indicator]]:transition-colors ${side === "long"
-            ? "[&_[data-tabs-indicator]]:bg-up" : "[&_[data-tabs-indicator]]:bg-down"}`}>
+                                [&_[data-tabs-indicator]]:bg-panel3`}>
+            {/* The colour goes on each trigger: the shared Tabs sets its label
+                ink there, and only a class on the same element replaces it. */}
             <TabsTrigger value="long"
-              className={`w-full text-[14px] ${mobile ? "h-11" : "h-10"}`}>Long</TabsTrigger>
+              className={`w-full text-[14px] [&_[data-tabs-label]]:font-semibold [&_[data-tabs-label]]:text-up
+                          ${mobile ? "h-11" : "h-10"}`}>Long</TabsTrigger>
             <TabsTrigger value="short"
-              className={`w-full text-[14px] ${mobile ? "h-11" : "h-10"}`}>Short</TabsTrigger>
+              className={`w-full text-[14px] [&_[data-tabs-label]]:font-semibold [&_[data-tabs-label]]:text-down
+                          ${mobile ? "h-11" : "h-10"}`}>Short</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -407,12 +411,12 @@ export function OrderTicket({
 
         {(account?.address || pos) && (
           <div className="mt-3">
-            {account?.address && <KV k="Available to Trade">{money(avail)}</KV>}
+            {account?.address && <KV k="Available to trade">{money(avail)}</KV>}
             {/* Only when there is one. "Current Position 0 SPYx" is a row that
                 exists to say nothing is there, which the rest of the ticket
                 already says. */}
             {pos && (
-              <KV k="Current Position">
+              <KV k="Current position">
                 {`${pos.isLong ? "+" : "-"}${(pos.size / pos.mark).toFixed(4)} ${m.symbol}`}
               </KV>
             )}
@@ -426,7 +430,7 @@ export function OrderTicket({
               placeholder={((m.bid + m.ask) / 2).toFixed(2)}
               trailing={
                 <button type="button" onClick={() => setLimitPrice(((m.bid + m.ask) / 2).toFixed(2))}
-                  className="flex-none rounded-full border border-line px-2.5 py-[3px] text-[11px]
+                  className="inline-flex h-6 flex-none items-center rounded-full border border-line px-2.5 text-[11px]
                              font-medium text-muted-foreground transition-colors
                              hover:border-foreground/40 hover:text-foreground">
                   Mid
@@ -439,7 +443,8 @@ export function OrderTicket({
             unit={denom === "usd" ? "USD" : m.symbol} min={0}
             trailing={
               <button type="button" onClick={swap} aria-label="Switch amount unit"
-                className="flex-none text-dim transition-colors hover:text-foreground">
+                className="-mr-1.5 grid size-6 flex-none place-items-center rounded-full text-dim
+                           transition-colors hover:text-foreground">
                 <ArrowLeftRight className="size-3.5" />
               </button>
             } />
@@ -461,10 +466,10 @@ export function OrderTicket({
               const on = maxSize > 0 && Math.abs(pct - p) < 0.5;
               return (
                 <button key={p} type="button" disabled={maxSize <= 0} onClick={() => setPct(p)}
-                  className={`n h-7 rounded-full border text-[12px] font-medium transition-colors
+                  className={`n h-8 rounded-full text-[12px] font-medium transition-colors
                               disabled:opacity-35 pointer-coarse:h-9 ${on
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-line text-muted-foreground hover:border-foreground/40 hover:text-foreground"}`}>
+                    ? "bg-panel3 text-foreground"
+                    : "bg-panel2 text-muted-foreground hover:bg-panel3 hover:text-foreground"}`}>
                   {p === 100 ? "Max" : `${p}%`}
                 </button>
               );
@@ -495,7 +500,7 @@ export function OrderTicket({
             // A resting reduce-only order would have to be a close order the
             // keeper fills later; the program's standing orders are the
             // take-profit and the stop, which are exactly that and live below.
-            disabled={mode === "limit"} label="Reduce Only" aria-label="Reduce Only"
+            disabled={mode === "limit"} label="Reduce only" aria-label="Reduce only"
             className={CHECK} />
           {/* A maker order has no expiry of its own: it lasts one batch and
               is refunded if nobody crosses it, so TIF is only offered for the
@@ -507,7 +512,7 @@ export function OrderTicket({
                 <select value={tif} onChange={(e) => setTif(e.target.value as Tif)}
                   aria-label="Time in force"
                   className="appearance-none bg-transparent pr-4 text-[12.5px] font-medium
-                             text-foreground outline-none [&>option]:bg-panel2">
+                             text-foreground [&>option]:bg-panel2">
                   <option value="gtc">GTC</option>
                   <option value="1h">1H</option>
                   <option value="1d">1D</option>
@@ -524,7 +529,7 @@ export function OrderTicket({
           <div className="mt-3">
             <Checkbox
               checked={tpsl && !!pos} onCheckedChange={setTpsl} disabled={!pos}
-              label="Take Profit / Stop Loss" aria-label="Take Profit / Stop Loss"
+              label="Take profit / stop loss" aria-label="Take profit / stop loss"
               className={CHECK}
               aria-describedby={pos ? undefined : `${uid}-tpsl-hint`} />
             {!pos && (
@@ -612,30 +617,26 @@ export function OrderTicket({
           type="button"
           disabled={busy || size <= 0 || !!warn || stale
             || (mode === "limit" && !reduceOnly && !Number(limitPrice))}
-          // Filled with the side's colour, the same as the switch above it.
-          // The page's background ink is dark on the bright dark-theme green
-          // and red and pale on the deeper light-theme ones, so it clears
-          // both without a colour of its own.
+          // Filled with the side's colour, the same as the switch above it,
+          // and simply dimmed when the order cannot go.
           onClick={submit}
           className={`press mt-5 flex min-h-[48px] w-full items-center justify-center rounded-full
-                      px-4 text-center font-medium transition-opacity ${warn
-            ? "border border-down/30 bg-down/[.06] text-[13px] text-down"
-            : `${side === "long" ? "bg-up" : "bg-down"} text-[14px] text-background
-               hover:opacity-90 disabled:opacity-35`}
-                      disabled:pointer-events-none`}>
-          {/* The reason the order cannot go is said on the button itself, not
-              under a greyed one: one place to look, and it reads as a state
-              rather than an error stacked on a dead control. */}
-          {warn || cta}
+                      px-4 text-center text-[14px] font-medium text-background transition-opacity
+                      hover:opacity-90 disabled:pointer-events-none disabled:opacity-40
+                      ${side === "long" ? "bg-up" : "bg-down"}`}>
+          {cta}
         </button>
+        {warn && (
+          <p className="mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn}</p>
+        )}
       </div>
 
       <div className="mt-2 border-t border-line bg-panel2 px-5 py-1.5">
-        <KV k="Liquidation Price">
+        <KV k="Liquidation price">
           {size > 0 && calc.liq > 0 && !reduceOnly ? money(calc.liq) : "N/A"}
         </KV>
-        <KV k="Order Value">{size > 0 ? money(size) : "N/A"}</KV>
-        <KV k="Margin Required">{size > 0 && !reduceOnly ? money(calc.debit) : "N/A"}</KV>
+        <KV k="Order value">{size > 0 ? money(size) : "N/A"}</KV>
+        <KV k="Margin required">{size > 0 && !reduceOnly ? money(calc.debit) : "N/A"}</KV>
         {/* A listed market still seasoning holds every order for its opening
             batch, so "within a second" would be the wrong promise. */}
         <KV k="Fill">{maker ? "This batch, if a taker crosses"
@@ -709,7 +710,7 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
   if (compact) {
     return (
       <div className="px-5 py-1">
-        <KV k="Portfolio Value">
+        <KV k="Portfolio value">
           <NumberTicker value={account.equity} prefix="$" locale
             format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} />
         </KV>
@@ -717,7 +718,7 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
         <KV k="Unrealized PnL">
           <span className={tone(account.unrealized)}>{money(account.unrealized)}</span>
         </KV>
-        <KV k="Account Ratio">
+        <KV k="Account ratio">
           {account.equity > 0 ? ((account.margin / account.equity) * 100).toFixed(2) : "0.00"}%
         </KV>
         <KV k="Pool">
@@ -735,10 +736,10 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
       {bordered && (
         <div className="mb-1 text-[13.5px] font-medium">Unified Account Summary</div>
       )}
-      <KV k="Account Ratio">
+      <KV k="Account ratio">
         {account.equity > 0 ? ((account.margin / account.equity) * 100).toFixed(2) : "0.00"}%
       </KV>
-      <KV k="Portfolio Value">
+      <KV k="Portfolio value">
         <NumberTicker value={account.equity} prefix="$" locale
           format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} />
       </KV>

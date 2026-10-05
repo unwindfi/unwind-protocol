@@ -58,7 +58,7 @@ const FIT = 0.94;
 /// Corners and slip roads as fractions of the width, so the shape is the same
 /// on a laptop as on a monitor.
 const TURN = 0.15;
-const SLIP = 0.3;
+const SLIP = 0.23;
 
 /// A slip road: leaves the lane and runs off the bottom of the box.
 const slip = (w: number, dir: 1 | -1) => {
@@ -211,12 +211,12 @@ export function Track({ markets, className = "" }: {
           <g mask="url(#road-mask)">
             <g fill="none" stroke="url(#road)" strokeWidth={thick}
               strokeLinecap="round" mask="url(#road-mask-y)">
-              {/* The journey carries the bends and the middle of the lane;
-                  these two are the stretches of lane outside the turns, which
-                  nothing drives on. */}
+              {/* The whole lane, drawn once and under the journey. It was two
+                  stubs ending at the bends, and each stub's round cap stopped
+                  short of where the bend's curve began, which left a notch at
+                  both junctions as if the road had been cut there. */}
+              <path d={`M 0 ${LANE} H ${w}`} />
               <path id={`${uid}-journey`} d={journey(w)} />
-              <path d={`M 0 ${LANE} H ${w * TURN}`} />
-              <path d={`M ${w * (1 - TURN)} ${LANE} H ${w}`} />
               <path d={slip(w, 1)} />
               <path d={slip(w, -1)} />
             </g>

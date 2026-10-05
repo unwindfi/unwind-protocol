@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import fs from "fs";
 import path from "path";
 
 export default defineConfig({
@@ -32,7 +33,9 @@ export default defineConfig({
     port: 5173,
     // `../scripts` is outside the Vite root, so dev has to be told it is fair
     // game; the build resolves it through the alias regardless.
-    fs: { allow: [path.resolve(__dirname, "..")] },
+    // A git worktree often links node_modules to another checkout; the files
+    // it serves (fonts) then live outside the root, so allow where it really is.
+    fs: { allow: [path.resolve(__dirname, ".."), fs.realpathSync(path.resolve(__dirname, "node_modules"))] },
     /*
      * Only the API is proxied.
      *

@@ -24,9 +24,8 @@ const GROUPS: { key: string; label: string; of: (m: Market, saved: string[]) => 
   { key: "fav", label: "Favourites", of: (m, saved) => saved.includes(m.symbol) },
   // The tokenised equities carry the x suffix their issuer gives them, the
   // same rule /markets groups by.
-  { key: "equities", label: "Equities", of: (m) => /x$/.test(m.symbol) },
+  { key: "equities", label: "Stocks", of: (m) => /x$/.test(m.symbol) },
   { key: "crypto", label: "Crypto", of: (m) => !/x$/.test(m.symbol) },
-  { key: "opened", label: "Opened", of: (m) => !!m.observed },
 ];
 
 /// Local storage throws outright in some browsers rather than returning
@@ -84,7 +83,7 @@ export function MarketList({ markets, current, onPick, onPalette }: {
   if (collapsed) {
     return (
       <aside className="flex w-[52px] flex-none flex-col items-center gap-1 overflow-hidden
-                        rounded-[10px] border-b border-line bg-panel py-2">
+                        bg-panel py-2">
         <IconBtn label="Show markets" onClick={toggleCollapsed}><ChevronsRight size={16} /></IconBtn>
         <IconBtn label={`Search markets (${isMac ? "Cmd" : "Ctrl"} K)`} onClick={onPalette}>
           <Search size={15} />
@@ -106,33 +105,38 @@ export function MarketList({ markets, current, onPick, onPalette }: {
   }
 
   return (
-    <aside className="flex w-[248px] flex-none flex-col overflow-hidden rounded-[10px] border-b
-                      border-line bg-panel 2xl:w-[272px]">
+    <aside className="flex w-[248px] flex-none flex-col overflow-hidden bg-panel 2xl:w-[272px]">
       <div className="flex flex-none items-center gap-1.5 px-2.5 pt-2.5">
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full bg-panel2 pl-3 pr-1
-                          text-muted-foreground focus-within:text-foreground">
-          <Search size={14} className="flex-none" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search" aria-label="Search markets"
-            className="min-w-0 flex-1 bg-transparent text-[12.5px] text-foreground outline-none
-                       placeholder:text-dim" />
+        {/* The field rings when its input has focus; the palette key sits beside
+            the label rather than in it, so a click on it is only its own. */}
+        <div className="field-ring flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full bg-panel2 pl-3 pr-1
+                        text-muted-foreground focus-within:text-foreground">
+          <label className="flex min-w-0 flex-1 items-center gap-2">
+            <Search size={14} className="flex-none" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search" aria-label="Search markets"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-foreground outline-none
+                         placeholder:text-dim" />
+          </label>
           <button type="button" onClick={onPalette} title="Open the market palette"
-            className="flex-none rounded-full border border-line px-2 py-0.5 text-[10.5px]
+            className="inline-flex h-6 flex-none items-center rounded-full border border-line px-2 text-[10.5px]
                        text-dim transition-colors hover:text-foreground">
             {isMac ? "⌘K" : "Ctrl K"}
           </button>
-        </label>
+        </div>
         <IconBtn label="Hide markets" onClick={toggleCollapsed}><ChevronsLeft size={16} /></IconBtn>
       </div>
 
-      <div className="flex flex-none flex-wrap gap-1 px-2.5 py-2">
+      <div className="mx-2.5 my-2 flex flex-none justify-between rounded-full bg-panel2 p-1">
         {GROUPS.map((g) => (
           <button key={g.key} type="button" onClick={() => { setGroup(g.key); setQuery(""); }}
             aria-pressed={g.key === group && !query}
-            className={cn("h-7 flex-none rounded-full px-2.5 text-[12px] font-medium transition-colors",
-              g.key === group && !query ? "bg-foreground text-background"
-                : "text-muted-foreground hover:bg-panel2 hover:text-foreground")}>
-            {g.label}
+            aria-label={g.key === "fav" ? "Favourites" : undefined} title={g.key === "fav" ? "Favourites" : undefined}
+            className={cn("flex h-7 flex-none items-center rounded-full px-2.5 text-[12.5px] transition-colors",
+              g.key === group && !query ? "bg-panel3 font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground")}>
+            {/* The star in place of the word, so all five fit the column. */}
+            {g.key === "fav" ? <Star size={13} strokeWidth={2} fill={g.key === group && !query ? "currentColor" : "none"} /> : g.label}
           </button>
         ))}
       </div>
@@ -155,7 +159,9 @@ export function MarketList({ markets, current, onPick, onPalette }: {
             <div key={m.symbol}
               className={cn("group flex items-center gap-2 border-b border-line/60 pl-1.5 pr-3",
                 on ? "bg-panel2" : "hover:bg-panel2/60")}>
-              <button type="button" onClick={() => toggleSaved(m.symbol)}
+              {/* Out of the Tab order, so the list is one stop per market;
+                  F on a focused row does the same thing. */}
+              <button type="button" onClick={() => toggleSaved(m.symbol)} tabIndex={-1}
                 aria-label={fav ? `Remove ${m.symbol} from favourites` : `Add ${m.symbol} to favourites`}
                 aria-pressed={fav}
                 className={cn("grid size-6 flex-none place-items-center rounded-full transition-colors",
@@ -163,13 +169,14 @@ export function MarketList({ markets, current, onPick, onPalette }: {
                 <Star size={12} fill={fav ? "currentColor" : "none"} />
               </button>
               <button type="button" onClick={() => onPick(m.symbol)} aria-current={on || undefined}
+                aria-keyshortcuts="F"
+                onKeyDown={(e) => { if (e.key.toLowerCase() === "f" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleSaved(m.symbol); } }}
                 className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
                 <TickerLogo m={m} size={22} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-[12.5px] font-medium">{m.symbol}</span>
-                    <span className="n flex-none rounded-full border border-line px-1.5 text-[10px]
-                                     leading-[15px] text-muted-foreground">{m.maxLeverage}x</span>
+                    <span className="n flex-none text-[11px] text-dim">{m.maxLeverage}x</span>
                   </span>
                   <span className="block truncate text-[11px] text-dim">{m.name}</span>
                 </span>

@@ -52,8 +52,8 @@ import {
 const NONE: Market[] = [];
 
 const FIELD =
-  "w-full rounded-[10px] border border-line bg-panel2 px-3.5 text-[13.5px] outline-none " +
-  "transition-colors placeholder:text-dim focus:border-brand";
+  "w-full rounded-[10px] border border-line bg-panel2 px-3.5 text-[13.5px] " +
+  "transition-colors placeholder:text-dim focus:border-foreground/40";
 
 /// Round numbers for a listing's backing. Smaller than a backer's, because
 /// the lister is opening the door, not underwriting the whole room.
@@ -101,7 +101,7 @@ function Fold({ label, open, onToggle, children }: {
   return (
     <div>
       <button type="button" onClick={onToggle} aria-expanded={open}
-        className="flex items-center gap-1.5 text-[11px] uppercase tracking-[.12em] text-dim
+        className="flex items-center gap-1.5 text-[12px] uppercase tracking-[.12em] text-dim
                    transition-colors hover:text-foreground">
         {label}
         <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
@@ -144,7 +144,7 @@ function Limit({ label, display, value, min, max, step, onChange, lo, hi, text }
       </div>
       <RangeSlider value={value} min={min} max={max} step={step} onValueChange={onChange}
         showTicks={(max - min) / step <= 12} aria-label={label} formatValueText={text} />
-      <div className="n mt-2 flex justify-between text-[11px] text-dim">
+      <div className="n mt-2 flex justify-between text-[12px] text-dim">
         <span>{lo}</span><span>{hi} · set by depth</span>
       </div>
     </div>
@@ -459,7 +459,7 @@ export default function List() {
         className="pointer-events-none absolute inset-x-0 top-[76px] hidden h-[420px] w-full
                    object-cover opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent)]
                    dark:block" />
-      <Shell className="relative pb-28 pt-4 sm:pt-8 lg:pb-14">
+      <Shell main className="relative pb-28 pt-4 sm:pt-8 lg:pb-14">
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
                         lg:grid-cols-[minmax(0,1fr)_440px]">
           {/* ------------------------------------------------------ form */}
@@ -541,7 +541,7 @@ export default function List() {
                                 <span className="n block text-[12.5px]">
                                   {t.price != null ? price(t.price) : "–"}
                                 </span>
-                                <span className="n block text-[11px] text-dim">
+                                <span className="n block text-[12px] text-dim">
                                   {t.liquidity > 0 ? `${compact(t.liquidity)} liq` : ""}
                                 </span>
                               </span>
@@ -617,7 +617,7 @@ export default function List() {
                               <span className="flex items-center gap-2 text-[13.5px] font-medium">
                                 {DEX_NAME[p.dex]}
                                 {i === 0 && pools.length > 1 && (
-                                  <span className={`rounded-full px-1.5 py-px text-[10px] font-medium ${on
+                                  <span className={`rounded-full px-1.5 py-px text-[12px] font-medium ${on
                                     ? "bg-background/15" : "bg-up/15 text-up"}`}>Deepest</span>
                                 )}
                               </span>
@@ -784,7 +784,7 @@ export default function List() {
                         <span className="n flex-none text-[13px] text-muted-foreground">{price(m.price)}</span>
                         <span className="flex-none text-right">
                           <span className={`block text-[12px] ${s.tone}`}>{s.label}</span>
-                          {s.detail && <span className="block text-[11px] text-dim">{s.detail}</span>}
+                          {s.detail && <span className="block text-[12px] text-dim">{s.detail}</span>}
                         </span>
                       </div>
                       <div className="mt-3"><Ripeness o={m.observed!} /></div>
@@ -841,7 +841,7 @@ export default function List() {
                   {token || preview ? (
                     <div className="flex flex-col items-center gap-3">
                       <TokenIcon src={preview?.icon ?? token?.icon} label={name || token?.symbol || "?"} size={72} />
-                      <span className="text-[11px] uppercase tracking-[.12em] text-dim">
+                      <span className="text-[12px] uppercase tracking-[.12em] text-dim">
                         {preview ? `live from ${onDevnet ? "devnet" : "mainnet"}` : "reading pool"}
                       </span>
                     </div>
@@ -854,20 +854,20 @@ export default function List() {
                   <span className="truncate text-[14px] font-medium">
                     {token?.name ?? "Token name"}
                   </span>
-                  <span className="n flex-none text-[11px] uppercase tracking-[.08em] text-dim">
+                  <span className="n flex-none text-[12px] uppercase tracking-[.08em] text-dim">
                     {name || token?.symbol || "Ticker"}
                   </span>
                 </div>
                 <div className="mt-1.5 flex items-baseline gap-4">
                   <span className="n text-[20px] font-semibold tracking-[-.01em]">
                     {preview ? <AnimatedNumber value={preview.unitPrice} format={price} startOnView={false} duration={0.8} /> : reading ? "…" : "$0"}
-                    <span className="ml-1 text-[11px] font-normal text-dim">
+                    <span className="ml-1 text-[12px] font-normal text-dim">
                       MARK{preview?.unitLabel ? ` / ${preview.unitLabel}` : ""}
                     </span>
                   </span>
                   <span className={`n text-[20px] font-semibold tracking-[-.01em] ${tooThin ? "text-down" : ""}`}>
                     {preview ? <AnimatedNumber value={preview.depthUsd} format={compact} startOnView={false} duration={0.8} /> : "$0"}
-                    <span className="ml-1 text-[11px] font-normal text-dim">DEPTH</span>
+                    <span className="ml-1 text-[12px] font-normal text-dim">DEPTH</span>
                   </span>
                 </div>
                 {preview && preview.unitExp > 0 && (

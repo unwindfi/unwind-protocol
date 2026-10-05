@@ -12,20 +12,18 @@
  * recommendation, because a venue that lists permissionlessly cannot also be
  * the one saying which listing is good.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "@/site/serif.css";
-import { ChevronUp, Search, Star as LucideStar } from "lucide-react";
-import { PILL_INDICATOR, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
+import { ChevronDown, ChevronUp, ChevronsUpDown, ListFilter, Search, Star as LucideStar } from "lucide-react";
+import { Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
-import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
-import { TrendBadge } from "@/components/ui/trend-badge";
-import { Checkbox } from "@/components/motion/checkbox";
 import { Mark } from "@/components/Brand";
-import { Board } from "@/components/Board";
 import { Track } from "@/components/Track";
 import { TickerLogo } from "@/components/TickerLogo";
-import { getMarkets, useHasBackend, usePoll, type Market } from "@/lib/api";
-import { compact, pct, price } from "@/lib/format";
+import { MarketPeek } from "@/components/MarketPeek";
+import { NavIcon } from "@/components/NavIcon";
+import { getMarkets, usePoll, type Market } from "@/lib/api";
+import { compact, pct, price, tone } from "@/lib/format";
 
 const NONE: Market[] = [];
 const SAVED = "unwind.watchlist";
@@ -115,7 +113,7 @@ const COLUMNS = [
   { key: "liquidity", label: "Liquidity", get: (m: Market) => m.freeLiquidity },
 ] as const;
 
-type SortKey = (typeof COLUMNS)[number]["key"];
+type SortKey = (typeof COLUMNS)[number]["key"] | "name";
 
 /*
  * Where a market's price comes from, which is the one axis this venue has
@@ -143,6 +141,72 @@ type SourceKey = (typeof SOURCES)[number]["key"];
  */
 const PHONE: SortKey[] = ["price", "change"];
 
+/// The Filters panel's sort: the orders people actually browse a list in.
+const SORTS: [SortKey, string][] = [
+  ["oi", "Open interest"], ["volume", "Volume"], ["change", "24h change"], ["name", "Name"],
+];
+
+const SOURCE_LABEL: Record<SourceKey, string> = { all: "All sources", feed: "Oracle", pool: "Pool" };
+
+/// Where prices come from: one closed pill that opens sideways into the
+/// choices, and closes again once one is picked.
+function SourceMenu({ value, onChange }: { value: SourceKey; onChange: (v: SourceKey) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const out = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", out); window.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", out); window.removeEventListener("keydown", key); };
+  }, [open]);
+  return (
+    <div ref={box} className="flex items-center gap-2">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className={`press flex h-11 flex-none items-center gap-2.5 rounded-full px-5 text-[15px] text-foreground ${
+          open || value !== "all" ? "bg-panel3" : "bg-panel2 hover:bg-panel3"}`}>
+        {SOURCE_LABEL[value]}
+        <ChevronDown size={16} strokeWidth={2}
+          className={`text-muted-foreground transition-transform duration-200 ${open ? "-rotate-90" : ""}`} />
+      </button>
+      {/* The choices slide out to the side: a grid column going from 0fr
+          to 1fr, so nothing below moves. */}
+      <div className="grid transition-[grid-template-columns] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        style={{ gridTemplateColumns: open ? "1fr" : "0fr" }}>
+        <div className="overflow-hidden">
+          <div className={`flex w-max items-center gap-1.5 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}>
+            {(Object.keys(SOURCE_LABEL) as SourceKey[]).filter((k) => k !== value).map((k) => (
+              <button key={k} type="button" tabIndex={open ? 0 : -1}
+                onClick={() => { onChange(k); setOpen(false); }}
+                className="press h-11 whitespace-nowrap rounded-full bg-panel2 px-5 text-[15px] text-muted-foreground
+                           hover:bg-panel3 hover:text-foreground">
+                {SOURCE_LABEL[k]}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// A soft track with the chosen option a lighter chip in it.
+function Seg<T extends string>({ value, options, onChange }: {
+  value: T; options: [T, string][]; onChange: (v: T) => void;
+}) {
+  return (
+    <div role="radiogroup" className="strip-scroll flex max-w-full items-center gap-0.5 rounded-full bg-panel2 p-1">
+      {options.map(([k, label]) => (
+        <button key={k} type="button" role="radio" aria-checked={value === k} onClick={() => onChange(k)}
+          className={`press h-10 flex-none whitespace-nowrap rounded-full px-4 text-[15px] ${value === k
+            ? "bg-panel text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /*
  * One icon set across the site.
  *
@@ -156,10 +220,6 @@ const Find = ({ size = 16 }: { size?: number }) => (
   <Search size={size} strokeWidth={1.75} aria-hidden />
 );
 
-const Caret = ({ up }: { up: boolean }) => (
-  <ChevronUp size={13} strokeWidth={2.25} aria-hidden
-    className={`inline-block transition-transform ${up ? "" : "rotate-180"}`} />
-);
 
 const Star = ({ on }: { on: boolean }) => (
   <LucideStar size={16} strokeWidth={1.75} aria-hidden
@@ -194,7 +254,6 @@ function useWatchlist() {
 }
 
 export default function Markets() {
-  const backend = useHasBackend();
   const markets = usePoll(getMarkets, 4000) ?? NONE;
   const { saved, toggle } = useWatchlist();
   const [group, setGroup] = useState("all");
@@ -202,8 +261,7 @@ export default function Markets() {
   const [sort, setSort] = useState<SortKey>("oi");
   const [desc, setDesc] = useState(true);
   const [source, setSource] = useState<SourceKey>("all");
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+    const [filtersOpen, setFiltersOpen] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
   const [withOi, setWithOi] = useState(false);
 
@@ -216,7 +274,7 @@ export default function Markets() {
    */
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const col = COLUMNS.find((c) => c.key === sort) ?? COLUMNS[1];
+    const col = COLUMNS.find((c) => c.key === sort);
     const found = q
       ? markets.filter((m) =>
           m.symbol.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
@@ -226,11 +284,13 @@ export default function Markets() {
     const src = SOURCES.find((x) => x.key === source) ?? SOURCES[0];
     const kept = found.filter((m) =>
       src.of(m) && (!openOnly || m.session !== 2) && (!withOi || m.oi > 0));
+    // Name reads A to Z first; every figure reads largest first.
+    if (!col) return [...kept].sort((a, b) => (desc ? -1 : 1) * a.name.localeCompare(b.name));
     return [...kept].sort((a, b) =>
       desc ? col.get(b) - col.get(a) : col.get(a) - col.get(b));
   }, [markets, query, picked, saved, sort, desc, source, openOnly, withOi]);
 
-  const filtersOn = (openOnly ? 1 : 0) + (withOi ? 1 : 0) + (source === "all" ? 0 : 1);
+  const filtersOn = (openOnly ? 1 : 0) + (withOi ? 1 : 0);
 
   const counts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -238,13 +298,14 @@ export default function Markets() {
     return out;
   }, [markets, saved]);
 
+
   const hit = (key: SortKey) => {
     if (key === sort) return setDesc((d) => !d);
     setSort(key);
     setDesc(true);
   };
 
-  const GRID = "grid-cols-[1.7fr_auto_1fr_.9fr] md:grid-cols-[1.9fr_auto_1fr_1.1fr_.9fr_1fr_1fr]";
+  const GRID = "grid-cols-[1.7fr_auto_1fr_.9fr] md:grid-cols-[1.6fr_auto_1fr_1.2fr_1fr_1.1fr_1fr]";
 
   return (
     <div className="site min-h-full">
@@ -258,13 +319,16 @@ export default function Markets() {
        * useful first move is to say what you are after. The line behind it is
        * scenery, and is marked as such.
        */}
+      {/* The hero and the table are the page's content, past the header. */}
+      <main>
       <div className="relative overflow-hidden border-b border-line">
+
         {/* The front page's violet light (waitlist/field.webp) behind the search,
             fading into the page at the foot so the table below starts clean. */}
         <img src="/waitlist/field.webp" alt="" aria-hidden
-          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-70
-                     [mask-image:linear-gradient(to_bottom,black_45%,transparent)]" />
-        <Shell className="relative py-12 text-center sm:py-16 md:py-24">
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-45
+                     [mask-image:linear-gradient(to_bottom,black_45%,transparent)] dark:opacity-70" />
+        <Shell className="relative py-10 text-center sm:py-12 md:py-16">
           {/* The two things this page does, in the order it offers them: the
               field below, and the link beside the table under it. The second
               sentence is the whole claim -- the listing is not ours to grant
@@ -279,18 +343,25 @@ export default function Markets() {
            * that box is centred on the field, which is what makes the two
            * line up without either knowing the other's measurements.
            */}
-          <div className="relative mx-auto mt-9 max-w-[610px] md:mt-11">
+          <div className="relative mx-auto mt-7 max-w-[520px] md:mt-9">
             <Track markets={markets} />
-            <span className="pointer-events-none absolute left-[18px] top-1/2 z-20
-                             -translate-y-1/2 text-muted-foreground sm:left-[22px]">
-              <Find />
-            </span>
-            <input value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search markets" aria-label="Search markets"
-              className="relative z-10 h-[56px] w-full rounded-full border border-line
-                         bg-[#121028] pl-[46px] pr-5 text-[15px] transition-colors
-                         placeholder:text-muted-foreground focus:border-brand
-                         focus:outline-none sm:h-[62px] sm:pl-[52px] sm:pr-6" />
+            {/*
+             * The field sits in a thick rim the road runs into: the lane
+             * flares where it meets the rim on each side, so the road reads
+             * as arriving at the search rather than passing behind it.
+             */}
+            <div className="relative z-10">
+              <span className="pointer-events-none absolute left-[18px] top-1/2 z-20
+                               -translate-y-1/2 text-muted-foreground sm:left-[22px]">
+                <Find />
+              </span>
+              <input value={query} onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search markets" aria-label="Search markets"
+                className="relative z-10 h-[56px] w-full rounded-full border border-line
+                           bg-panel pl-[46px] pr-5 text-[15px] transition-colors dark:bg-[#121028]
+                           placeholder:text-muted-foreground focus:border-foreground/40
+                           sm:h-[62px] sm:pl-[52px] sm:pr-6" />
+            </div>
           </div>
         </Shell>
       </div>
@@ -311,172 +382,82 @@ export default function Markets() {
          * nobody approves, so which groups have anything in them is not
          * knowable when the page is written.
          */}
-        <div className="strip-scroll -mx-5 flex gap-3 overflow-x-auto px-5 pb-1 sm:mx-0 sm:px-0">
-          {GROUPS.filter((g) => ["all", "memes", "watchlist"].includes(g.key)
-            || counts[g.key] > 0)
-            .map((g) => {
-              const on = g.key === group && !query;
-              const empty = counts[g.key] === 0;
-              const art = g.art;
-              const face = empty ? undefined : g.face?.(markets, saved);
-              return (
-                <button key={g.key} type="button" disabled={empty && g.key !== "all"}
-                  onClick={() => { setGroup(g.key); setQuery(""); }} aria-pressed={on}
-                  className={`press relative h-[112px] w-[204px] flex-none overflow-hidden
-                              rounded-[14px] border text-left transition-colors ${
-                    empty && g.key !== "all" ? "cursor-default opacity-45" : ""} ${on
-                      ? "border-brand/55 bg-brand/[.09]"
-                      : "border-line bg-panel hover:bg-panel2"}`}>
-                  {/* Artwork bleeds off the top-right and is clipped by the
-                      card, which is what stops it reading as an icon. */}
-                  {/*
-                   * A drawing if the group has one, and its count if not.
-                   *
-                   * The number is not a placeholder standing in for art. It
-                   * is the one thing on the card that could not appear on
-                   * anybody else's: what this group holds right now, which
-                   * changes when somebody opens a market. Tabular figures, so
-                   * the row does not jostle as the counts move.
-                   */}
-                  {/*
-                   * Every card wears a logo, cut by the corner.
-                   *
-                   * The order is: a mark the group names, else a market from
-                   * inside it, else this venue's own. A group that is empty
-                   * still gets one -- a card that falls back to a bare number
-                   * while its neighbours carry artwork reads as the one that
-                   * failed to load, and an empty group is the case where the
-                   * card most needs to look like somewhere worth pressing.
-                   */}
-                  <span aria-hidden
-                    className="pointer-events-none absolute -right-7 -top-7 overflow-hidden
-                               rounded-[22px]">
-                    {art ? (
-                      <img src={art} alt="" width={120} height={120}
-                        onError={(e) => { e.currentTarget.style.display = "none"; }}
-                        className="block" />
-                    ) : face ? (
-                      <TickerLogo m={face} size={120} />
-                    ) : (
-                      <Mark size={120} />
-                    )}
-                  </span>
-                  <span className="absolute bottom-3.5 left-4 text-[15px] font-medium">
-                    {g.label}
-                  </span>
-                </button>
-              );
-            })}
+        {/*
+         * The groups as small cards, each with its own 3D coin leaning out of
+         * the top-right corner and cut by the card's edge (rendered in the
+         * brand's Blender scene, brand/x/3d/coins.py). Then one row: where
+         * prices come from on the left, Filters on the right.
+         */}
+        <div className="strip-scroll -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1 sm:mx-0 sm:px-0">
+          {/* Six: "Opened" is the Pool source below, so it is not a card too.
+              An empty group drops out only once the list has arrived: before
+              that every count is zero, and the two cards left stretched
+              across the whole row while the page loaded. */}
+          {GROUPS.filter((g) => g.key !== "opened"
+            && (!markets.length || ["all", "watchlist"].includes(g.key) || counts[g.key] > 0)).map((g) => {
+            const on = g.key === group && !query;
+            return (
+              <button key={g.key} type="button" aria-pressed={on}
+                onClick={() => { setGroup(g.key); setQuery(""); }}
+                className={`press group/card relative h-[124px] w-[170px] flex-none overflow-hidden rounded-[16px] sm:w-auto sm:min-w-[132px] sm:flex-1
+                            border text-left ${on
+                  ? "border-foreground/25 bg-panel3" : "border-line bg-panel hover:bg-panel2"}`}>
+                <img src={`/groups/${g.key}.webp`} alt="" aria-hidden
+                  width={118} height={118} draggable={false}
+                  className="pointer-events-none absolute -right-5 -top-6 h-[118px] w-[118px] select-none
+                             transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]
+                             group-hover/card:-translate-y-0.5 group-hover/card:rotate-[-4deg]" />
+                <span className={`absolute bottom-4 left-4 text-[16px] leading-none ${on ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                  {g.key === "all" ? "All markets" : g.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
-        {/*
-         * The row above the table. Sort lives here rather than only in the
-         * header, because the columns it offers are dropped on a phone and
-         * sorting by something you cannot see is still worth having.
-         */}
-        <div className="mt-7 flex flex-wrap items-center gap-2.5">
-          {/*
-           * The source control opens sideways, into the row it lives in.
-           *
-           * A menu would cover the table it is filtering, and there are three
-           * answers -- not a list long enough to need one. The strip animates
-           * its own column from nothing to content, so nothing below it moves
-           * and the options arrive where the eye already is.
-           */}
-          <button type="button" onClick={() => setSourcesOpen((o) => !o)}
-            aria-expanded={sourcesOpen}
-            className={`press flex flex-none items-center gap-2 rounded-full border px-4 py-2
-                        text-[12.5px] font-medium transition-colors ${
-              source === "all"
-                ? "border-line bg-panel text-foreground hover:border-line/80"
-                : "border-brand/50 bg-brand/[.08] text-foreground"}`}>
-            {SOURCES.find((x) => x.key === source)?.label}
-            <Caret up={sourcesOpen} />
-          </button>
-
-          <div className="grid transition-[grid-template-columns] duration-300
-                          ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style={{ gridTemplateColumns: sourcesOpen ? "1fr" : "0fr" }}>
-            <div className="overflow-hidden">
-              {/*
-               * `w-max` is what makes this a reveal rather than a squash. In
-               * a zero-width grid column the flex row inside will happily
-               * shrink to fit, so the pills crush into each other on the way
-               * out and spring back on the way in. Pinned to its own content
-               * width, the column clips it instead, which is the motion that
-               * was wanted.
-               */}
-              <div className={`flex w-max items-center gap-1 rounded-full border border-line
-                               bg-panel p-1 transition-opacity duration-200 ${
-                sourcesOpen ? "opacity-100" : "opacity-0"}`}>
-                {SOURCES.map((x) => (
-                  <button key={x.key} type="button" onClick={() => setSource(x.key)}
-                    className={`press whitespace-nowrap rounded-full px-3 py-1.5 text-[12.5px]
-                                transition-colors ${source === x.key
-                      ? "bg-panel3 text-foreground"
-                      : "text-muted-foreground hover:text-foreground"}`}>
-                    {x.short}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/*
-           * The sort row is beUI's tabs rather than a hand-rolled pill group,
-           * so the indicator is one spring-driven element sliding between
-           * columns instead of a background appearing and disappearing under
-           * each. Controlled, because the header's own column buttons set the
-           * same state and the two have to agree.
-           */}
-          <Tabs value={sort} onValueChange={(v) => hit(v as SortKey)} variant="pill"
-            className="min-w-0 max-w-full">
-            <TabsList>
-              {COLUMNS.map((c) => (
-                <TabsTrigger key={c.key} value={c.key} indicatorClassName={PILL_INDICATOR}
-                  className="[&_[data-tabs-label]]:text-background">
-                  {c.label}
-                  {sort === c.key && <> <Caret up={!desc} /></>}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-
+        <div className="mt-4 flex items-center gap-3">
+          <SourceMenu value={source} onChange={setSource} />
           <button type="button" onClick={() => setFiltersOpen((o) => !o)}
             aria-expanded={filtersOpen} aria-controls="market-filters"
-            className={`press ml-auto flex flex-none items-center gap-2 rounded-full border
-                        px-4 py-2 text-[12.5px] font-medium transition-colors ${
-              filtersOn > 0
-                ? "border-brand/50 bg-brand/[.08] text-foreground"
-                : "border-line bg-panel text-muted-foreground hover:text-foreground"}`}>
+            className={`press ml-auto flex h-11 flex-none items-center gap-2.5 rounded-full px-5
+                        text-[15px] text-foreground ${filtersOn > 0 || filtersOpen
+                ? "bg-panel3" : "bg-panel2 hover:bg-panel3"}`}>
             Filters
-            {filtersOn > 0 && <span className="n text-brand">{filtersOn}</span>}
-            <Caret up={filtersOpen} />
+            {filtersOn > 0 && <span className="n text-muted-foreground">{filtersOn}</span>}
+            <ListFilter size={17} strokeWidth={1.8} className="text-muted-foreground" />
           </button>
         </div>
 
-        {/*
-         * The filters open downward, pushing the table rather than covering
-         * it: the point of changing one is watching what it does to the rows,
-         * and a panel over them hides the answer. Rows from 0fr to 1fr is how
-         * you animate to a height nobody has measured.
-         */}
         <div id="market-filters"
           className="grid transition-[grid-template-rows] duration-300
                      ease-[cubic-bezier(0.16,1,0.3,1)]"
           style={{ gridTemplateRows: filtersOpen ? "1fr" : "0fr" }}>
           <div className="overflow-hidden">
-            <div className="mt-3 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl
-                            border border-line bg-panel px-4 py-3.5">
-              <Checkbox checked={openOnly} onCheckedChange={setOpenOnly}
-                label="Trading now" />
-              <Checkbox checked={withOi} onCheckedChange={setWithOi}
-                label="With open interest" />
+            <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-4 rounded-[20px] border
+                            border-line px-5 py-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-4">
+                <span className="text-[15px] text-muted-foreground">Sort by</span>
+                <Seg value={sort} options={SORTS} onChange={(k) => {
+                  setSort(k); setDesc(k !== "name");
+                }} />
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-4">
+                <span className="text-[15px] text-muted-foreground">Show</span>
+                <div className="flex items-center gap-0.5 rounded-full bg-panel2 p-1">
+                  {([["Trading now", openOnly, setOpenOnly], ["With open interest", withOi, setWithOi]] as const)
+                    .map(([label, on, set]) => (
+                      <button key={label} type="button" aria-pressed={on} onClick={() => set(!on)}
+                        className={`press h-10 whitespace-nowrap rounded-full px-4 text-[15px] ${on
+                          ? "bg-panel text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+                        {label}
+                      </button>
+                    ))}
+                </div>
+              </div>
               {filtersOn > 0 && (
                 <button type="button"
                   onClick={() => { setOpenOnly(false); setWithOi(false); setSource("all"); }}
-                  className="press ml-auto text-[12.5px] text-muted-foreground
-                             transition-colors hover:text-foreground">
+                  className="press ml-auto text-[14px] text-muted-foreground hover:text-foreground">
                   Clear
                 </button>
               )}
@@ -489,57 +470,52 @@ export default function Markets() {
          * between them. Everything past the first two numbers is dropped on a
          * phone rather than crushed: five figures at 375 is a wall.
          */}
-        <div className="mt-3.5 overflow-hidden rounded-[14px] border border-line bg-panel">
-          <div className={`grid ${GRID} items-center gap-2 border-b border-line bg-panel2/50
-                           px-3 py-3 text-[10.5px] uppercase tracking-[.1em] text-muted-foreground
-                           sm:gap-3 sm:px-4`}>
+        <div className="mt-4 overflow-hidden rounded-[20px] border border-line bg-panel [&>div:last-child>a]:border-0">
+          <div className={`grid ${GRID} items-center gap-2 border-b border-line bg-panel2
+                           px-3 py-4 text-[14px] text-muted-foreground sm:gap-3 sm:px-5`}>
             <span>Market</span>
             <span className="w-[17px]" />
             {COLUMNS.map((c) => (
               <button key={c.key} type="button" onClick={() => hit(c.key)}
-                className={`flex items-center justify-end gap-1 text-right uppercase
-                            tracking-[.1em] transition-colors hover:text-foreground ${
-                  sort === c.key ? "text-foreground" : ""} ${
+                aria-sort={sort === c.key ? (desc ? "descending" : "ascending") : "none"}
+                className={`flex items-center justify-end gap-1.5 whitespace-nowrap text-right
+                            hover:text-foreground ${sort === c.key ? "text-foreground" : ""} ${
                   PHONE.includes(c.key) ? "" : "hidden md:flex"}`}>
                 {c.label}
-                {sort === c.key && <Caret up={!desc} />}
+                {sort === c.key
+                  ? (desc ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronUp size={14} strokeWidth={2} />)
+                  : <ChevronsUpDown size={13} strokeWidth={2} className="text-dim" />}
               </button>
             ))}
           </div>
 
+          {/* Two words, the way an exchange says it, and the one thing to do
+              about it at the row's end. */}
           {markets.length > 0 && rows.length === 0 && (
-            <p className="px-4 py-12 text-center text-[13px] text-muted-foreground">
-              {group === "watchlist" && !query
-                ? "Nothing starred yet."
-                : <>
-                    <span className="block">
-                      {query.trim() ? <>No market for <span className="text-foreground">{query.trim()}</span> yet.</>
-                        : "No matches."}
-                    </span>
-                    {query.trim() && (
-                      <a href="/list" className="press mt-4 inline-flex h-9 items-center rounded-full
-                                                 bg-foreground px-4 text-[13px] font-medium
-                                                 text-background hover:opacity-90">
-                        List it
-                      </a>
-                    )}
-                  </>}
-            </p>
+            <div className="flex items-center justify-between gap-4 px-3 py-5 text-[14px] sm:px-5">
+              <span className="text-muted-foreground">No results</span>
+              {query.trim() && (
+                <a href="/list" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+                  <NavIcon name="list" size={16} />
+                  List {query.trim().toUpperCase()}
+                </a>
+              )}
+            </div>
           )}
 
           {(markets.length ? rows : (Array.from({ length: 10 }) as (Market | undefined)[]))
             .map((m, i) => m ? (
-              <a key={m.symbol} href={`/trade?symbol=${m.symbol}`}
+              <MarketPeek key={m.symbol} m={m}>
+              <a href={`/trade?symbol=${m.symbol}`}
                 className={`group grid ${GRID} items-center gap-2 border-b border-line px-3
-                            py-3 transition-colors last:border-0 hover:bg-panel2
-                            sm:gap-3 sm:px-4`}>
-                <span className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-                  <TickerLogo m={m} size={30} />
+                            py-3.5 last:border-0 hover:bg-panel2/60 sm:gap-3 sm:px-5`}>
+                <span className="flex min-w-0 items-center gap-3">
+                  <TickerLogo m={m} size={36} />
                   <span className="min-w-0">
-                    <span className="block truncate text-[14px] font-medium">{m.name}</span>
-                    <span className="block truncate text-[11.5px] text-muted-foreground">
+                    <span className="block truncate text-[15.5px] font-medium">{m.name}</span>
+                    <span className="block truncate text-[13px] text-muted-foreground">
                       {m.symbol}
-                      {m.observed ? " · opened by anyone" : " · Pyth"}
+                      <span className="hidden sm:inline">{m.observed ? " · opened by anyone" : " · Pyth"}</span>
                     </span>
                   </span>
                 </span>
@@ -556,74 +532,38 @@ export default function Markets() {
                     ? "text-brand" : "text-dim hover:text-foreground"}`}>
                   <Star on={saved.includes(m.symbol)} />
                 </button>
-                <span className="n text-right text-[13.5px]">{price(m.price)}</span>
-                <span className="n hidden text-right text-[13px] text-muted-foreground md:block">
+                <span className="n text-right text-[15px]">{price(m.price)}</span>
+                <span className="n hidden text-right text-[15px] md:block">
                   {compact(m.oi)}
                 </span>
-                {/*
-                 * Oxygen's trend badge, wearing this venue's up and down
-                 * rather than its own emerald and red. The component states
-                 * those as ordinary utilities, so naming ours at the call
-                 * site replaces them instead of fighting them, and the two
-                 * colours stay defined in one place for the whole site.
-                 */}
-                <span className="flex justify-end">
-                  <TrendBadge trend={m.changePct < 0 ? "down" : "up"}
-                    className={`n text-[12px] ${m.changePct < 0
-                      ? "border-down/25 bg-down/15 text-down"
-                      : "border-up/25 bg-up/15 text-up"}`}>
-                    {pct(m.changePct)}
-                  </TrendBadge>
+                {/* The move as a coloured figure, the way every screener prints
+                    it: the colour says the direction, the sign says it again. */}
+                <span className={`n text-right text-[15px] ${tone(m.changePct)}`}>
+                  {pct(m.changePct)}
                 </span>
-                <span className="n hidden text-right text-[13px] text-muted-foreground md:block">
+                <span className="n hidden text-right text-[15px] md:block">
                   {compact(m.volume24h)}
                 </span>
                 {/* Liquidity as a chip, because it is the figure that decides
                     whether the rest of the row is reachable in any size. */}
                 <span className="hidden justify-end md:flex">
-                  <span className="n rounded-md bg-panel3 px-2 py-1 text-[12.5px]
-                                   text-muted-foreground transition-colors
-                                   group-hover:bg-transparent">
+                  <span className="n rounded-[10px] bg-panel2 px-3 py-1.5 text-[15px]
+                                   group-hover:bg-panel3">
                     {compact(m.freeLiquidity)}
                   </span>
                 </span>
               </a>
+              </MarketPeek>
             ) : (
-              <div key={i} className="h-[62px] border-b border-line last:border-0" />
+              <div key={i} className="h-[69px] border-b border-line last:border-0" />
             ))}
         </div>
 
-        {/*
-         * The part-opened markets sit under the table rather than above it.
-         * They are the most interesting thing here and the least useful: a
-         * market opened two minutes ago has no price, no depth and nothing to
-         * trade, so it cannot be what the page opens on.
-         */}
-        {markets.some((m) => m.observed) && (
-          <div className="pt-12">
-            <div className="flex flex-col gap-1 pb-4 sm:flex-row sm:items-baseline
-                            sm:justify-between sm:gap-3">
-              <h2 className="text-[13.5px] font-medium">Opening now</h2>
-              <span className="text-[12px] text-muted-foreground">
-                Live from the first price, seconds after listing
-              </span>
-            </div>
-            <Board markets={markets} />
-          </div>
-        )}
-
-        {markets.length > 0 && (
-          <p className="mt-10 text-[12px] text-muted-foreground">
-            Open interest:{" "}
-            <span className="n text-foreground">
-              {compact(markets.reduce((a, m) => a + m.oi, 0))}
-            </span>.{backend === false && " Read-only deploy."}
-          </p>
-        )}
       </Shell>
         </div>
       </div>
 
+      </main>
       <SiteFooter />
     </div>
   );

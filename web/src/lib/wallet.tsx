@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import "@solana/wallet-adapter-react-ui/styles.css";
+import { Welcome } from "@/components/Welcome";
 
 /// The validator this app is served from. A wallet must be pointed at the same
 /// cluster, which for a throwaway localnet means adding it as a custom RPC —
@@ -15,7 +16,11 @@ export function WalletRoot({ children }: { children: ReactNode }) {
   return (
     <ConnectionProvider endpoint={RPC_URL}>
       <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}</WalletModalProvider>
+        <WalletModalProvider>
+          {children}
+          {/* Three screens the first time a wallet connects, on every page. */}
+          <Welcome />
+        </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
   );

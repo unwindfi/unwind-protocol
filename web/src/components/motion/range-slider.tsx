@@ -70,7 +70,7 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
     <div
       {...trackProps}
       className={cn(
-        "relative flex h-10 w-full touch-none items-center overflow-hidden rounded-lg bg-muted",
+        "relative flex h-8 w-full touch-none items-center",
         TOUCH_GESTURE_CLASS,
         options.disabled
           ? "pointer-events-none opacity-50"
@@ -78,8 +78,10 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
         className,
       )}
     >
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-[2px] inset-y-0 overflow-hidden rounded-lg">
-        <motion.div className="absolute inset-0 rounded-lg bg-foreground/15" style={{ x: fillX }} />
+      {/* A thin rail, filled up to the thumb. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-[2px] top-1/2 h-1 -translate-y-1/2
+                                         overflow-hidden rounded-full bg-panel3">
+        <motion.div className="absolute inset-0 rounded-full bg-foreground/70" style={{ x: fillX }} />
       </div>
 
       {/* Tick centres follow the same inset path as the handle centre. */}
@@ -89,7 +91,7 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
           return (
             <span
               key={t}
-              className="absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/25"
+              className="absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/30"
               style={{ left: `${tp}%` }}
             />
           );
@@ -99,9 +101,10 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
       {/* Keep the handle inside the rounded progress fill at both ends. */}
       <motion.div
         {...sliderProps}
-        animate={reduce ? undefined : { scaleY: dragging ? 1.35 : 1 }}
+        animate={reduce ? undefined : { scale: dragging ? 1.15 : 1 }}
         transition={SPRING_BOUNCY}
-        className="absolute left-0 top-1/2 h-6 w-1 rounded-full bg-foreground outline-none ring-inset ring-foreground/30 focus-visible:ring-4"
+        className="absolute left-0 top-1/2 -ml-2 size-4 rounded-full bg-foreground shadow-[0_1px_4px_rgba(0,0,0,.35)]
+                   outline-none ring-foreground/25 focus-visible:ring-4"
         style={{ x: thumbX, y: "-50%" }}
       />
     </div>

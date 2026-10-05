@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Eraser, Maximize2, Minimize2, PenLine } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Eraser, Maximize2, Minimize2, PenLine } from "lucide-react";
 import { Chart, INDICATOR_COLORS, type ChartIndicators } from "@/components/Chart";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { getBatch, useHasBackend, type Account, type Batch, type Market } from "@/lib/api";
@@ -22,6 +22,52 @@ function readPrefs(): Prefs {
   catch { return DEFAULTS; }
 }
 
+/// The chart's settings in one menu: each row a switch, the button counting
+/// how many are on.
+function Indicators({ items }: {
+  items: { label: string; hint: string; on: boolean; toggle: () => void }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const out = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", out); window.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", out); window.removeEventListener("keydown", key); };
+  }, [open]);
+  const count = items.filter((i) => i.on).length;
+  return (
+    <div ref={box} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
+        className={cn("flex h-7 flex-none items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition-colors",
+          open || count ? "bg-panel3 text-foreground" : "text-muted-foreground hover:bg-panel2 hover:text-foreground")}>
+        Indicators
+        {count > 0 && <span className="n text-muted-foreground">{count}</span>}
+        <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-[calc(100%+6px)] z-50 w-[240px] rounded-[16px] border border-line
+                                    bg-panel p-1.5 shadow-[0_18px_40px_-14px_rgba(0,0,0,.5)]">
+          {items.map((i) => (
+            <button key={i.label} type="button" role="menuitemcheckbox" aria-checked={i.on} onClick={i.toggle}
+              className="flex w-full items-start gap-2.5 rounded-[10px] px-3 py-2 text-left hover:bg-panel2">
+              <span className={cn("mt-0.5 grid size-4 flex-none place-items-center rounded-[5px] border",
+                i.on ? "border-foreground bg-foreground text-background" : "border-line")}>
+                {i.on && <Check size={11} strokeWidth={3} />}
+              </span>
+              <span>
+                <span className="block text-[13px] text-foreground">{i.label}</span>
+                <span className="block text-[12px] text-dim">{i.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /// A toggle in the chart's toolbar, in the house pill: inverted when on.
 function Pill({ on, onClick, children, title }: {
   on: boolean; onClick: () => void; children: ReactNode; title?: string;
@@ -29,7 +75,7 @@ function Pill({ on, onClick, children, title }: {
   return (
     <button type="button" aria-pressed={on} title={title} onClick={onClick}
       className={cn("h-7 flex-none rounded-full px-3 text-[12px] font-medium transition-colors",
-        on ? "bg-foreground text-background"
+        on ? "bg-panel3 text-foreground"
            : "text-muted-foreground hover:bg-panel2 hover:text-foreground")}>
       {children}
     </button>
@@ -42,7 +88,7 @@ function IconButton({ on = false, onClick, label, children }: {
   return (
     <button type="button" aria-label={label} title={label} aria-pressed={on} onClick={onClick}
       className={cn("grid size-7 flex-none place-items-center rounded-full transition-colors",
-        on ? "bg-foreground text-background"
+        on ? "bg-panel3 text-foreground"
            : "text-muted-foreground hover:bg-panel2 hover:text-foreground")}>
       {children}
     </button>
@@ -155,7 +201,7 @@ export function ChartPanel({
       </div>
 
       {view === "chart" && (
-        <div className="strip-scroll flex flex-none items-center gap-1 pb-2">
+        <div className="flex flex-none flex-wrap items-center gap-x-1 gap-y-1 pb-2">
           {showTimeframes && <>
             {CHART_TFS.map((t) => (
               <Pill key={t.v} on={tf === t.v} onClick={() => setTf(t.v)}>{t.l}</Pill>
@@ -166,14 +212,18 @@ export function ChartPanel({
           <Pill on={shown === "line"} onClick={() => set({ kind: "line" })}
             title="Closes only">Line</Pill>
           <Sep />
-          <Pill on={!!prefs.ind.ma20} onClick={() => set({ ind: { ...prefs.ind, ma20: !prefs.ind.ma20 } })}
-            title="Simple average of the last 20 closes">MA 20</Pill>
-          <Pill on={!!prefs.ind.ema50} onClick={() => set({ ind: { ...prefs.ind, ema50: !prefs.ind.ema50 } })}
-            title="Exponential average of the last 50 closes">EMA 50</Pill>
-          <Pill on={prefs.log} onClick={() => set({ log: !prefs.log })} title="Log price scale">Log</Pill>
-          <Pill on={prefs.trim} onClick={() => set({ trim: !prefs.trim })}
-            title="Cap wicks at 3x the median bar range">Trim wicks</Pill>
-          <Sep />
+          {/* Four switches set once and left alone, so they share one menu
+              rather than a second row of pills under the timeframes. */}
+          <Indicators items={[
+            { label: "MA 20", hint: "Simple average of the last 20 closes", on: !!prefs.ind.ma20,
+              toggle: () => set({ ind: { ...prefs.ind, ma20: !prefs.ind.ma20 } }) },
+            { label: "EMA 50", hint: "Exponential average of the last 50 closes", on: !!prefs.ind.ema50,
+              toggle: () => set({ ind: { ...prefs.ind, ema50: !prefs.ind.ema50 } }) },
+            { label: "Log scale", hint: "Even spacing for equal percentage moves", on: prefs.log,
+              toggle: () => set({ log: !prefs.log }) },
+            { label: "Trim wicks", hint: "Cap wicks at 3x the median bar range", on: prefs.trim,
+              toggle: () => set({ trim: !prefs.trim }) },
+          ]} />
           <IconButton on={drawMode} onClick={() => setDrawMode((d) => !d)}
             label={drawMode ? "Cancel line" : "Draw a price line"}>
             <PenLine size={15} />
