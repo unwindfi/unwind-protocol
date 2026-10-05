@@ -1733,29 +1733,32 @@ async function ensureMarkKeeper() {
 /*
  * A circuit breaker on what the keeper pushes.
  *
- * A mark more than BREAKER_PCT from the one on chain is held at the old mark
- * (re-pushed, so the market stays fresh rather than going stale) until
- * BREAKER_CONFIRM passes in a row agree on the move, then taken. One bad
+ * A mark more than BREAKER_PCT from the one on chain is held for one pass
+ * (re-pushed, so the market stays fresh rather than going stale): one bad
  * reading from a price source would otherwise move the mark at once and
- * liquidate positions on it. Measured against the mark on chain, so a
- * restart does not forget it.
+ * liquidate positions on it. If the next pass still sees the move, the mark
+ * walks toward it by at most BREAKER_PCT a pass until it arrives.
+ *
+ * It used to hold for three passes and then take the whole move at once. A
+ * real crash then skipped every liquidation price on the way down: positions
+ * were closed past zero equity, the keeper earned no fee and the backers took
+ * the rest. Stepping liquidates them on the way, while there is margin left.
+ * Measured against the mark on chain, so a restart does not forget it.
  */
 const BREAKER_PCT = 10;
-const BREAKER_CONFIRM = 3;
-const breakerTrips = new Map<string, number>();
+const breakerSeen = new Set<string>();
 function breaker(key: string, symbol: string, onChain: number, next: number): number {
   if (!(onChain > 0)) return next;
   const move = Math.abs(next / onChain - 1) * 100;
-  if (move <= BREAKER_PCT) { breakerTrips.delete(key); return next; }
-  const trips = (breakerTrips.get(key) ?? 0) + 1;
-  if (trips >= BREAKER_CONFIRM) {
-    breakerTrips.delete(key);
-    console.warn(`mark ${symbol}: ${move.toFixed(1)}% move confirmed over ${trips} passes, taken`);
-    return next;
+  if (move <= BREAKER_PCT) { breakerSeen.delete(key); return next; }
+  if (!breakerSeen.has(key)) {
+    breakerSeen.add(key);
+    console.warn(`mark ${symbol}: ${move.toFixed(1)}% move held for a pass`);
+    return onChain;
   }
-  breakerTrips.set(key, trips);
-  console.warn(`mark ${symbol}: ${move.toFixed(1)}% move held (${trips}/${BREAKER_CONFIRM})`);
-  return onChain;
+  const step = Math.round(onChain * (1 + (next > onChain ? 1 : -1) * BREAKER_PCT / 100));
+  console.warn(`mark ${symbol}: ${move.toFixed(1)}% move, stepped ${BREAKER_PCT}%`);
+  return step;
 }
 
 async function keeperPrice(observation: PublicKey, account: any, real?: number): Promise<number> {

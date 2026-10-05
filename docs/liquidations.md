@@ -36,6 +36,10 @@ liquidation that fails is retried after 30 seconds.
 
 Auto-deleveraging is tried on a slower pass, every few minutes.
 
+The keeper that pushes marks moves one at most 10% a push. A larger move is
+held for one push, then walked toward 10% at a time, so a crash crosses each
+position's liquidation price on the way down instead of jumping past it.
+
 ## When liquidation is insufficient
 
 A liquidation can complete at a price past zero equity, leaving the

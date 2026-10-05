@@ -31,8 +31,10 @@ once a day.
   test USDC. They are listed through the ordinary permissionless path, but
   on devnet their mark is the real token's price on mainnet (Jupiter), pushed
   every minute by the server's mark keeper, so they trade at the real price.
-  A move of more than 10% between pushes is held until three pushes in a row
-  confirm it, so one bad reading cannot move the mark.
+  A move of more than 10% between pushes is held for one push, so one bad
+  reading cannot move the mark. If the next push still sees it, the mark
+  walks toward it 10% a push, so positions on the way are liquidated while
+  they still have margin rather than after the whole move.
   Their devnet pools still supply the depth that sets leverage and budgets,
   and a server process swaps in them every ten minutes to keep them near the
   real price. Their charts start with the real token's history (Jupiter's
