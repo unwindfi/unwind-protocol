@@ -5,9 +5,9 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import "@fontsource/inter/500.css";
 import { ArrowUpRight, ChevronDown, Volume2, VolumeX } from "lucide-react";
 import { LightHero } from "@/components/LightHero";
+import { GlassMark } from "@/components/GlassMark";
+import { Wordmark } from "@/components/Wordmark";
 import { OUTLINE, Shell } from "@/site/Chrome";
-/// The serif of the "unwind" lockup.
-import "@/site/serif.css";
 import { PLAYER_NODE, Radio as RadioEngine } from "@/lib/radio";
 import type { Me } from "@/site/WaitlistJoined";
 
@@ -244,17 +244,12 @@ export default function Waitlist() {
         <div id={PLAYER_NODE} aria-hidden
           className="pointer-events-none absolute bottom-0 left-0 h-px w-px opacity-0" />
 
-        <a href="/" className="absolute left-6 top-6 z-20 flex items-center gap-1.5
+        <a href="/" className="absolute left-6 top-6 z-20 flex items-center gap-2.5
                                sm:left-10 sm:top-9">
-          {/* The glass logo and the serif name, as on the X profile. The mark is the render cropped to
-              its petals (logo-glass-mark.webp), so its box is all logo. A faint violet
-              glow behind the logo keeps its translucent petals from greying out on
-              the dark card; the serif sits a touch low to centre its x-height on it. */}
-          <img src="/waitlist/logo-glass-mark.webp" alt=""
-            className="h-9 w-9 drop-shadow-[0_0_10px_rgba(120,80,240,.55)]" />
-          <span className="font-serif-display translate-y-[2px] text-[32px] leading-none tracking-[-.02em]">
-            unwind
-          </span>
+          {/* The logo as the app's nav draws it: the violet glass mark and the
+              Geist wordmark. */}
+          <GlassMark className="h-9 w-9" />
+          <Wordmark height={24} />
         </a>
         <nav className="absolute right-6 top-6 z-20 flex items-center gap-4 sm:right-10 sm:top-9">
           {me && (
