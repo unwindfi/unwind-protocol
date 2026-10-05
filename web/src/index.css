@@ -265,6 +265,23 @@
   }
 
   /*
+   * The mark on hover: whirled like a wheel, fast off the mark and slowing to
+   * rest, two full turns so it stops where it started. Played once per hover
+   * by `GlassMark`, which removes the class when it ends rather than on
+   * pointer-leave, so a quick pass of the cursor still gets the whole spin.
+   */
+  @keyframes chakra {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(720deg); }
+  }
+  .chakra {
+    animation: chakra 1.4s cubic-bezier(0.12, 0.8, 0.22, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chakra { animation: none; }
+  }
+
+  /*
    * Safari zooms the page when a focused input's text is under 16px, and never
    * zooms back out -- it leaves the layout wider than the viewport for the rest
    * of the session. The desktop layout is deliberately 11.5-13px, so the floor
