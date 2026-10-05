@@ -77,9 +77,7 @@ pub fn create_observation(
     ctx: Context<CreateObservation>,
     params: ObservationParams,
 ) -> Result<()> {
-    require!(params.alpha_bps > 0 && (params.alpha_bps as u128) < BPS, PerpError::InvalidParameter);
-    require!(params.max_move_bps > 0, PerpError::InvalidParameter);
-    require!(params.unit_exp <= MAX_UNIT_EXP, PerpError::InvalidParameter);
+    check_observation_params(params.alpha_bps, params.max_move_bps, params.unit_exp)?;
 
     let source = &ctx.accounts.source;
     require_keys_eq!(*source.key, params.source, PerpError::WrongOracleFeed);
@@ -95,7 +93,15 @@ pub fn create_observation(
     );
     let (dec_x, dec_y) = match SourceKind::from_u8(params.source_kind)? {
         SourceKind::RaydiumClmm => {
-            check_clmm_pool(source.owner, &source.try_borrow_data()?)?;
+            let data = source.try_borrow_data()?;
+            check_clmm_pool(source.owner, &data)?;
+            let mint = |at: usize| Pubkey::new_from_array(data[at..at + 32].try_into().unwrap());
+            check_quote_side(
+                &mint(CLMM_MINT_0),
+                &mint(CLMM_MINT_1),
+                params.quote_is_token_0,
+                &ctx.accounts.pool.usdc_mint,
+            )?;
             (0, 0)
         }
         SourceKind::MeteoraDlmm => {
@@ -105,6 +111,12 @@ pub fn create_observation(
             // mint with convenient decimals and shifting the mark by powers
             // of ten.
             let pair = parse_dlmm_pair(source.owner, &source.try_borrow_data()?)?;
+            check_quote_side(
+                &pair.mint_x,
+                &pair.mint_y,
+                params.quote_is_token_0,
+                &ctx.accounts.pool.usdc_mint,
+            )?;
             require!(ctx.remaining_accounts.len() >= 2, PerpError::InvalidOracleAccount);
             (
                 mint_decimals(&ctx.remaining_accounts[0], &pair.mint_x)?,
@@ -140,6 +152,46 @@ pub fn create_observation(
     Ok(())
 }
 
+/// Where a Raydium pool account keeps its two mints (`token_mint_0`,
+/// `token_mint_1`), as `scripts/pools.ts` reads them.
+const CLMM_MINT_0: usize = 73;
+const CLMM_MINT_1: usize = 105;
+
+/// Stablecoins a tracked pool may be quoted in besides the one this pool
+/// settles in: mainnet USDC and USDT, mirroring `QUOTE_MINTS` in
+/// scripts/listing-policy.ts.
+pub const QUOTE_MINTS: [Pubkey; 2] = [
+    pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+    pubkey!("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
+];
+
+/// The side `quote_is_token_0` names must be a dollar. Every reading counts
+/// the quote token as a dollar at its own decimals, so a pool quoted in a
+/// token the lister minted would give the market whatever depth, confidence
+/// and leverage tier they liked, and a lister who flipped the flag would
+/// mark the market upside down.
+pub fn check_quote_side(
+    mint_0: &Pubkey,
+    mint_1: &Pubkey,
+    quote_is_token_0: bool,
+    settle_mint: &Pubkey,
+) -> Result<()> {
+    let quote = if quote_is_token_0 { mint_0 } else { mint_1 };
+    require!(
+        quote == settle_mint || QUOTE_MINTS.contains(quote),
+        PerpError::InvalidOracleAccount
+    );
+    Ok(())
+}
+
+/// The fold weight, clamp and unit a lister may give an observation.
+pub fn check_observation_params(alpha_bps: u16, max_move_bps: u16, unit_exp: u8) -> Result<()> {
+    require!(alpha_bps > 0 && alpha_bps <= MAX_ALPHA_BPS, PerpError::InvalidParameter);
+    require!(max_move_bps > 0 && max_move_bps <= MAX_MOVE_BPS, PerpError::InvalidParameter);
+    require!(unit_exp <= MAX_UNIT_EXP, PerpError::InvalidParameter);
+    Ok(())
+}
+
 /// Starts a mark seasoned, from the pool's own recorded average. See
 /// `create_observation`. Declining is not an error: a pool whose history is
 /// too short, or whose spot has moved off it, simply seasons the slow way.
@@ -170,6 +222,7 @@ fn seed_from_history(
     o.ewma_price = twap;
     o.last_spot = spot;
     o.depth_usd = clmm_depth_usd(source, &o.source, o.quote_is_token_0)?;
+    o.budget_depth_usd = o.depth_usd;
     // Exactly the bar `is_seasoned` sets, met by the pool's record rather
     // than by our own readings. The crank folds on from here as it would for
     // any market.
@@ -254,7 +307,10 @@ pub fn observe(ctx: Context<Observe>) -> Result<()> {
         return Ok(());
     }
     let before = o.ewma_price;
-    o.fold(spot, now)?;
+    if !o.fold(spot, now)? {
+        // Already read this second; the depth above still counts.
+        return Ok(());
+    }
 
     emit!(MarkObserved {
         market: o.market,
@@ -434,7 +490,8 @@ pub fn derive_market_budget(ctx: Context<DeriveBudget>) -> Result<()> {
         PriceSource::from_u8(ctx.accounts.market.price_source)? == PriceSource::Observed,
         PerpError::InvalidParameter
     );
-    let supported = ctx.accounts.observation.depth_usd;
+    // Depth that has held, not the last reading: see `budget_depth_usd`.
+    let supported = ctx.accounts.observation.budget_depth_usd;
     let market = &mut ctx.accounts.market;
     let before = market.loss_budget_usd;
     market.loss_budget_usd =
@@ -492,6 +549,75 @@ mod tests {
     }
 
     #[test]
+    fn observation_params_past_the_caps_are_refused() {
+        // What the site lists with: a 5% fold and a 1% clamp.
+        assert!(check_observation_params(500, 100, 0).is_ok());
+        assert!(check_observation_params(MAX_ALPHA_BPS, MAX_MOVE_BPS, MAX_UNIT_EXP).is_ok());
+        // A lister who could pick a 655% clamp, or a fold that takes the
+        // reading almost whole, would have a mark one crank can walk.
+        assert!(check_observation_params(500, MAX_MOVE_BPS + 1, 0).is_err());
+        assert!(check_observation_params(500, u16::MAX, 0).is_err());
+        assert!(check_observation_params(MAX_ALPHA_BPS + 1, 100, 0).is_err());
+        assert!(check_observation_params(9_999, 100, 0).is_err());
+        assert!(check_observation_params(0, 100, 0).is_err());
+        assert!(check_observation_params(500, 0, 0).is_err());
+    }
+
+    #[test]
+    fn one_thin_reading_cuts_a_budget_by_a_tenth_of_the_gap_at_most() {
+        // A $100k pool read honestly, then thinned for one crank (a swap into
+        // a thin range, or a DLMM bin array left out) to $1k.
+        let mut o = depth_state();
+        o.track_depth(100 * K, 1_000);
+        o.track_depth(K, 1_001);
+        assert_eq!(o.budget_depth_usd, 100 * K, "inside the interval: no cut at all");
+        o.track_depth(K, 1_000 + DEPTH_RISE_MIN_INTERVAL_SEC);
+        assert_eq!(o.budget_depth_usd, 90_100 * K / 1_000);
+        // A burst of thin readings in that interval counts once.
+        for _ in 0..30 {
+            o.track_depth(K, 1_000 + DEPTH_RISE_MIN_INTERVAL_SEC);
+        }
+        assert_eq!(o.budget_depth_usd, 90_100 * K / 1_000);
+        // The next honest reading puts it back.
+        o.track_depth(100 * K, 1_000 + DEPTH_RISE_MIN_INTERVAL_SEC + 1);
+        assert_eq!(o.budget_depth_usd, 100 * K);
+        // A pool that has really drained gets there: under 10% in 22 steps,
+        // about seven minutes.
+        let mut t = 2_000;
+        for _ in 0..22 {
+            t += DEPTH_RISE_MIN_INTERVAL_SEC;
+            o.track_depth(0, t);
+        }
+        assert!(o.budget_depth_usd < 10 * K, "{}", o.budget_depth_usd);
+    }
+
+    #[test]
+    fn a_tracked_pool_must_be_quoted_in_a_dollar_on_the_side_named() {
+        let usdc = QUOTE_MINTS[0];
+        let settle = Pubkey::new_unique();
+        let token = Pubkey::new_unique();
+        assert!(check_quote_side(&token, &usdc, false, &settle).is_ok());
+        assert!(check_quote_side(&usdc, &token, true, &settle).is_ok());
+        // The pool's own settlement mint counts, for test clusters.
+        assert!(check_quote_side(&token, &settle, false, &settle).is_ok());
+        // The flag pointed at the asset would mark the market upside down.
+        assert!(check_quote_side(&token, &usdc, true, &settle).is_err());
+        // A pool quoted in a token the lister minted prices nothing.
+        assert!(check_quote_side(&token, &Pubkey::new_unique(), false, &settle).is_err());
+    }
+
+    #[test]
+    fn the_mint_offsets_read_a_live_raydium_pool() {
+        // The mainnet SOL/USDC concentrated pool: wrapped SOL is token 0 and
+        // USDC token 1.
+        let data = include_bytes!("../fixtures/3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv.bin");
+        let mint = |at: usize| Pubkey::new_from_array(data[at..at + 32].try_into().unwrap());
+        assert_eq!(mint(CLMM_MINT_0), pubkey!("So11111111111111111111111111111111111111112"));
+        assert_eq!(mint(CLMM_MINT_1), QUOTE_MINTS[0]);
+        assert!(check_quote_side(&mint(CLMM_MINT_0), &mint(CLMM_MINT_1), false, &Pubkey::default()).is_ok());
+    }
+
+    #[test]
     fn a_derived_budget_cuts_to_depth_and_never_raises() {
         assert_eq!(depth_capped_budget(true, 40 * K, 100 * K).unwrap(), 40 * K);
         // Depth at or above the budget is not a cut, and is refused.
@@ -530,7 +656,8 @@ mod tests {
             sustained_depth_usd: 0,
             depth_rise_ts: 0,
             keeper_priced: false,
-            _reserved: [0; 11],
+            budget_depth_usd: 0,
+            _reserved: [0; 3],
         }
     }
 

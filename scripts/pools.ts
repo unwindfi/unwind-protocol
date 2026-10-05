@@ -80,8 +80,7 @@ const key = (d: Uint8Array, at: number) => b58encode(d.subarray(at, at + 32));
  * what was already lost, which is the mistake the first version made.
  *
  * Inverted pools (the asset is token 1) take the unit on the far side of the
- * inversion, where a small USD price is a large token-0 figure and has
- * precision to spare.
+ * inversion, and divide by the raw price with its fraction still on.
  */
 function toUsd(
   num: bigint, bits: bigint, dec0: number, dec1: number, quoteIsToken0: boolean, unitExp: number,
@@ -95,9 +94,14 @@ function toUsd(
     if (ui <= 0n) throw new Error("pool price is out of range");
     return ui;
   }
-  const ui = shift(num >> bits);
-  if (ui <= 0n) throw new Error("pool price is out of range");
-  return (PRICE_SCALE * PRICE_SCALE * unit) / ui;
+  // Divides by the raw price with its fraction kept, as amm.rs does:
+  // truncating it first lost a dear asset's price entirely.
+  const top = PRICE_SCALE * PRICE_SCALE * unit;
+  const [n, d] = dec0 >= dec1
+    ? [top << bits, num * 10n ** BigInt(dec0 - dec1)]
+    : [(top * 10n ** BigInt(dec1 - dec0)) << bits, num];
+  if (d <= 0n) throw new Error("pool price is out of range");
+  return n / d;
 }
 
 /// Rescales a raw token amount to six decimals.
@@ -213,10 +217,13 @@ export function clmmPrice(p: Clmm, quoteIsToken0: boolean, unitExp = 0): bigint 
 }
 
 /// USD to move the pool 1%, `PRICE_SCALE` units. Mirrors `clmm_depth_usd`:
-/// `Δy = L·Δ√P`, with `Δ√P` taken as half the move.
+/// `Δy = L·Δ√P` with the stablecoin as token 1, `Δx = L·Δ(1/√P)` with it as
+/// token 0, the root's change taken as half the move.
 export function clmmDepth(p: Clmm, quoteIsToken0: boolean): bigint {
   if (p.liquidity === 0n || p.sqrtPriceX64 === 0n) return 0n;
-  const scaled = (p.liquidity * p.sqrtPriceX64) >> 64n;
+  const scaled = quoteIsToken0
+    ? (p.liquidity << 64n) / p.sqrtPriceX64
+    : (p.liquidity * p.sqrtPriceX64) >> 64n;
   const raw = (scaled * (DEPTH_MOVE_BPS / 2n)) / BPS;
   return scaleTo6(raw, quoteIsToken0 ? p.dec0 : p.dec1);
 }

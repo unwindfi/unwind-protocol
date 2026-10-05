@@ -32,12 +32,9 @@ pub struct OpenPlan {
 
 /// Every reason an open can be refused, with nothing written.
 ///
-/// Split out of `book_open` so that settlement can ask first. A settlement
-/// that fails holds its whole batch sealed, so an open that no longer fits --
-/// the session closed and leverage tightened, the side's open interest filled
-/// up earlier in the same batch, the pool reached its utilization cap -- has
-/// to go home unfilled instead, and it can only do that if it finds out before
-/// `book_open` has started moving balances.
+/// Asked when an order enters a batch (`batch::admit_open`), where the trader
+/// can be told, and by `book_open`. Settlement does not ask it again: see
+/// `book_cleared_open`.
 ///
 /// The market's loss budget is deliberately not one of the reasons. It was
 /// applied when the batch cleared, to the pool's share of it, which is the
@@ -50,6 +47,22 @@ pub fn check_open(
     net_collateral: u64,
     size_usd: u64,
     fill: u64,
+) -> Result<OpenPlan> {
+    plan_open(pool, market, position, is_long, net_collateral, size_usd, fill, true)
+}
+
+/// What an open does, with the leverage and open interest caps applied only
+/// when `limits` is set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_open(
+    pool: &Pool,
+    market: &Market,
+    position: &Position,
+    is_long: bool,
+    net_collateral: u64,
+    size_usd: u64,
+    fill: u64,
+    limits: bool,
 ) -> Result<OpenPlan> {
     let cumulative = market.cumulative_funding(is_long);
 
@@ -103,7 +116,7 @@ pub fn check_open(
         .ok_or(PerpError::MathOverflow)?
         / (check_collateral as u128);
     require!(
-        leverage_bps <= market.effective_max_leverage_bps()? as u128,
+        !limits || leverage_bps <= market.effective_max_leverage_bps()? as u128,
         PerpError::LeverageTooHigh
     );
 
@@ -116,7 +129,7 @@ pub fn check_open(
     }
     .ok_or(PerpError::MathOverflow)?;
     require!(
-        side_oi <= market.effective_oi_cap_usd(is_long)?,
+        !limits || side_oi <= market.effective_oi_cap_usd(is_long)?,
         PerpError::OpenInterestCapExceeded
     );
 
@@ -157,6 +170,57 @@ pub fn book_open(
     fill: u64,
     now: i64,
 ) -> Result<u64> {
+    let plan = check_open(pool, market, position, is_long, net_collateral, size_usd, fill)?;
+    book_planned(pool, market, position, plan, owner, position_bump, is_long, net_collateral,
+        open_fee, market_key, size_usd, fill, now)
+}
+
+/// Books an open a sealed batch filled, without asking the leverage and open
+/// interest caps again.
+///
+/// Both were asked when the order entered the batch (`batch::admit_open`).
+/// Asking at settlement made the answer depend on which orders a caller
+/// chose to settle first and on funding accrued since the clearing, and an
+/// open refused there went home while the order it crossed still booked. A
+/// cross between two traders is net zero for the pool only while both legs
+/// book, so a refusal the caller could arrange handed the surviving leg a
+/// position at the band's edge with the pool alone on the other side.
+#[allow(clippy::too_many_arguments)]
+pub fn book_cleared_open(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &mut Position,
+    owner: Pubkey,
+    position_bump: u8,
+    is_long: bool,
+    net_collateral: u64,
+    open_fee: u64,
+    market_key: Pubkey,
+    size_usd: u64,
+    fill: u64,
+    now: i64,
+) -> Result<u64> {
+    let plan = plan_open(pool, market, position, is_long, net_collateral, size_usd, fill, false)?;
+    book_planned(pool, market, position, plan, owner, position_bump, is_long, net_collateral,
+        open_fee, market_key, size_usd, fill, now)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn book_planned(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &mut Position,
+    plan: OpenPlan,
+    owner: Pubkey,
+    position_bump: u8,
+    is_long: bool,
+    net_collateral: u64,
+    open_fee: u64,
+    market_key: Pubkey,
+    size_usd: u64,
+    fill: u64,
+    now: i64,
+) -> Result<u64> {
     let OpenPlan {
         new_size,
         new_collateral,
@@ -164,7 +228,7 @@ pub fn book_open(
         new_entry_funding,
         side_oi,
         extra_lock,
-    } = check_open(pool, market, position, is_long, net_collateral, size_usd, fill)?;
+    } = plan;
 
     // Two ceilings: the pool's utilization cap, checked above, and this
     // market's budget, which was applied when the batch cleared. An open
@@ -928,14 +992,15 @@ pub(crate) mod tests {
 
         book_open(&mut p, &mut m, &mut pos, owner, 1, true,
                   1_000_000_000, 0, key, 5_000_000_000, PX, 0).unwrap();
-        // The same size again at twice the price: the average lands halfway.
+        // The same notional again at twice the price buys half the units:
+        // 75 units for $10,000 is an entry of $133.33, not the $150 halfway.
         book_open(&mut p, &mut m, &mut pos, owner, 1, true,
                   1_000_000_000, 0, key, 5_000_000_000, PX * 2, 1).unwrap();
 
         assert_eq!(pos.size_usd, 10_000_000_000);
-        assert_eq!(pos.entry_price, PX + PX / 2);
+        assert_eq!(pos.entry_price, PX * 4 / 3);
         assert_eq!(pos.collateral_usd, 2_000_000_000);
-        assert_eq!(m.long_avg_entry_price, PX + PX / 2);
+        assert_eq!(m.long_avg_entry_price, PX * 4 / 3);
     }
 
     #[test]
@@ -1720,5 +1785,58 @@ pub(crate) mod tests {
         assert_eq!(c.payout_usd, 1_000_000_000 - 5_000_000);
         assert_eq!(lines(&p), before + 5_000_000);
         assert_eq!((p.locked_usd, p.trader_collateral_usd, m.net_loss_usd), (0, 0, -5_000_000));
+    }
+
+    /// A cross between two traders costs the pool nothing only while both legs
+    /// book. A short adding at the leverage cap, whose funding owed tips the
+    /// add over it once the batch has sealed, used to go home unfilled while
+    /// the taker it crossed booked a position at the band's edge with the pool
+    /// as the only counterparty. An open that cleared books.
+    #[test]
+    fn a_cleared_open_is_not_dropped_for_leverage_at_settlement() {
+        let (mut p, mut m, mut pos) = (pool(), market(), position());
+        book_open(&mut p, &mut m, &mut pos, Pubkey::default(), 1, false,
+                  1_000_000_000, 0, Pubkey::default(), 10_000_000_000, PX, 0).unwrap();
+        // Shorts now owe a tenth of a percent: the position sits past 10x.
+        m.cumulative_short_funding += FUNDING_SCALE / 1_000;
+        let order = BatchOrder {
+            is_maker: 1,
+            ..batch_order(Pubkey::new_unique(), false, 1_000_000_000, 100_000_000,
+                          1_000_000_000, false)
+        };
+        let (filled, used, fee) = open_fill(&p, &m, &pos, &order, PX, 0).unwrap();
+        assert_eq!(filled, 1_000_000_000, "the maker leg books in full");
+        assert_eq!((used, fee), (100_000_000, 0));
+    }
+
+    #[test]
+    fn a_cleared_open_is_not_dropped_for_open_interest_at_settlement() {
+        // Other opens in the same batch settled first and took the side's cap.
+        let (p, mut m, pos) = (pool(), market(), position());
+        m.max_oi_short_usd = 500_000_000;
+        let order = batch_order(Pubkey::new_unique(), false, 1_000_000_000, 100_000_000,
+                                1_000_000_000, false);
+        let (filled, _, _) = open_fill(&p, &m, &pos, &order, PX, 0).unwrap();
+        assert_eq!(filled, 1_000_000_000);
+    }
+
+    /// Settlement accrues funding between `open_fill` and booking. An add at
+    /// the cap passed the first and failed the second, and the revert held
+    /// the batch sealed until someone ran the funding crank.
+    #[test]
+    fn funding_accrued_after_the_fill_is_found_does_not_revert_the_booking() {
+        let (mut p, mut m, mut pos) = (pool(), market(), position());
+        book_open(&mut p, &mut m, &mut pos, Pubkey::default(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 10_000_000_000, PX, 0).unwrap();
+        let order = batch_order(Pubkey::new_unique(), true, 1_000_000_000, 100_000_000,
+                                1_000_000_000, false);
+        let (filled, used, fee) = open_fill(&p, &m, &pos, &order, PX, 0).unwrap();
+        assert_eq!(filled, 1_000_000_000);
+        m.cumulative_long_funding += FUNDING_SCALE / 1_000;
+        // The capped booking would now refuse it; settlement's does not.
+        assert!(check_open(&p, &m, &pos, true, used - fee, filled, PX).is_err());
+        book_cleared_open(&mut p, &mut m, &mut pos, order.owner, 1, true, used - fee, fee,
+                          Pubkey::default(), filled, PX, 1).unwrap();
+        assert_eq!(pos.size_usd, 11_000_000_000);
     }
 }

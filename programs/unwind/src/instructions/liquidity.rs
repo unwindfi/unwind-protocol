@@ -1,4 +1,4 @@
-use crate::aum::pool_aum_usd;
+use crate::aum::{pool_aum_usd, Unpriced};
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::batch::open_trader;
@@ -87,7 +87,7 @@ pub fn add_liquidity<'info>(
     require!(amount_usd > 0, PerpError::ZeroAmount);
     require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
 
-    let aum_before = pool_aum_usd(&ctx.accounts.pool, ctx.remaining_accounts)?;
+    let aum_before = pool_aum_usd(&ctx.accounts.pool, ctx.remaining_accounts, Unpriced::Refuse)?;
     let lp_supply = ctx.accounts.lp_mint.supply;
 
     let fee = bps_of(amount_usd, ctx.accounts.pool.add_liquidity_fee_bps)?;
@@ -166,7 +166,10 @@ pub fn remove_liquidity<'info>(
     require!(lp_amount > 0, PerpError::ZeroAmount);
     require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
 
-    let aum = pool_aum_usd(&ctx.accounts.pool, ctx.remaining_accounts)?;
+    // A market whose price cannot be read is counted at the most it could
+    // cost the LPs rather than refusing: one stalled feed or emptied pool
+    // must not lock every LP's capital in the pool.
+    let aum = pool_aum_usd(&ctx.accounts.pool, ctx.remaining_accounts, Unpriced::AtWorst)?;
     let lp_supply = ctx.accounts.lp_mint.supply;
     require!(lp_supply > 0 && aum > 0, PerpError::InsufficientLiquidity);
 

@@ -15,6 +15,9 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Test clusters: lets `initialize_pool` trust a stand-in oracle (mock-pyth).
+# Without it a pool only accepts Pyth's receiver.
+devnet = []
 
 [dependencies]
 # Required by Anchor's zero-copy accounts. `min_const_generics` is what allows

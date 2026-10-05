@@ -94,24 +94,41 @@ pub fn clmm_depth_usd(
         return Ok(0);
     }
 
-    // The quote side is whichever token is not the asset. When the stablecoin
-    // is token 0 the roles swap and the cost of the move is `Δx`, which is the
-    // same expression against `1/√P`, so the reading is taken in token-0
-    // terms and converted, rather than deriving a second formula.
     let quote_decimals = if quote_is_token_0 { dec_0 } else { dec_1 };
-
-    // `(L · √P) >> 64` before scaling: the product is the large term and the
-    // shift is what brings it back into range for the basis-point multiply.
-    let scaled = liquidity
-        .checked_mul(sqrt_price_x64)
-        .ok_or(PerpError::MathOverflow)?
-        >> 64;
-    let raw = scaled
-        .checked_mul(DEPTH_MOVE_BPS / 2)
-        .ok_or(PerpError::MathOverflow)?
-        / BPS;
+    let raw = clmm_depth_raw(liquidity, sqrt_price_x64, quote_is_token_0)?;
     let depth = to_usd_scale(raw, quote_decimals)?;
     u64::try_from(depth).map_err(|_| PerpError::MathOverflow.into())
+}
+
+/// Raw quote-token units it takes to move a concentrated pool
+/// `DEPTH_MOVE_BPS`, before decimals.
+///
+/// `√P` is token 1 per token 0. With the stablecoin as token 1 the quote spent
+/// is `Δy = L · Δ√P`; with it as token 0 the quote is `x` and the cost is
+/// `Δx = L · Δ(1/√P)`, which is `L / √P` times the same half-move. Reading
+/// `L · √P` for both measured the second case in units of the asset, and a
+/// thin pool with the stablecoin first read as deep as the raw price ratio:
+/// about 26,000 times over for a Bonk-like token.
+pub(crate) fn clmm_depth_raw(
+    liquidity: u128,
+    sqrt_price_x64: u128,
+    quote_is_token_0: bool,
+) -> Result<u128> {
+    let amount = if quote_is_token_0 {
+        // `(L << 64) / √P`, with the shift held in 256 bits.
+        crate::math::mul_div_u128(liquidity, 1u128 << 64, sqrt_price_x64)?
+    } else {
+        // `(L · √P) >> 64`: the product is the large term and the shift is
+        // what brings it back into range for the basis-point multiply.
+        liquidity
+            .checked_mul(sqrt_price_x64)
+            .ok_or(PerpError::MathOverflow)?
+            >> 64
+    };
+    Ok(amount
+        .checked_mul(DEPTH_MOVE_BPS / 2)
+        .ok_or(PerpError::MathOverflow)?
+        / BPS)
 }
 
 /// Checks an account is a Raydium pool before anything is read out of it.
@@ -246,10 +263,29 @@ fn to_usd_price(
         require!(ui > 0, PerpError::InvalidOraclePrice);
         ui
     } else {
-        // The pool quotes the stablecoin per asset the wrong way round.
-        let ui = apply_decimals(num >> bits, dec_0, dec_1)?;
-        require!(ui > 0, PerpError::InvalidOraclePrice);
-        (PRICE_SCALE * PRICE_SCALE * unit) / ui
+        // The pool quotes the stablecoin per asset the wrong way round. The
+        // inversion divides by the raw price with its fraction still on:
+        // truncating it first left a dear asset's ratio a few digits long
+        // (1/600 of a raw unit read as 0.0016), 4% out at $60,000 and zero,
+        // so no price at all, at a hundred times that.
+        require!(bits < 128, PerpError::MathOverflow);
+        let top = PRICE_SCALE
+            .checked_mul(PRICE_SCALE)
+            .and_then(|v| v.checked_mul(unit))
+            .ok_or(PerpError::MathOverflow)?;
+        let (top, bottom) = if dec_0 >= dec_1 {
+            let shift = 10u128
+                .checked_pow((dec_0 - dec_1) as u32)
+                .ok_or(PerpError::MathOverflow)?;
+            (top, num.checked_mul(shift).ok_or(PerpError::MathOverflow)?)
+        } else {
+            let shift = 10u128
+                .checked_pow((dec_1 - dec_0) as u32)
+                .ok_or(PerpError::MathOverflow)?;
+            (top.checked_mul(shift).ok_or(PerpError::MathOverflow)?, num)
+        };
+        require!(bottom > 0, PerpError::InvalidOraclePrice);
+        crate::math::mul_div_u128(top, 1u128 << bits, bottom)?
     };
     require!(price > 0, PerpError::InvalidOraclePrice);
     u64::try_from(price).map_err(|_| PerpError::MathOverflow.into())
@@ -741,6 +777,18 @@ mod tests {
     }
 
     #[test]
+    fn a_pool_with_the_stablecoin_first_reads_the_same_depth() {
+        // The SOL/USDC pool as it would sit with USDC as token 0: same
+        // liquidity, the root inverted, the decimals swapped.
+        let inverted = (u128::MAX / SOL_USDC_SQRT_X64_LIVE) + 1;
+        let usual = to_usd_scale(
+            clmm_depth_raw(SOL_USDC_LIQUIDITY, SOL_USDC_SQRT_X64_LIVE, false).unwrap(), 6).unwrap();
+        let flipped = to_usd_scale(
+            clmm_depth_raw(SOL_USDC_LIQUIDITY, inverted, true).unwrap(), 6).unwrap();
+        assert!(usual.abs_diff(flipped) * 1_000 <= usual, "{usual} against {flipped}");
+    }
+
+    #[test]
     fn a_thinner_pool_reports_proportionally_less_depth() {
         let deep = (SOL_USDC_LIQUIDITY * SOL_USDC_SQRT_X64_LIVE) >> 64;
         let thin = ((SOL_USDC_LIQUIDITY / 100) * SOL_USDC_SQRT_X64_LIVE) >> 64;
@@ -782,10 +830,25 @@ mod tests {
         // dropped, which is the reason it goes in first.
         assert_eq!(px(false, 3), 108_726_080_000);
         assert_eq!(px(false, 6), 108_726_080_573_000);
-        // Inverted, the unit multiplies the far side of the division.
+        // Inverted, the unit multiplies the far side of the division, which
+        // divides by the raw price with its fraction kept: 1/108.72608057.
         assert_eq!(px(true, 0), 9_197);
-        assert_eq!(px(true, 3), 9_197_432);
-        assert_eq!(px(true, 6), 9_197_432_076);
+        assert_eq!(px(true, 3), 9_197_425);
+        assert_eq!(px(true, 6), 9_197_425_260);
+    }
+
+    #[test]
+    fn an_inverted_pool_for_a_dear_asset_keeps_its_precision() {
+        // USDC (6dp) as token 0 against an 8dp asset at $60,000: 1/600 of a
+        // raw asset unit per raw USDC unit. Truncating that ratio to six
+        // decimals before inverting read $62,500, and an asset a hundred
+        // times dearer did not read at all.
+        let num = (PRICE_SCALE << 64) / 600;
+        let px = to_usd_price(num, 64, 6, 8, true, 0).unwrap();
+        assert!(px.abs_diff(60_000_000_000) <= 1_000, "got {px}");
+        let num = (PRICE_SCALE << 64) / 60_000;
+        let px = to_usd_price(num, 64, 6, 8, true, 0).unwrap();
+        assert!(px.abs_diff(6_000_000_000_000) <= 100_000, "got {px}");
     }
 
     #[test]
@@ -912,8 +975,10 @@ mod tests {
         let (pair, array) = live();
         let arrays = [array];
         let px = |u| dlmm_spot_price(&pair, &arrays, BONK_DEC, USDC_DEC, true, u);
-        assert_eq!(px(0).unwrap(), 333_333_333_333);
-        assert_eq!(px(3).unwrap(), 333_333_333_333_333);
+        // 1 / 0.000003809785, from the bin price itself rather than from its
+        // first digit (which read 1/3, or 333,333,333,333).
+        assert_eq!(px(0).unwrap(), 262_481_986_287);
+        assert_eq!(px(3).unwrap(), 262_481_986_287_625);
         // Past u64: an error, where the mirror's bigint keeps going.
         assert!(px(9).is_err());
     }

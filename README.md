@@ -199,7 +199,7 @@ Inside `programs/unwind/src/`:
 
 ```bash
 npm install && npm --prefix web install
-anchor build
+anchor build -- --features devnet          # devnet: trust mock-pyth
 ./scripts/localnet.sh                       # validator with both programs
 npx ts-node scripts/bootstrap-localnet.ts   # pool, markets, liquidity, demo account
 npm --prefix web run build
@@ -208,6 +208,10 @@ npx ts-node scripts/server.ts               # http://localhost:3000
 
 The server runs the price poller, the batch keeper, the observation crank, the
 liquidation keeper and the funding crank, and serves the API and the app.
+
+Only the program's upgrade authority can create a pool. A build without the
+`devnet` feature creates pools that trust Pyth's receiver and nothing else, so
+localnet and devnet builds need `--features devnet` for `mock-pyth`.
 Bootstrap and the server need network access: they refuse to start without a
 live price for every market.
 

@@ -12,6 +12,35 @@ pub fn mul_div_u64(a: u64, b: u128, denom: u128) -> Result<u64> {
     u64::try_from(r).map_err(|_| PerpError::MathOverflow.into())
 }
 
+/// `a * b / d`, floored, with the product held in 256 bits so that an
+/// intermediate past u128 is not an error. Errors only when the result itself
+/// does not fit, or `d` is zero.
+pub fn mul_div_u128(a: u128, b: u128, d: u128) -> Result<u128> {
+    require!(d != 0, PerpError::MathOverflow);
+    if let Some(p) = a.checked_mul(b) {
+        return Ok(p / d);
+    }
+    const M: u128 = u64::MAX as u128;
+    let (a1, a0, b1, b0) = (a >> 64, a & M, b >> 64, b & M);
+    let (p00, p01, p10, p11) = (a0 * b0, a0 * b1, a1 * b0, a1 * b1);
+    let mid = (p00 >> 64) + (p01 & M) + (p10 & M);
+    let lo = (p00 & M) | (mid << 64);
+    let hi = p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64);
+    require!(hi < d, PerpError::MathOverflow);
+    // Long division, a bit at a time: `rem` stays below `d` throughout.
+    let (mut rem, mut q) = (hi, 0u128);
+    for i in (0..128).rev() {
+        let carry = rem >> 127;
+        rem = (rem << 1) | ((lo >> i) & 1);
+        q <<= 1;
+        if carry == 1 || rem >= d {
+            rem = rem.wrapping_sub(d);
+            q |= 1;
+        }
+    }
+    Ok(q)
+}
+
 pub fn bps_of(amount: u64, bps: u16) -> Result<u64> {
     mul_div_u64(amount, bps as u128, BPS)
 }
@@ -88,25 +117,38 @@ pub fn position_equity_usd(
     u64::try_from(net).map_err(|_| PerpError::MathOverflow.into())
 }
 
-/// Size-weighted average entry price when adding `add_size` at `add_price` to an
-/// existing `size` at `avg_price`.
+/// Entry price of `size` at `avg_price` with `add_size` added at `add_price`.
+///
+/// Sizes are USD notional at entry and PnL is `size * (exit - entry) / entry`,
+/// so a lot of `s` at `p` holds `s / p` of the asset. The entry that keeps the
+/// PnL of both lots exact is their harmonic mean weighted by notional,
+/// `(size + add) / (size / avg + add / price)`. The arithmetic mean this used
+/// to take is never below it, so every add at a different price paid a short
+/// more than its lots had made and a long less.
 pub fn blend_entry_price(size: u64, avg_price: u64, add_size: u64, add_price: u64) -> Result<u64> {
-    let total = (size as u128)
-        .checked_add(add_size as u128)
-        .ok_or(PerpError::MathOverflow)?;
-    if total == 0 {
-        return Ok(0);
+    if add_size == 0 {
+        return Ok(if size == 0 { 0 } else { avg_price });
     }
-    let weighted = (size as u128)
-        .checked_mul(avg_price as u128)
+    if size == 0 || avg_price == 0 {
+        return Ok(add_price);
+    }
+    if add_price == 0 {
+        return Ok(avg_price);
+    }
+    let total = size as u128 + add_size as u128;
+    // size * price + add * avg, each under 2^128 and so is their sum for any
+    // u64 size against a u64 price below 2^63.
+    let denom = (size as u128)
+        .checked_mul(add_price as u128)
         .ok_or(PerpError::MathOverflow)?
         .checked_add(
             (add_size as u128)
-                .checked_mul(add_price as u128)
+                .checked_mul(avg_price as u128)
                 .ok_or(PerpError::MathOverflow)?,
         )
         .ok_or(PerpError::MathOverflow)?;
-    u64::try_from(weighted / total).map_err(|_| PerpError::MathOverflow.into())
+    let entry = mul_div_u128(total, avg_price as u128 * add_price as u128, denom)?;
+    u64::try_from(entry).map_err(|_| PerpError::MathOverflow.into())
 }
 
 #[cfg(test)]
@@ -150,9 +192,33 @@ mod tests {
 
     #[test]
     fn blended_entry_is_size_weighted() {
-        // $1000 @ $100 + $1000 @ $200 -> $150
+        // $1000 @ $100 is 10 units and $1000 @ $200 is 5: $2000 for 15 units
+        // is $133.33, not the $150 an average of the two prices gives.
         let p = blend_entry_price(1_000_000_000, 100 * P, 1_000_000_000, 200 * P).unwrap();
-        assert_eq!(p, 150 * P);
+        assert_eq!(p, 133_333_333);
+    }
+
+    /// PnL is notional over entry, so a lot of `s` at `p` holds `s/p` units,
+    /// and the blended entry has to keep the PnL of the two lots exactly. The
+    /// arithmetic mean did not: a short of $10k at 100 and $10k more at 120,
+    /// closed at 120, was paid $181.82 by the pool on a $2,000 loss.
+    #[test]
+    fn blended_entry_keeps_the_pnl_of_each_lot() {
+        let entry = blend_entry_price(10_000_000_000, 100 * P, 10_000_000_000, 120 * P).unwrap();
+        let pnl = position_pnl_usd(false, 20_000_000_000, entry, 120 * P).unwrap();
+        let lots = position_pnl_usd(false, 10_000_000_000, 100 * P, 120 * P).unwrap();
+        // Equal to the cent. The entry is floored, which a short feels as a
+        // few millionths of a dollar less, never more.
+        assert!(pnl <= lots && lots - pnl < 10_000, "{pnl} against {lots}");
+    }
+
+    #[test]
+    fn mul_div_u128_is_exact_past_u128() {
+        assert_eq!(mul_div_u128(u128::MAX, u128::MAX, u128::MAX).unwrap(), u128::MAX);
+        assert_eq!(mul_div_u128(1 << 100, 1 << 100, 1 << 90).unwrap(), 1 << 110);
+        assert_eq!(mul_div_u128(u128::MAX, 3, 4).unwrap(), u128::MAX / 4 * 3 + 2);
+        assert!(mul_div_u128(u128::MAX, 2, 1).is_err());
+        assert!(mul_div_u128(1, 1, 0).is_err());
     }
 
     #[test]

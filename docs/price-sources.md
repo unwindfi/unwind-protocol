@@ -43,7 +43,9 @@ or USDT and observed over time. Two kinds of pool can be read:
 
 Which kind a market reads is recorded when it is opened, and the pool is
 checked on every reading, so a market cannot be repointed at a pool someone
-has just created.
+has just created. The quote side is checked too: it must be USDC, USDT or the
+token the venue settles in, so a pool quoted in a token its lister minted is
+refused at listing.
 
 Depth also sets the confidence a pool's mark is quoted at. A pool that can
 absorb 10,000 USDC is quoted at a band of 50 basis points, and one a tenth as
@@ -67,7 +69,11 @@ stale, and a stale mark halts its market rather than trading on an old price.
 
 Without a keeper, the permissionless `observe` crank still folds pool readings
 into a moving average with a bounded move per update, and such a mark trades
-only once thirty readings span fifteen minutes. Once the keeper has priced a
+only once thirty readings span fifteen minutes. A reading counts for at most
+10 percent of the mark and moves it at most 1 percent, and only the first
+reading in any second moves it, so every crank in one transaction moves the
+mark once. Doubling a mark takes about seventy readings, seventy seconds
+apart at least. Once the keeper has priced a
 market, `observe` updates its depth and leaves its price alone.
 
 ## Units

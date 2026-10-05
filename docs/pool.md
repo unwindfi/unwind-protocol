@@ -9,6 +9,14 @@ quote when there is not. It never trades with a maker. It is a backstop in the
 auction rather than the mechanism that prices it, and a flow in which makers
 fill every taker allocates none of that fill to the pool.
 
+The pool never sells below its ask or buys above its bid. When makers leave
+takers standing at a price inside the pool's quote, the flow clears at the
+pool's quote instead if that crosses more volume with the pool counted in.
+With 10,000 of takers buying and one maker asking 10 at the mark, the flow
+clears at the pool's ask: the maker sells its 10 there and the pool sells
+up to its cap. Without this, a small maker quoting inside the spread every
+batch kept the pool out of the flow.
+
 ## Technical details
 
 The pool's participation in any single window is capped at five percent of
@@ -46,6 +54,19 @@ Two cases refuse a deposit or change what it buys:
   trader's later loss) belongs to
   nobody. It is moved to the insurance fund before the next deposit lands,
   so the next depositor gets exactly what they paid for.
+
+Open positions count at what can actually change hands. Traders down count
+for no more than the collateral they posted, less what a close would hand back
+to backers drawn on earlier. Traders up count for no more than their market's
+remaining budget, less the backing that pays them first. Example: a $50,000
+short with $5,000 posted, after the mark doubles, adds $5,000 to the pool's
+value, not $50,000.
+
+If a market with open positions cannot be priced (a stale feed, or a pool
+drained until its quote halts), a deposit waits. A withdrawal does not: it
+counts that market as if its winners took all its remaining budget past its
+backing, so the LPs who stay are never short and one market cannot lock the
+pool.
 
 Withdrawals pay a share of the pool's value, never more. Nothing is reserved
 for open positions: a winner is paid only out of its market's remaining

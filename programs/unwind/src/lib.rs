@@ -61,8 +61,6 @@ pub mod unwind {
         instructions::admin::set_session(ctx, session)
     }
 
-    /// Funds (or defunds) a market's loss budget. Zero stops it opening
-    /// positions without unwinding the ones it has.
     /// Begins observing an AMM pool as the mark for a market with no Pyth
     /// feed. Permissionless: it starts a clock and nothing else.
     pub fn create_observation(

@@ -61,7 +61,8 @@ SOL counts at less than its value because a first loss cushion held in SOL
 shrinks in exactly the crash it exists to absorb. When the price of what is
 held falls, the market's budget falls with it. It does not rise again by
 itself when the price recovers; raising a budget is something somebody posts
-money to do.
+money to do. A deposit raises it by what that deposit counts for, never past
+the backing behind the market: $1,000 of SOL at 80 percent raises it by $800.
 
 A backing share is a claim on the whole pot behind a market, and it is paid
 back out in the same mix of tokens the pot holds.

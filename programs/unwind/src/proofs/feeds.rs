@@ -8,7 +8,7 @@
 use crate::auction::MAX_BATCH_ORDERS;
 use crate::constants::*;
 use crate::oracle::{rescale, OraclePrice};
-use crate::state::{Batch, BatchOrder, Observation, BATCH_INTERVAL_SEC};
+use crate::state::{Batch, BatchOrder, Observation, BATCH_INTERVAL_SEC, MAX_ALPHA_BPS, MAX_MOVE_BPS};
 use anchor_lang::prelude::Pubkey;
 use bytemuck::Zeroable;
 
@@ -251,7 +251,8 @@ fn any_observation() -> Observation {
         sustained_depth_usd: kani::any(),
         depth_rise_ts: kani::any(),
         keeper_priced: false,
-        _reserved: [0; 11],
+        budget_depth_usd: kani::any(),
+        _reserved: [0; 3],
     }
 }
 
@@ -267,12 +268,12 @@ fn tiny() -> u64 {
     kani::any::<u8>() as u64
 }
 
-/// Parameters as `create_observation` accepts them: 0 < alpha < 100%, and a
-/// nonzero clamp.
+/// Parameters as `create_observation` accepts them: 0 < alpha <=
+/// `MAX_ALPHA_BPS`, and 0 < clamp <= `MAX_MOVE_BPS`.
 fn assume_valid_params(o: &Observation) {
     // (A u16 alpha or clamp may be anything; these are the accepted ones.)
-    kani::assume(o.alpha_bps > 0 && (o.alpha_bps as u128) < BPS);
-    kani::assume(o.max_move_bps > 0);
+    kani::assume(o.alpha_bps > 0 && o.alpha_bps <= MAX_ALPHA_BPS);
+    kani::assume(o.max_move_bps > 0 && o.max_move_bps <= MAX_MOVE_BPS);
 }
 
 /// The anti-manipulation core. Once seeded, one reading moves the mark by at
@@ -309,7 +310,8 @@ fn the_mark_moves_at_most_its_clamp_and_toward_the_reading() {
 }
 
 /// Seasoning cannot be faked. A reading counts exactly once, and a rejected
-/// reading (a zero spot) changes nothing, so it counts not at all. The first
+/// reading (a zero spot, or a second one in the same second) changes
+/// nothing, so it counts not at all. The first
 /// reading fixes `first_update_ts` and no later one moves it, so the window
 /// `is_seasoned` measures always starts at the first accepted reading.
 #[kani::proof]
@@ -333,7 +335,13 @@ fn a_reading_counts_once_and_a_rejected_one_not_at_all() {
             let after = (o.ewma_price, o.last_spot, o.last_update_ts, o.first_update_ts, o.observations);
             assert!(after == before);
         }
-        Ok(()) => {
+        Ok(false) => {
+            // A second reading in the same second: taken, and nothing moves.
+            assert!(spot > 0 && before.4 > 0 && now <= before.2);
+            let after = (o.ewma_price, o.last_spot, o.last_update_ts, o.first_update_ts, o.observations);
+            assert!(after == before);
+        }
+        Ok(true) => {
             assert!(spot > 0);
             assert!(o.observations == before.4 + 1);
             assert!(o.last_update_ts == now && o.last_spot == spot);
@@ -378,7 +386,8 @@ fn sustained_depth_falls_at_once_and_rises_slowly() {
         assert!(step <= (gap * DEPTH_RISE_BPS as u128 / BPS).max(1));
         assert!(o.depth_rise_ts == now);
     } else {
-        assert!(o.depth_rise_ts == since);
+        // Unchanged here; the clock moves only if budget depth stepped down.
+        assert!(o.depth_rise_ts == since || o.depth_rise_ts == now);
     }
 }
 

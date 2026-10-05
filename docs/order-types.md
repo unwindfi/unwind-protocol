@@ -32,7 +32,9 @@ of the batch's two auctions it clears in. See [Clearing](auction.md).
 
 A **taker** wants a fill in the next batch. Market orders, closes and every
 order a trigger fires are takers. A taker only trades with makers, or with the
-[pool](pool.md) when no maker is there.
+[pool](pool.md) when no maker is there. A taker that nothing fills lapses
+with its batch and its collateral comes back at settlement; a fired trigger
+is spent either way.
 
 A **maker** rests as liquidity at a price it names. It only trades with
 takers, never with the pool and never with another maker. A maker order lasts
@@ -60,8 +62,9 @@ one batch either way.
 
 A position is long or short, and an open order must be on the side the
 position already holds. An open against the other side is refused when it is
-submitted. If an account opens both ways within the same batch, whichever
-open cannot be booked goes back unfilled, with its collateral, at settlement.
+submitted, and so is an open against the other side of an open the same
+account already has resting in the batch. One account cannot be on both
+sides of a batch's opens, so it cannot cross itself.
 To change sides, close the position first.
 
 ## Execution
@@ -97,3 +100,20 @@ trader from filling it:
   unless it closes everything left in the position. Reduce-only orders post
   no collateral, so without a floor they would cost nothing to place, and
   enough of them priced never to cross could block every exit behind them.
+
+Both apply to an order a trigger fires as well as to one submitted by hand.
+
+## Checks on a trigger
+
+A trigger order is checked twice. When it is placed, an open must fit the
+same caps as an open submitted by hand: the side the position holds, the
+market's maximum leverage and its open interest cap, all as they stand then.
+Nothing can be placed on a paused pool, and only close orders on a paused
+market. When it fires, an open is checked again against the position, the
+market and the opens already resting in the batch, because any of them may
+have changed since. A trigger that fails either check never reaches the
+batch, so it never moves a clearing price. One that fails when it fires
+stays in place until it fires, expires or is cancelled.
+
+A cancelled order's escrow is paid back from the vault of the pool its
+market belongs to, and from no other.

@@ -496,6 +496,42 @@ impl Market {
         long.checked_add(short).ok_or_else(|| PerpError::MathOverflow.into())
     }
 
+    /// What this market's open positions are worth to the LPs at `price`,
+    /// signed the way `trader_pnl_usd` is: positive is LPs down. What LP
+    /// shares are priced against, rather than the PnL itself.
+    ///
+    /// Only what can actually change hands counts. Traders down can lose no
+    /// more than the collateral they posted, and the part of that a close
+    /// hands back to backers drawn on earlier (`restore_backing`) is theirs.
+    /// Traders up are paid no more than the market's remaining budget
+    /// (`haircut_profit_usd`), and its backing pays that before the LPs do
+    /// (`draw_backing`). Counting a short's loss past its collateral let
+    /// whoever could move the mark price LP shares at a value the pool would
+    /// never collect.
+    pub fn lp_pnl_usd(&self, price: u64) -> Result<i64> {
+        let pnl = self.trader_pnl_usd(price)?;
+        if pnl >= 0 {
+            let paid = (pnl as u64).min(self.remaining_budget_usd());
+            // At most `pnl`, so it fits.
+            return Ok(paid.saturating_sub(self.backing_usd) as i64);
+        }
+        let collected = pnl.unsigned_abs().min(self.collateral_usd);
+        let restored = if self.backing_shares == 0 {
+            0
+        } else {
+            collected.min(self.backing_drawn_usd)
+        };
+        Ok(-((collected - restored) as i64))
+    }
+
+    /// The most `lp_pnl_usd` can be at any price: winners paid everything
+    /// the remaining budget allows, less what backing pays first. What an
+    /// LP withdrawal counts a market at when its price cannot be read.
+    pub fn lp_worst_pnl_usd(&self) -> i64 {
+        i64::try_from(self.remaining_budget_usd().saturating_sub(self.backing_usd))
+            .unwrap_or(i64::MAX)
+    }
+
     /// How much of the pool this market's book leans on, for the borrow rate:
     /// the imbalance between its sides as a share of the pool's liquidity.
     ///
@@ -672,6 +708,48 @@ mod tests {
             deployer_earned_usd: 0,
             _reserved: [0; 2],
         }
+    }
+
+    #[test]
+    fn the_lps_count_no_loss_past_collateral_and_no_profit_past_the_budget() {
+        const K: u64 = 1_000_000_000; // $1,000
+        let price = 1_000_000;
+        // $50k short, posted $5k. The mark doubles: the short is down $50k,
+        // but only its $5k of collateral can ever reach the pool.
+        let mut m = market();
+        m.short_size_usd = 50 * K;
+        m.short_avg_entry_price = price;
+        m.collateral_usd = 5 * K;
+        assert_eq!(m.trader_pnl_usd(2 * price).unwrap(), -50 * K as i64);
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), -5 * K as i64);
+        // Of what it can pay, what goes back to the backers drawn on first
+        // is not the LPs'.
+        m.backing_shares = 1;
+        m.backing_drawn_usd = 2 * K;
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), -3 * K as i64);
+        // With nobody holding a share, nothing is restored and it is all
+        // the LPs'.
+        m.backing_shares = 0;
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), -5 * K as i64);
+
+        // $50k long up $50k, on a market with $8k of budget left: winners are
+        // paid at most that, and its $3k of backing pays first.
+        let mut m = market();
+        m.long_size_usd = 50 * K;
+        m.long_avg_entry_price = price;
+        m.collateral_usd = 5 * K;
+        m.loss_budget_usd = 8 * K;
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), 8 * K as i64);
+        m.backing_usd = 3 * K;
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), 5 * K as i64);
+        // Backing bigger than what winners can be paid leaves the LPs owing
+        // nothing.
+        m.backing_usd = 20 * K;
+        assert_eq!(m.lp_pnl_usd(2 * price).unwrap(), 0);
+        // Inside every cap, it is the PnL itself.
+        m.backing_usd = 0;
+        m.loss_budget_usd = 100 * K;
+        assert_eq!(m.lp_pnl_usd(price + price / 10).unwrap(), 5 * K as i64);
     }
 
     #[test]

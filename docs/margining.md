@@ -12,6 +12,11 @@ because an order resting against a batch is a commitment to trade at that
 batch's clearing price. Any portion of the order that does not fill returns
 its escrowed collateral at settlement.
 
+Adding to a position blends its entry price by the amount of the asset each
+fill bought, not by averaging the two prices. $1,000 at $100 and $1,000 at
+$200 is 15 units for $2,000, an entry of $133.33. That keeps the position's
+PnL equal to the PnL of its fills taken one by one.
+
 ## Leverage and maintenance margin
 
 Each market configures a maximum leverage and a maintenance margin, and the

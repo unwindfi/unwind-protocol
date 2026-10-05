@@ -82,6 +82,27 @@ impl MarketParams {
         Ok(())
     }
 
+    /// Where the mark comes from, checked against the market being listed.
+    /// Both are fixed for the market's life, so a listing whose source can
+    /// never be read (an observed market pointed at any account but its own
+    /// observation, or a source that is neither) would hold that market's
+    /// address, and the pool or feed it is keyed by, for good.
+    pub fn validate_source(&self, market: &Pubkey) -> Result<()> {
+        match PriceSource::from_u8(self.price_source)? {
+            PriceSource::Pyth => require_keys_eq!(
+                self.observation,
+                Pubkey::default(),
+                PerpError::InvalidParameter
+            ),
+            PriceSource::Observed => {
+                let (want, _) =
+                    Pubkey::find_program_address(&[OBSERVATION_SEED, market.as_ref()], &crate::ID);
+                require_keys_eq!(self.observation, want, PerpError::WrongOracleFeed);
+            }
+        }
+        Ok(())
+    }
+
     /// The tighter bounds a market listed by anyone but the authority has to
     /// fit. See `LISTING_*` in `constants.rs` for why each one exists.
     pub fn validate_listing(&self) -> Result<()> {
@@ -145,6 +166,34 @@ pub struct InitializePool<'info> {
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
+
+    /// This program's data account, read for its upgrade authority: only
+    /// whoever can upgrade the program may create a pool. The pool PDA is
+    /// keyed by mint alone, so an open `initialize_pool` let anyone take a
+    /// mint's pool first and name its oracle.
+    #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
+    )]
+    pub program_data: Account<'info, ProgramData>,
+}
+
+/// Who may create a pool: the program's upgrade authority, and nobody once
+/// the program is immutable.
+pub fn check_pool_creator(upgrade_authority: Option<Pubkey>, signer: &Pubkey) -> Result<()> {
+    require!(upgrade_authority == Some(*signer), PerpError::Unauthorized);
+    Ok(())
+}
+
+/// The oracle program a pool may trust. Pinned to Pyth's receiver unless the
+/// program is built with the `devnet` feature, which runs a stand-in oracle
+/// (`mock-pyth`) on clusters where Pyth's receiver does not publish.
+pub fn check_pyth_receiver(receiver: &Pubkey, pinned: bool) -> Result<()> {
+    if pinned {
+        require_keys_eq!(*receiver, crate::oracle::PYTH_RECEIVER_ID, PerpError::WrongOracleOwner);
+    }
+    Ok(())
 }
 
 impl PoolParams {
@@ -167,6 +216,11 @@ impl PoolParams {
 
 pub fn initialize_pool(ctx: Context<InitializePool>, params: PoolParams) -> Result<()> {
     params.validate()?;
+    check_pool_creator(
+        ctx.accounts.program_data.upgrade_authority_address,
+        &ctx.accounts.authority.key(),
+    )?;
+    check_pyth_receiver(&params.pyth_receiver, !cfg!(feature = "devnet"))?;
 
     let pool = &mut ctx.accounts.pool;
     pool.bump = ctx.bumps.pool;
@@ -228,6 +282,7 @@ pub fn add_market(ctx: Context<AddMarket>, params: MarketParams) -> Result<()> {
     } else {
         params.validate_listing()?;
     }
+    params.validate_source(&ctx.accounts.market.key())?;
     let clock = Clock::get()?;
     let market = &mut ctx.accounts.market;
 
@@ -781,5 +836,42 @@ mod tests {
         p.close_fee_bps = 6;
         p.validate().unwrap();
         assert!(p.validate_listing().is_err());
+    }
+
+    #[test]
+    fn only_the_upgrade_authority_creates_a_pool() {
+        let admin = Pubkey::new_unique();
+        assert!(check_pool_creator(Some(admin), &admin).is_ok());
+        assert!(check_pool_creator(Some(admin), &Pubkey::new_unique()).is_err());
+        // An immutable program creates no more pools.
+        assert!(check_pool_creator(None, &admin).is_err());
+    }
+
+    #[test]
+    fn a_pinned_build_trusts_only_pyths_receiver() {
+        let mock = Pubkey::new_unique();
+        assert!(check_pyth_receiver(&crate::oracle::PYTH_RECEIVER_ID, true).is_ok());
+        assert!(check_pyth_receiver(&mock, true).is_err());
+        assert!(check_pyth_receiver(&mock, false).is_ok());
+    }
+
+    #[test]
+    fn a_listing_names_a_source_it_can_be_read_from() {
+        let market = Pubkey::new_unique();
+        let (obs, _) = Pubkey::find_program_address(&[OBSERVATION_SEED, market.as_ref()], &crate::ID);
+        let p = |price_source: u8, observation: Pubkey| {
+            let mut m = site_listing();
+            m.price_source = price_source;
+            m.observation = observation;
+            m
+        };
+        assert!(p(PriceSource::Pyth as u8, Pubkey::default()).validate_source(&market).is_ok());
+        assert!(p(PriceSource::Observed as u8, obs).validate_source(&market).is_ok());
+        // An observed market pointed anywhere but its own observation could
+        // never be priced, and would hold its pool's market address for good.
+        assert!(p(PriceSource::Observed as u8, Pubkey::default()).validate_source(&market).is_err());
+        assert!(p(PriceSource::Observed as u8, Pubkey::new_unique()).validate_source(&market).is_err());
+        assert!(p(PriceSource::Pyth as u8, obs).validate_source(&market).is_err());
+        assert!(p(7, Pubkey::default()).validate_source(&market).is_err());
     }
 }

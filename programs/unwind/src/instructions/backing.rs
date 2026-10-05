@@ -117,6 +117,11 @@ fn sync(
                 .ok_or(PerpError::MathOverflow)?;
             emit!(BackingPaidLps { market: book.market, amount_usd: usd, taken });
         }
+        // Nothing is refunded into a pot nobody holds a share of: the backers
+        // whose tokens paid the LPs have left, and money put back with no
+        // shares against it would go to whoever backed the market next, as
+        // `restore_backing` already refuses for USDC.
+        Sync::Refund { .. } if market.backing_shares == 0 => {}
         Sync::Refund { usd } => {
             pool.liquidity_usd -= usd;
             pool.backing_usd = pool.backing_usd.checked_add(usd).ok_or(PerpError::MathOverflow)?;
@@ -148,6 +153,18 @@ fn exit_custodies(custodies: &[(Account<Custody>, u64)]) -> Result<()> {
         c.exit(&crate::ID)?;
     }
     Ok(())
+}
+
+/// The budget a deposit counting `counted` toward it leaves a market with.
+///
+/// Raised by what was just posted, never past what stands behind the market
+/// (`cover`), and never lowered: a market the authority underwrote above its
+/// backing keeps that figure. Only new money raises it. Setting it to the
+/// whole cover instead let fee income, which is the backers' and nobody chose
+/// to put at risk, widen the allowance, and let a deposit of one unit undo a
+/// cut `derive_market_budget` had just made to the pool's depth.
+pub fn raised_budget(budget: u64, cover: u64, counted: u64) -> u64 {
+    budget.max(budget.saturating_add(counted).min(cover))
 }
 
 #[derive(Accounts)]
@@ -216,8 +233,8 @@ pub struct BackMarket<'info> {
 /// pool has, in index order; a stable custody's price account is not read, and
 /// any account will do in its place.
 ///
-/// The budget is set from the backing rather than added to, so it can never
-/// drift above what stands behind it. A market the authority had already
+/// The budget rises by what this deposit counts for (`raised_budget`), never
+/// past what stands behind the market. A market the authority had already
 /// underwritten keeps whichever figure is larger: backing is meant to open the
 /// door for markets nobody underwrote, not to shrink the ones somebody did.
 pub fn back_market<'info>(
@@ -298,6 +315,11 @@ pub fn back_market<'info>(
     // gain would otherwise hand it to them.
     if market.backing_shares == 0 {
         market.backing_drawn_usd = 0;
+        // Likewise in kind: what earlier backers' tokens paid the LPs is not
+        // these backers' to be refunded, and losses before now are not
+        // theirs to repay.
+        book.reimbursed_usd = 0;
+        book.baseline_usd = lp_borne_usd(market.net_loss_usd, 0);
     }
     match custody_pos {
         None => {
@@ -337,7 +359,21 @@ pub fn back_market<'info>(
         .backing_usd
         .checked_add(in_kind_weighted(&held(book, &custodies))?)
         .ok_or(PerpError::MathOverflow)?;
-    market.loss_budget_usd = market.loss_budget_usd.max(cover);
+    let counted = match custody_pos {
+        None => amount,
+        Some(p) => {
+            let c = &custodies[p];
+            Held {
+                amount,
+                price: c.1,
+                decimals: c.0.decimals,
+                is_stable: c.0.is_stable,
+                weight_bps: c.0.budget_weight_bps,
+            }
+            .weighted()?
+        }
+    };
+    market.loss_budget_usd = raised_budget(market.loss_budget_usd, cover, counted);
 
     let backing = &mut ctx.accounts.backing;
     backing.bump = ctx.bumps.backing;
@@ -669,4 +705,62 @@ pub struct BackingPaidLps {
 pub struct BackingRefunded {
     pub market: Pubkey,
     pub amount_usd: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const K: u64 = 1_000_000_000; // $1,000
+
+    fn book() -> BackingBook {
+        BackingBook {
+            bump: 0,
+            market: Pubkey::default(),
+            amounts: [0; MAX_CUSTODIES],
+            reimbursed_usd: 0,
+            baseline_usd: 0,
+            _reserved: [0; 32],
+        }
+    }
+
+    #[test]
+    fn a_refund_into_a_pot_nobody_holds_is_not_made() {
+        // Earlier backers' tokens paid the LPs $10k, then every backer left.
+        // The market has since won it back. Refunding now would put $10k in
+        // a pot with no shares, and the next deposit of one unit would buy
+        // all of it.
+        let mut pool = crate::instructions::trade::tests::pool();
+        pool.liquidity_usd = 100 * K;
+        let mut m = crate::instructions::trade::tests::market();
+        m.backing_shares = 0;
+        m.backing_usd = 0;
+        m.net_loss_usd = 0;
+        let mut b = book();
+        b.reimbursed_usd = 10 * K;
+        sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
+        assert_eq!(m.backing_usd, 0);
+        assert_eq!(pool.liquidity_usd, 100 * K);
+
+        // With a backer still in, the refund is theirs.
+        m.backing_shares = 1;
+        sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
+        assert_eq!(m.backing_usd, 10 * K);
+    }
+
+    #[test]
+    fn a_deposit_raises_the_budget_by_what_it_posts_and_no_further() {
+        // Backers posted $50k; the pool's depth cut the budget to $40k; fees
+        // have since added $5k to the pot. One more unit of backing raises
+        // the budget by that unit, not back to the $55k pot.
+        assert_eq!(raised_budget(40 * K, 55 * K + 1, 1), 40 * K + 1);
+        // A real deposit raises it by what it counts for.
+        assert_eq!(raised_budget(40 * K, 65 * K, 10 * K), 50 * K);
+        // Never past what stands behind the market.
+        assert_eq!(raised_budget(40 * K, 45 * K, 10 * K), 45 * K);
+        // A first deposit into an unfunded market sets it to that deposit.
+        assert_eq!(raised_budget(0, 10 * K, 10 * K), 10 * K);
+        // And a budget above the cover is left where it is.
+        assert_eq!(raised_budget(100 * K, 20 * K, 10 * K), 100 * K);
+    }
 }

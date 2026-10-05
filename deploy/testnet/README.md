@@ -11,7 +11,7 @@ needs to stay up.
 | On the box | From |
 |---|---|
 | The repo at `/opt/unwind`, `npm ci` run | `git clone` |
-| `target/idl/unwind.json`, `target/idl/mock_pyth.json` | `anchor build` locally, then `scp` (gitignored) |
+| `target/idl/unwind.json`, `target/idl/mock_pyth.json` | `anchor build -- --features devnet` locally, then `scp` (gitignored) |
 | `.devnet-state.json` in `/opt/unwind` | your machine (gitignored, holds the pool authority key) |
 | `/etc/unwind/relay.json` | `~/.config/unwind/relay.json` on your machine |
 | `/etc/unwind/testnet.env` | `testnet.env.example`, with dedicated devnet RPC keys |

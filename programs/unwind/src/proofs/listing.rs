@@ -105,7 +105,7 @@ fn within_listing_bounds(p: &MarketParams) -> bool {
 }
 
 /// An observation whose depth state is any value, for the crank harnesses.
-/// Only `sustained_depth_usd` and `depth_rise_ts` are read by `track_depth`.
+/// Only `sustained_depth_usd`, `budget_depth_usd` and `depth_rise_ts` are read by `track_depth`.
 fn any_depth_state() -> Observation {
     Observation {
         bump: 0,
@@ -127,7 +127,8 @@ fn any_depth_state() -> Observation {
         sustained_depth_usd: kani::any(),
         depth_rise_ts: kani::any(),
         keeper_priced: false,
-        _reserved: [0; 11],
+        budget_depth_usd: kani::any(),
+        _reserved: [0; 3],
     }
 }
 
@@ -380,6 +381,28 @@ fn one_crank_raises_leverage_by_at_most_one_tier() {
     let before = leverage_for_depth(o.sustained_depth_usd);
     o.track_depth(kani::any(), kani::any());
     assert!(leverage_for_depth(o.sustained_depth_usd) <= before + 1);
+}
+
+/// The depth a budget may be cut to never falls below the reading, and one
+/// crank lowers it by at most a tenth of the gap (one unit at least), so a
+/// pool thinned for a single crank cannot cut a budget to what it showed.
+///
+/// Bounds: depths below 2^32, as in `sustained_depth_falls_at_once_and_rises_slowly`.
+#[kani::proof]
+fn one_crank_cuts_budget_depth_by_a_tenth_at_most() {
+    let mut o = any_depth_state();
+    let held = o.budget_depth_usd;
+    let depth: u64 = kani::any();
+    kani::assume(held < 1 << 32 && depth < 1 << 32);
+    o.track_depth(depth, kani::any());
+    let after = o.budget_depth_usd;
+    if held == 0 || depth >= held {
+        assert!(after == depth);
+    } else {
+        assert!(after >= depth && after <= held);
+        let gap = (held - depth) as u128;
+        assert!(((held - after) as u128) <= (gap * DEPTH_RISE_BPS as u128 / BPS).max(1));
+    }
 }
 
 // ---------------------------------------------------------------------------

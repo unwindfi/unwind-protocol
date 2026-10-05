@@ -10,6 +10,11 @@ One second is two to three Solana slots. That is longer than a block producer
 can reorder orders within, so arriving first earns nothing, and short enough
 that a fill is never a wait a trader notices.
 
+A batch cannot be cleared in the same slot as the last order placed into it
+or cancelled from it. Whoever clears a batch therefore cannot also be the last
+to change its book, in the same transaction, with the book and the oracle
+already in view.
+
 Every order is either a **maker** or a **taker**. A maker rests as liquidity
 and names the price it will trade at. A taker comes to trade against it.
 
@@ -79,8 +84,11 @@ only what that side trades. These rules, and the others the clearing relies
 on, are proven for every input within bounds; see [Verification](verification.md).
 
 The [pool](pool.md) fills takers that the makers leave standing, and never
-fills a maker. A maker whose quote nobody took is refunded when the batch
-seals and quotes again into the next one.
+fills a maker. Every order lasts one batch. A batch in which nothing crosses
+in either flow still seals: each order in it settles unfilled and its
+collateral comes back, and the next batch opens once the last one has
+settled. A maker whose quote nobody took has to quote again into the next
+batch.
 
 ## Numerical example
 

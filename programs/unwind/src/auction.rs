@@ -395,6 +395,26 @@ pub(crate) fn clear_with_pool_on(
             .matched
             .checked_add(out.pool_sold.max(out.pool_bought))
             .ok_or(AuctionError::Overflow)?;
+
+        // Takers left standing at a price the pool will not trade at. The
+        // flow may clear at the pool's own quote instead, when that crosses
+        // more with the pool counted in: otherwise one small maker inside the
+        // pool's spread set the price, crossed its own size, and switched the
+        // backstop off for every taker behind it.
+        let at_quote = if may_sell && demand > supply && c.price < quote.ask {
+            Some((quote.ask, true))
+        } else if may_buy && supply > demand && c.price > quote.bid {
+            Some((quote.bid, false))
+        } else {
+            None
+        };
+        if let Some((price, sells)) = at_quote {
+            if let Some(alt) = with_pool_at(orders, quote, price, sells)? {
+                if alt.matched > out.matched {
+                    return Ok(Some(alt));
+                }
+            }
+        }
         return Ok(Some(out));
     }
 
@@ -429,6 +449,32 @@ pub(crate) fn clear_with_pool_on(
     }
 
     Ok(None)
+}
+
+/// The flow cleared at the pool's own quote, `price`, with the pool selling
+/// (`sells`) or buying whatever the book leaves standing there, up to its size.
+fn with_pool_at(
+    orders: &[AuctionOrder],
+    quote: &PoolQuote,
+    price: u64,
+    sells: bool,
+) -> Result<Option<Outcome>> {
+    if price == 0 || quote.size == 0 {
+        return Ok(None);
+    }
+    let (demand, supply) = depth_at(orders, price);
+    let left = if sells { demand.saturating_sub(supply) } else { supply.saturating_sub(demand) };
+    let take = u64::try_from(left.min(quote.size as u128)).map_err(|_| AuctionError::Overflow)?;
+    if take == 0 {
+        return Ok(None);
+    }
+    let book = u64::try_from(demand.min(supply)).map_err(|_| AuctionError::Overflow)?;
+    Ok(Some(Outcome {
+        price,
+        matched: book.checked_add(take).ok_or(AuctionError::Overflow)?,
+        pool_bought: if sells { 0 } else { take },
+        pool_sold: if sells { take } else { 0 },
+    }))
 }
 
 /// A batch's two clearings. Either may be `None`: a flow with no takers, or
@@ -890,6 +936,34 @@ mod tests {
         assert_eq!(buy.pool_sold, 200);
         assert_eq!(dual_fill_for(&book[0], &DualBook::split(&book), &out).unwrap(), 300);
         assert_eq!(dual_fill_for(&book[1], &DualBook::split(&book), &out).unwrap(), 100);
+    }
+
+    #[test]
+    fn a_dust_maker_inside_the_pools_ask_does_not_switch_the_pool_off() {
+        // 10,000 of takers buying, and one maker asking 10 at the mark, under
+        // the pool's ask. Clearing at the maker's price crossed 10 and left
+        // the pool out, every batch the maker was re-posted. At the pool's
+        // ask the flow crosses the maker's 10 and the pool's 1,000.
+        let book = [bid(102_000_000, 10_000), maker(ask(REF, 10))];
+        let flows = DualBook::split(&book);
+        let out = clear_dual(&flows, &quote(99_000_000, 101_000_000, 1_000), REF).unwrap();
+        let buy = out.buy.unwrap();
+        assert_eq!((buy.price, buy.matched, buy.pool_sold), (101_000_000, 1_010, 1_000));
+        assert_eq!(dual_fill_for(&book[0], &flows, &out).unwrap(), 1_010);
+        assert_eq!(dual_fill_for(&book[1], &flows, &out).unwrap(), 10);
+
+        // The mirror in the sell flow.
+        let book = [ask(98_000_000, 10_000), maker(bid(REF, 10))];
+        let flows = DualBook::split(&book);
+        let out = clear_dual(&flows, &quote(99_000_000, 101_000_000, 1_000), REF).unwrap();
+        let sell = out.sell.unwrap();
+        assert_eq!((sell.price, sell.matched, sell.pool_bought), (99_000_000, 1_010, 1_000));
+
+        // A maker deep enough to fill the takers keeps its own price.
+        let book = [bid(102_000_000, 500), maker(ask(REF, 500))];
+        let out = clear_dual(&DualBook::split(&book), &quote(99_000_000, 101_000_000, 1_000), REF)
+            .unwrap();
+        assert_eq!((out.buy.unwrap().price, out.buy.unwrap().pool_sold), (REF, 0));
     }
 
     #[test]

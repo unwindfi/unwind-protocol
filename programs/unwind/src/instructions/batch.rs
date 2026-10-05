@@ -4,7 +4,7 @@ use crate::auction::{
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::trade::{
-    book_close_at, book_open, check_open, BackerFeePaid, ProfitHaircut,
+    book_cleared_open, book_close_at, check_open, plan_open, BackerFeePaid, ProfitHaircut,
     PositionClosed,
 };
 use crate::math::*;
@@ -228,6 +228,16 @@ pub fn submit_order(
         leverage_bps <= ctx.accounts.market.effective_max_leverage_bps()? as u128,
         PerpError::LeverageTooHigh
     );
+    admit_open(
+        &ctx.accounts.pool,
+        &ctx.accounts.market,
+        &ctx.accounts.position,
+        &*ctx.accounts.batch.load()?,
+        is_bid,
+        collateral_usd - open_fee,
+        size_usd,
+        price,
+    )?;
 
     transfer_checked(
         CpiContext::new(
@@ -277,6 +287,39 @@ pub fn submit_order(
         reduce_only: false,
         is_maker,
     });
+    Ok(())
+}
+
+/// Every cap an open has to fit, asked as it enters a batch.
+///
+/// Settlement books whatever the clearing filled without asking again (see
+/// `open_fill`), so this is where leverage and open interest are held. Leverage
+/// is that of the position the open grows, net of funding it already owes.
+/// Open interest counts every open already resting on the same side of this
+/// batch, since all of them may fill: the side can end a batch at its cap and
+/// never past it, unless the cap itself tightens before the batch settles.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_open(
+    pool: &Pool,
+    market: &Market,
+    position: &Position,
+    batch: &Batch,
+    is_long: bool,
+    net_collateral: u64,
+    size_usd: u64,
+    price: u64,
+) -> Result<()> {
+    check_open(pool, market, position, is_long, net_collateral, size_usd, price)?;
+    let side = if is_long { market.long_size_usd } else { market.short_size_usd };
+    let pending = batch.pending_open_usd(is_long);
+    let side_oi = (side as u128)
+        .checked_add(pending)
+        .and_then(|v| v.checked_add(size_usd as u128))
+        .ok_or(PerpError::MathOverflow)?;
+    require!(
+        side_oi <= market.effective_oi_cap_usd(is_long)? as u128,
+        PerpError::OpenInterestCapExceeded
+    );
     Ok(())
 }
 
@@ -432,7 +475,11 @@ pub fn cancel_batch_order(ctx: Context<CancelBatchOrder>, index: u8) -> Result<(
         pool.escrow_usd = pool.escrow_usd.saturating_sub(order.collateral_usd);
     }
 
-    ctx.accounts.batch.load_mut()?.orders[i].active = 0;
+    {
+        let batch = &mut ctx.accounts.batch.load_mut()?;
+        batch.orders[i].active = 0;
+        batch.touch(Clock::get()?.slot);
+    }
 
     emit!(BatchOrderCancelled {
         market: ctx.accounts.market.key(),
@@ -488,11 +535,15 @@ pub fn pool_quote_ceiling(_pool: &Pool, _market: &Market) -> Result<u64> {
 /// racing to call it produce the same batch — the first simply wins, and the
 /// second's transaction is a no-op rather than a different outcome.
 pub fn clear_batch(ctx: Context<ClearBatch>) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     {
         let batch = ctx.accounts.batch.load()?;
         require!(batch.is_open(), PerpError::BatchSealed);
         require!(batch.is_due(now), PerpError::BatchNotDue);
+        // Not in the slot an order last went in or came out: the clear may
+        // not share a transaction with a change to the book it clears.
+        require!(batch.clearable_at(clock.slot), PerpError::BatchNotDue);
     }
 
     let market_key = ctx.accounts.market.key();
@@ -548,20 +599,22 @@ pub fn clear_batch(ctx: Context<ClearBatch>) -> Result<()> {
     let batch = &mut ctx.accounts.batch.load_mut()?;
 
     if !cleared.traded() {
-        // Nothing crossed in either flow. Every order stands unfilled, its
-        // collateral still escrowed, and the next batch opens immediately.
+        // Nothing crossed in either flow. The batch seals all the same, with
+        // every order unfilled: each settles and is refunded, and the next
+        // batch opens when the last one has. See `Batch::seal_unfilled`.
+        let seq = batch.seq;
+        batch.seal_unfilled(now);
         emit!(BatchCleared {
             market: batch.market,
-            seq: batch.seq,
+            seq,
             buy_price: 0,
             buy_matched_usd: 0,
             sell_price: 0,
             sell_matched_usd: 0,
-            orders: 0,
+            orders: batch.unsettled,
             pool_bought: 0,
             pool_sold: 0,
         });
-        batch.reopen(now);
         return Ok(());
     }
 
@@ -777,14 +830,18 @@ pub struct FeeRewards {
 /// How much of an opening order actually lands: `(filled, collateral used,
 /// open fee)`.
 ///
-/// An open that cannot be booked goes home unfilled rather than failing.
-/// Failing was worse than it looks: every order in a batch has to settle
-/// before the next one opens, so one refusal froze the market, exits
-/// included. The reasons it may not book are the same owner having gone the
-/// other way in this batch (positions do not flip), a fill too small for its
-/// collateral to cover its fee, and anything `check_open` refuses -- leverage,
-/// open interest, the pool's utilization. The pool is the counterparty to
-/// every position, so a fill that never lands leaves nothing owed to anyone.
+/// An open the clearing filled books. The leverage and open interest caps
+/// were asked when it entered the batch (`admit_open`) and are not asked
+/// again: a cross between two traders is net zero for the pool only while
+/// both legs book, and a refusal here depended on which orders a caller chose
+/// to settle first, so one leg could be sent home while the other booked at
+/// the band's edge against the pool alone.
+///
+/// What is left goes home unfilled rather than failing, because a failed
+/// settlement holds the whole batch: a fill too small for its collateral to
+/// cover its fee (a unit or two of rounding), arithmetic that cannot be held,
+/// and the same owner holding the other side, which `Batch::insert` keeps out
+/// of a batch in the first place.
 pub fn open_fill(
     pool: &Pool,
     market: &Market,
@@ -809,7 +866,9 @@ pub fn open_fill(
     if used <= open_fee {
         return Ok(UNFILLED);
     }
-    if check_open(pool, market, position, order.bid(), used - open_fee, filled, clearing).is_err() {
+    if plan_open(pool, market, position, order.bid(), used - open_fee, filled, clearing, false)
+        .is_err()
+    {
         return Ok(UNFILLED);
     }
     Ok((filled, used, open_fee))
@@ -906,7 +965,7 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
         let net_collateral = used - open_fee;
 
         let position_bump = ctx.bumps.position;
-        let to_backers = book_open(
+        let to_backers = book_cleared_open(
             &mut ctx.accounts.pool,
             &mut ctx.accounts.market,
             &mut ctx.accounts.position,

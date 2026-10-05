@@ -122,7 +122,11 @@ pub struct Batch {
     /// Orders still owed a settlement at their flow's price.
     pub unsettled: u8,
     pub order_count: u8,
-    pub _pad: [u8; 5],
+    /// Low 32 bits of the slot of the last order placed or cancelled. The
+    /// batch cannot be cleared in that slot: see `clearable_at`. Bytes rather
+    /// than a `u32`, because a `u32` here would need padding bytemuck refuses.
+    pub last_order_slot: [u8; 4],
+    pub _pad: [u8; 1],
 
     pub orders: [BatchOrder; MAX_BATCH_ORDERS],
 }
@@ -152,9 +156,36 @@ impl Batch {
         now >= self.opened_ts.saturating_add(BATCH_INTERVAL_SEC)
     }
 
+    /// Records that the book changed in `slot`.
+    pub fn touch(&mut self, slot: u64) {
+        self.last_order_slot = (slot as u32).to_le_bytes();
+    }
+
+    /// Whether a clear in `slot` would see a book nobody changed in the same
+    /// slot.
+    ///
+    /// Without this an order or a cancel could ride in the same transaction
+    /// as the clear, placed with the whole book and the oracle already in
+    /// view: post size to move the price and pull it in the clearing
+    /// transaction, or drop a maker exactly on a taker's limit at the last
+    /// instant. Clearing in a later slot than the last change means whoever
+    /// clears cannot also be the last to move. Compared on the low 32 bits,
+    /// which repeat once in fifty years of slots.
+    pub fn clearable_at(&self, slot: u64) -> bool {
+        self.last_order_slot != (slot as u32).to_le_bytes()
+    }
+
     /// Adds an order, returning its index.
     pub fn insert(&mut self, order: BatchOrder) -> Result<u8> {
         require!(self.is_open(), PerpError::BatchSealed);
+        // Every way into a batch comes through here, triggers included, so
+        // the slot is recorded here. Outside the runtime there is no clock,
+        // and nothing to record. (Nor under the model checker, which has no
+        // use for the syscall stubs behind it.)
+        #[cfg(not(kani))]
+        if let Ok(clock) = Clock::get() {
+            self.touch(clock.slot);
+        }
         // A batch holds sixty-four orders for everyone; one wallet may hold
         // only a few of them, so filling it takes many funded wallets rather
         // than one.
@@ -164,6 +195,20 @@ impl Batch {
             .filter(|o| o.is_active() && o.owner == order.owner)
             .count();
         require!(mine < MAX_ORDERS_PER_OWNER, PerpError::TooManyOrders);
+        // One wallet may not open both ways in one batch. Positions do not
+        // flip, so only one side could ever book, and with both of its orders
+        // in the same batch the wallet could cross itself and choose, by
+        // settlement order, which leg went home: the one left booked held a
+        // position at the band's edge with the pool alone on the other side.
+        if !order.reduces() {
+            require!(
+                !self.orders.iter().any(|o| o.is_active()
+                    && o.owner == order.owner
+                    && !o.reduces()
+                    && o.bid() != order.bid()),
+                PerpError::PositionAlreadyOpen
+            );
+        }
         // Reuse a cancelled slot before growing, so a market that churns
         // orders does not fill the batch with holes.
         for (i, slot) in self.orders.iter_mut().enumerate() {
@@ -178,20 +223,54 @@ impl Batch {
         err!(PerpError::BatchFull)
     }
 
-    /// Starts a new collection window with the standing orders left in place.
+    /// Notional of the opening orders resting on one side, all of which may
+    /// fill. Reduce-only orders shrink a side and are not counted.
+    pub fn pending_open_usd(&self, is_bid: bool) -> u128 {
+        self.orders
+            .iter()
+            .filter(|o| o.is_active() && !o.reduces() && o.bid() == is_bid)
+            .map(|o| o.size_usd as u128)
+            .sum()
+    }
+
+    /// Starts a new collection window with any standing orders left in place.
     ///
-    /// For a batch that found no crossing. Nothing was decided: nobody filled,
-    /// nobody should have paid, and the orders are exactly as valid as they
-    /// were a second ago. Rolling them away instead — which this did until an
-    /// integration test caught it — dropped every unfilled order along with
-    /// the collateral escrowed behind it, because a cleared slot can no longer
-    /// be cancelled or settled. The money simply stayed in the vault with
-    /// nobody able to claim it.
+    /// Only for a batch with nothing in it now: a batch that found no crossing
+    /// is sealed by `seal_unfilled` so its orders settle out. Rolling orders
+    /// away instead, as this once did, dropped them along with the collateral
+    /// escrowed behind them, because a cleared slot can no longer be cancelled
+    /// or settled.
     pub fn reopen(&mut self, now: i64) {
         self.seq = self.seq.saturating_add(1);
         self.opened_ts = now;
         self.clear_prices();
         self.unsettled = 0;
+    }
+
+    /// Seals a batch in which nothing crossed: every order stands unfilled and
+    /// goes home at settlement, the way an unfilled order does in a batch
+    /// that traded. An order lasts one batch either way.
+    ///
+    /// Reopening with the orders kept made them last forever instead. Sixty
+    /// four orders priced never to cross, from sixteen wallets, held every
+    /// slot for good at no cost but refundable collateral, and with them every
+    /// exit and every trigger in the market. Settled out, the slots come back
+    /// each batch and the orders' owners get their collateral.
+    ///
+    /// A batch with nothing in it has nothing to settle, so it just reopens.
+    pub fn seal_unfilled(&mut self, now: i64) {
+        let mut active: u8 = 0;
+        for o in self.orders.iter_mut().filter(|o| o.is_active()) {
+            o.filled_usd = 0;
+            active = active.saturating_add(1);
+        }
+        if active == 0 {
+            self.reopen(now);
+            return;
+        }
+        self.clear_prices();
+        self.cleared_ts = now.max(1);
+        self.unsettled = active;
     }
 
     /// Opens the next batch, discarding the array. Only safe once every order
@@ -223,7 +302,8 @@ mod tests {
             cleared_ts: 0,
             unsettled: 0,
             order_count: 0,
-            _pad: [0; 5],
+            last_order_slot: [0; 4],
+            _pad: [0; 1],
             orders: [BatchOrder::zeroed(); MAX_BATCH_ORDERS],
         }
     }
@@ -400,6 +480,69 @@ mod tests {
         for j in (0..MAX_BATCH_ORDERS).filter(|j| *j != 2) {
             assert_eq!(bytemuck::bytes_of(&b.orders[j]), bytemuck::bytes_of(&before.orders[j]));
         }
+    }
+
+    #[test]
+    fn a_batch_cannot_clear_in_the_slot_its_book_last_changed() {
+        let mut b = batch();
+        b.touch(4_000_000_123);
+        assert!(!b.clearable_at(4_000_000_123), "an order and the clear in one slot");
+        assert!(b.clearable_at(4_000_000_124));
+        // A fresh account has never been touched and clears at once.
+        assert!(batch().clearable_at(7));
+    }
+
+    #[test]
+    fn a_batch_that_found_no_crossing_settles_its_orders_out() {
+        // Makers that nobody took, and takers nothing could fill: all of them
+        // lapse with this batch rather than holding its slots for the next.
+        let mut b = batch();
+        for i in 0..MAX_BATCH_ORDERS {
+            let maker = BatchOrder { is_bid: 0, is_maker: 1, ..order(i as u64 + 1) };
+            b.insert(maker).unwrap();
+        }
+        b.seal_unfilled(500);
+        assert!(!b.is_open(), "sealed, so each order settles and is refunded");
+        assert_eq!(b.unsettled as usize, MAX_BATCH_ORDERS);
+        assert_eq!((b.buy_price, b.sell_price), (0, 0));
+        assert!(b.orders.iter().all(|o| o.filled_usd == 0));
+
+        // An empty batch has nothing to settle and opens again at once.
+        let mut b = batch();
+        b.seal_unfilled(500);
+        assert!(b.is_open());
+        assert_eq!((b.seq, b.opened_ts), (1, 500));
+    }
+
+    #[test]
+    fn one_wallet_cannot_open_both_ways_in_one_batch() {
+        // The self-cross: a taker bid and a maker ask from one wallet with no
+        // position yet. Only one could ever book.
+        let mut b = batch();
+        let me = Pubkey::new_from_array([7; 32]);
+        b.insert(BatchOrder { owner: me, ..order(1) }).unwrap();
+        let ask = BatchOrder { owner: me, is_bid: 0, is_maker: 1, ..order(2) };
+        assert!(b.insert(ask).is_err());
+        // The same side again is fine, and so is a close or another wallet.
+        b.insert(BatchOrder { owner: me, ..order(3) }).unwrap();
+        b.insert(BatchOrder { owner: me, reduce_only: 1, ..ask }).unwrap();
+        b.insert(BatchOrder { owner: Pubkey::new_from_array([8; 32]), ..ask }).unwrap();
+        // Once the bids are cancelled the ask is no longer refused.
+        let mut b = batch();
+        let i = b.insert(BatchOrder { owner: me, ..order(1) }).unwrap();
+        b.orders[i as usize].active = 0;
+        b.insert(ask).unwrap();
+    }
+
+    #[test]
+    fn resting_opens_count_toward_their_side() {
+        let mut b = batch();
+        b.insert(order(1)).unwrap();
+        b.insert(order(2)).unwrap();
+        b.insert(BatchOrder { reduce_only: 1, ..order(3) }).unwrap();
+        b.insert(BatchOrder { is_bid: 0, ..order(4) }).unwrap();
+        assert_eq!(b.pending_open_usd(true), 2_000);
+        assert_eq!(b.pending_open_usd(false), 1_000);
     }
 
     #[test]

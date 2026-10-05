@@ -18,6 +18,7 @@ use anchor_lang::prelude::*;
 pub fn pool_aum_usd<'info>(
     pool: &Account<'info, Pool>,
     remaining_accounts: &'info [AccountInfo<'info>],
+    unpriced: Unpriced,
 ) -> Result<u64> {
     let m = (pool.markets_with_oi as usize) * 2;
     require!(
@@ -25,9 +26,18 @@ pub fn pool_aum_usd<'info>(
         PerpError::IncompleteMarketList
     );
     let (markets, custodies) = remaining_accounts.split_at(m);
-    let pnl = global_trader_pnl_usd(pool, markets)?;
+    let pnl = global_trader_pnl_usd(pool, markets, unpriced)?;
     let in_kind = lp_in_kind_usd(pool, custodies)?;
     Ok(pool.aum_with_in_kind_usd(pnl, in_kind))
+}
+
+/// What to do with a market on the list whose price cannot be read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unpriced {
+    /// Refuse, as a deposit does: it can wait for the price.
+    Refuse,
+    /// Count it at the most it could cost the LPs, as a withdrawal does.
+    AtWorst,
 }
 
 /// Tokens the LPs own in the pool's custodies, at the oracle.
@@ -53,6 +63,7 @@ fn lp_in_kind_usd<'info>(pool: &Account<'info, Pool>, pairs: &'info [AccountInfo
 pub fn global_trader_pnl_usd<'info>(
     pool: &Account<'info, Pool>,
     remaining_accounts: &'info [AccountInfo<'info>],
+    unpriced: Unpriced,
 ) -> Result<i64> {
     require!(
         remaining_accounts.len() == (pool.markets_with_oi as usize) * 2,
@@ -81,10 +92,20 @@ pub fn global_trader_pnl_usd<'info>(
         require!(market.has_open_interest(), PerpError::IncompleteMarketList);
         // Whichever mark the market is priced from: a Pyth feed, or the
         // observation of a pool for a market somebody listed.
-        let oracle = market_price(price_ai, pool, &market, market_ai.key)?;
+        //
+        // A price that cannot be read (a stale feed, a pool emptied so its
+        // confidence halts the market) refuses a deposit and prices a
+        // withdrawal at the most the market could cost the LPs. Any account
+        // passed in place of the price only makes the withdrawer's own
+        // figure worse, never the remaining LPs'.
+        let pnl = match market_price(price_ai, pool, &market, market_ai.key) {
+            Ok(oracle) => market.lp_pnl_usd(oracle.price)?,
+            Err(e) if unpriced == Unpriced::Refuse => return Err(e),
+            Err(_) => market.lp_worst_pnl_usd(),
+        };
 
         total = total
-            .checked_add(market.trader_pnl_usd(oracle.price)?)
+            .checked_add(pnl)
             .ok_or(PerpError::MathOverflow)?;
     }
 
@@ -207,7 +228,7 @@ mod tests {
     #[test]
     fn with_nothing_open_and_nothing_held_aum_is_the_liquidity() {
         let (_, p) = pool_account(&pool(7_000_000, 0, 0));
-        assert_eq!(pool_aum_usd(&p, accounts(vec![])).unwrap(), 7_000_000);
+        assert_eq!(pool_aum_usd(&p, accounts(vec![]), Unpriced::Refuse).unwrap(), 7_000_000);
     }
 
     #[test]
@@ -215,9 +236,9 @@ mod tests {
         // One market carries positions. Pricing the pool without it would let
         // a depositor buy in at a price that ignores what that market owes.
         let (_, p) = pool_account(&pool(7_000_000, 1, 0));
-        let e = pool_aum_usd(&p, accounts(vec![])).unwrap_err();
+        let e = pool_aum_usd(&p, accounts(vec![]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
-        let e = global_trader_pnl_usd(&p, accounts(vec![])).unwrap_err();
+        let e = global_trader_pnl_usd(&p, accounts(vec![]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
     }
 
@@ -225,7 +246,7 @@ mod tests {
     fn extra_accounts_are_refused_too() {
         // No market is open, so a (market, price) pair has no business here.
         let (_, p) = pool_account(&pool(7_000_000, 0, 0));
-        let e = pool_aum_usd(&p, accounts(vec![unread(), unread()])).unwrap_err();
+        let e = pool_aum_usd(&p, accounts(vec![unread(), unread()]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
     }
 
@@ -234,7 +255,7 @@ mod tests {
         // Leaving a custody out would sell shares without the tokens the LPs
         // hold in it.
         let (_, p) = pool_account(&pool(7_000_000, 0, 1));
-        let e = pool_aum_usd(&p, accounts(vec![])).unwrap_err();
+        let e = pool_aum_usd(&p, accounts(vec![]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
     }
 
@@ -244,7 +265,7 @@ mod tests {
         // 2.5 tokens of a stable at a dollar ($1 is 1,000,000). The backers'
         // 123 tokens are not the LPs' and must not count.
         let c = owned(Pubkey::new_unique(), &custody(key, 0, 2_500_000, true));
-        let aum = pool_aum_usd(&p, accounts(vec![c, unread()])).unwrap();
+        let aum = pool_aum_usd(&p, accounts(vec![c, unread()]), Unpriced::Refuse).unwrap();
         assert_eq!(aum, 7_000_000 + 2_500_000);
     }
 
@@ -254,19 +275,41 @@ mod tests {
         // here is an empty account, and the call still succeeds.
         let (key, p) = pool_account(&pool(7_000_000, 0, 1));
         let c = owned(Pubkey::new_unique(), &custody(key, 0, 0, false));
-        assert_eq!(pool_aum_usd(&p, accounts(vec![c, unread()])).unwrap(), 7_000_000);
+        assert_eq!(pool_aum_usd(&p, accounts(vec![c, unread()]), Unpriced::Refuse).unwrap(), 7_000_000);
     }
 
     #[test]
     fn custodies_out_of_order_or_from_another_pool_are_refused() {
         let (key, p) = pool_account(&pool(7_000_000, 0, 1));
         let wrong_slot = owned(Pubkey::new_unique(), &custody(key, 1, 1, true));
-        let e = pool_aum_usd(&p, accounts(vec![wrong_slot, unread()])).unwrap_err();
+        let e = pool_aum_usd(&p, accounts(vec![wrong_slot, unread()]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteCustodyList));
 
         let elsewhere = owned(Pubkey::new_unique(), &custody(Pubkey::new_unique(), 0, 1, true));
-        let e = pool_aum_usd(&p, accounts(vec![elsewhere, unread()])).unwrap_err();
+        let e = pool_aum_usd(&p, accounts(vec![elsewhere, unread()]), Unpriced::Refuse).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::MarketPoolMismatch));
+    }
+
+    #[test]
+    fn an_unreadable_market_prices_a_withdrawal_at_its_worst_and_refuses_a_deposit() {
+        // One market with open interest whose price cannot be read: a feed
+        // that stopped, or a pool somebody emptied. $3 of budget left, $1 of
+        // it backing, so the most it could cost the LPs is $2.
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut m = crate::instructions::trade::tests::market();
+        m.pool = key;
+        m.long_size_usd = 10_000_000;
+        m.long_avg_entry_price = 1_000_000;
+        m.collateral_usd = 1_000_000;
+        m.loss_budget_usd = 3_000_000;
+        m.backing_usd = 1_000_000;
+        let ma = owned(Pubkey::new_unique(), &m);
+        let list = accounts(vec![ma, unread()]);
+        // A deposit waits for the price.
+        assert!(pool_aum_usd(&p, list, Unpriced::Refuse).is_err());
+        // A withdrawal does not: it is paid as if that market's winners took
+        // everything it can pay, so the LPs who stay are never short.
+        assert_eq!(pool_aum_usd(&p, list, Unpriced::AtWorst).unwrap(), 5_000_000);
     }
 
     #[test]

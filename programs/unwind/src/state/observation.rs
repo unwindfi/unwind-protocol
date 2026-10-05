@@ -9,6 +9,18 @@ use anchor_lang::prelude::*;
 /// The history is what makes it a mark.
 pub const MIN_OBSERVATIONS: u32 = 30;
 
+/// Largest fold weight a lister may give an observation, bps: a reading
+/// counts for at most a tenth of the mark. The site lists at 500.
+///
+/// The observation is created by whoever calls first, with their parameters,
+/// for good. Unbounded, a lister could give a market a fold that takes each
+/// reading nearly whole, and the clamp below would be all that was left.
+pub const MAX_ALPHA_BPS: u16 = 1_000;
+/// Largest clamp a lister may give an observation: 1% of the mark per
+/// reading, which is what the site lists at. Seventy readings, held seventy
+/// seconds apart at least, to double a mark.
+pub const MAX_MOVE_BPS: u16 = 100;
+
 /// Minimum wall-clock span those observations must cover.
 ///
 /// Without it the count is satisfiable in a single block by cranking thirty
@@ -136,8 +148,18 @@ pub struct Observation {
     /// price alone, so two sources never fight over one mark.
     pub keeper_priced: bool,
 
+    /// Depth a budget may be cut to (`derive_market_budget`): the mirror of
+    /// `sustained_depth_usd`. Rises to any higher reading at once and falls
+    /// toward a lower one by `DEPTH_RISE_BPS` of the gap at most once per
+    /// `DEPTH_RISE_MIN_INTERVAL_SEC`, because depth can be thinned for one
+    /// crank as cheaply as it can be parked for one: a cut read off a single
+    /// thin reading let anyone cut a budget, haircut the winners closing in
+    /// the same transaction, and back it straight up again. Zero until the
+    /// first reading.
+    pub budget_depth_usd: u64,
+
     // Carved from, so the account is the same size it always was.
-    pub _reserved: [u8; 11],
+    pub _reserved: [u8; 3],
 }
 
 impl Observation {
@@ -171,44 +193,72 @@ impl Observation {
         Ok(())
     }
 
+    /// Folds one depth reading into `sustained_depth_usd` and
+    /// `budget_depth_usd`.
+    ///
+    /// Sustained depth, which sizes leverage: down at once, up by
+    /// `DEPTH_RISE_BPS` of the gap at most once per
+    /// `DEPTH_RISE_MIN_INTERVAL_SEC`. The asymmetry is the point: a market's
+    /// leverage may fall the moment its pool thins, and may only rise on depth
+    /// that stayed. Budget depth, which a budget may be cut to, is the mirror
+    /// image: up at once, down by the same step on the same clock. Both slow
+    /// moves share `depth_rise_ts`, so a burst of cranks inside one interval
+    /// moves either at most once.
+    pub fn track_depth(&mut self, depth: u64, now: i64) {
+        let due = now >= self.depth_rise_ts.saturating_add(DEPTH_RISE_MIN_INTERVAL_SEC);
+        let mut stepped = false;
+
+        if self.budget_depth_usd == 0 || depth >= self.budget_depth_usd {
+            self.budget_depth_usd = depth;
+        } else if due {
+            let gap = (self.budget_depth_usd - depth) as u128;
+            let step = (gap * DEPTH_RISE_BPS as u128 / BPS).max(1) as u64;
+            self.budget_depth_usd -= step;
+            stepped = true;
+        }
+
+        if depth <= self.sustained_depth_usd {
+            self.sustained_depth_usd = depth;
+        } else if due {
+            let gap = (depth - self.sustained_depth_usd) as u128;
+            // At least one unit, so a rise always moves.
+            let step = (gap * DEPTH_RISE_BPS as u128 / BPS).max(1) as u64;
+            // And never past the next tier's floor. A tenth of an unbounded
+            // gap let one reading ten times a floor clear it: liquidity parked
+            // for a single crank (a flash loan is enough) lifted a new market
+            // from 2x to 5x at once. Capped, a crank buys at most one tier,
+            // and the next honest reading takes it back.
+            let raised = self.sustained_depth_usd.saturating_add(step);
+            self.sustained_depth_usd = match next_depth_floor(self.sustained_depth_usd) {
+                Some(floor) => raised.min(floor),
+                None => raised,
+            };
+            stepped = true;
+        }
+
+        if stepped {
+            self.depth_rise_ts = now;
+        }
+    }
+
     /// Folds a fresh spot reading into the mark.
     ///
     /// The clamp is applied to the *result* of the fold rather than to the
     /// input. Clamping the input would let a sustained spike walk the mark at
     /// full speed once the reading sat inside the band; clamping the output
     /// bounds the mark's velocity regardless of what the pool does.
-    /// Folds one depth reading into `sustained_depth_usd`.
     ///
-    /// Down at once, up by `DEPTH_RISE_BPS` of the gap at most once per
-    /// `DEPTH_RISE_MIN_INTERVAL_SEC`. The asymmetry is the point: a market's
-    /// leverage may fall the moment its pool thins, and may only rise on depth
-    /// that stayed.
-    pub fn track_depth(&mut self, depth: u64, now: i64) {
-        if depth <= self.sustained_depth_usd {
-            self.sustained_depth_usd = depth;
-            return;
-        }
-        if now < self.depth_rise_ts.saturating_add(DEPTH_RISE_MIN_INTERVAL_SEC) {
-            return;
-        }
-        let gap = (depth - self.sustained_depth_usd) as u128;
-        // At least one unit, so a rise always moves.
-        let step = (gap * DEPTH_RISE_BPS as u128 / BPS).max(1) as u64;
-        // And never past the next tier's floor. A tenth of an unbounded gap
-        // let one reading ten times a floor clear it: liquidity parked for a
-        // single crank (a flash loan is enough) lifted a new market from 2x
-        // to 5x at once. Capped, a crank buys at most one tier, and the next
-        // honest reading takes it back.
-        let raised = self.sustained_depth_usd.saturating_add(step);
-        self.sustained_depth_usd = match next_depth_floor(self.sustained_depth_usd) {
-            Some(floor) => raised.min(floor),
-            None => raised,
-        };
-        self.depth_rise_ts = now;
-    }
-
-    pub fn fold(&mut self, spot: u64, now: i64) -> Result<()> {
+    /// One reading per second at most moves the mark. `observe` is
+    /// permissionless and every crank in a transaction or a bundle reads the
+    /// same clock, so a clamp per reading alone let seventy cranks in one
+    /// transaction walk the mark as far as seventy seconds of them should.
+    /// A reading in the same second as the last one is taken and changes
+    /// nothing; `fold` returns whether it folded.
+    pub fn fold(&mut self, spot: u64, now: i64) -> Result<bool> {
         require!(spot > 0, PerpError::InvalidOraclePrice);
+        if self.observations > 0 && now <= self.last_update_ts {
+            return Ok(false);
+        }
 
         if self.observations == 0 {
             self.ewma_price = spot;
@@ -233,7 +283,7 @@ impl Observation {
         self.last_spot = spot;
         self.last_update_ts = now;
         self.observations = self.observations.saturating_add(1);
-        Ok(())
+        Ok(true)
     }
 
     /// Confidence interval implied by how cheap the pool is to move.
@@ -308,7 +358,8 @@ mod tests {
             sustained_depth_usd: 0,
             depth_rise_ts: 0,
             keeper_priced: false,
-            _reserved: [0; 11],
+            budget_depth_usd: 0,
+            _reserved: [0; 3],
         }
     }
 
@@ -377,6 +428,20 @@ mod tests {
         }
         assert!(o.ewma_price >= 1_900_000 && o.ewma_price <= 2_100_000,
                 "got {}", o.ewma_price);
+    }
+
+    #[test]
+    fn a_burst_of_readings_in_one_second_moves_the_mark_one_step() {
+        // Every crank in one transaction, or one bundle, reads the same
+        // clock. Seventy of them against a pool held at 10x must not walk
+        // the mark seventy steps: it moves once per second at most.
+        let mut o = obs();
+        o.fold(1_000_000, 0).unwrap();
+        for _ in 0..70 {
+            o.fold(10_000_000, 1).unwrap();
+        }
+        assert_eq!(o.ewma_price, 1_010_000);
+        assert_eq!(o.observations, 2, "a second reading in the same second is not history");
     }
 
     #[test]
