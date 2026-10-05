@@ -77,6 +77,9 @@ const AUCTION_MS = Number(process.env.AUCTION_MS ?? 1_000);
 /// largest single spend of RPC calls, and almost all of it read empty
 /// batches.
 const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
+/// Markets the auction is working on right now, so a pass starts each one
+/// at most once.
+const auctionWorking = new Set<string>();
 /// How many markets the auction works at once (see `auction`).
 const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 6);
 /// How many marks the keeper pushes at once (see `observer`).
@@ -2757,11 +2760,13 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     if (due.length) heatAuction(10_000);
 
     /*
-     * Up to AUCTION_PARALLEL markets at once. Each market has its own batch
-     * account, so nothing orders them against each other; worked one after
-     * another, every quote, clear and settlement waited on the market before
-     * it, and with a hundred wallets in two dozen markets a pass took minutes
-     * and every batch sat that long past due.
+     * Up to AUCTION_PARALLEL markets at once, each on its own clock. Each
+     * market has its own batch account, so nothing orders them against each
+     * other. Worked one after another, every quote, clear and settlement
+     * waited on the market before it; worked as a pass that waited for all of
+     * them, every market waited on the slowest (one settling thirty orders in
+     * several transactions). A market is started as soon as it is due and
+     * not already being worked, and the pass does not wait for it.
      */
     const work = async ({ m, state, open }: { m: MarketRt; state: any; open: boolean }) => {
       // Quote before clearing, into the batch the takers are waiting in. A
@@ -2781,10 +2786,18 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         }
       }
     };
-    let next = 0;
-    await Promise.all(Array.from({ length: Math.min(AUCTION_PARALLEL, due.length) }, async () => {
-      while (next < due.length) await work(due[next++]);
-    }));
+    for (const d of due) {
+      if (auctionWorking.size >= AUCTION_PARALLEL) break;
+      if (auctionWorking.has(d.m.symbol)) continue;
+      auctionWorking.add(d.m.symbol);
+      void work(d).finally(() => {
+        auctionWorking.delete(d.m.symbol);
+        // A settlement moves positions; the next read of those wallets should
+        // see them rather than a view cached before it.
+        for (const o of settledOwners) accountMemo.delete(o);
+        settledOwners.clear();
+      });
+    }
   };
 
   const clearAndSettle = async (m: MarketRt, state: any) => {
@@ -2892,11 +2905,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   {
     const pass = async () => {
       await rpcWho.run("auction", auction).catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
-      // A settlement moves positions; the next read of those wallets should see
-      // them rather than a view cached before it. Only those wallets: clearing
-      // everyone's on every pass while orders flowed left nothing cached.
-      for (const o of settledOwners) accountMemo.delete(o);
-      settledOwners.clear();
+      // Each market's work clears the cached views of the wallets it settled
+      // when it finishes (see `auction`), not when the pass does.
       const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
       const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
         ? void pass() : void setTimeout(wait, 100);
