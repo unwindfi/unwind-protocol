@@ -107,7 +107,12 @@ export interface Account {
             triggerPrice: number; triggerAbove: boolean; expiryTs: number }[];
   orderFills: { t: number; symbol: string; owner: string; trigger: number;
                 price: number; above: boolean; expired: boolean }[];
-  lp: { held: number; price: number; value: number };
+  lp: {
+    held: number; price: number; value: number;
+    /// LP tokens in escrow on their way out: paid at the pool's value when
+    /// claimed, claimable once `slotsLeft` reaches zero.
+    pending?: { shares: number; value: number; readySlot: number; slotsLeft: number; secondsLeft: number } | null;
+  };
   pool: { aum: number; liquidity: number; locked: number; free: number;
           utilization: number; maxUtilization: number; traderPnl: number;
           lpSupply: number; lpPrice: number;

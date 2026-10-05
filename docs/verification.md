@@ -53,6 +53,7 @@ Around the auction, with the bounds each harness states:
 | The depth a budget may be cut to falls by at most a tenth of the gap per crank, never below the reading | `one_crank_cuts_budget_depth_by_a_tenth_at_most` |
 | An observed mark's confidence never exceeds the mark | `observed_confidence_never_exceeds_the_price` |
 | Pyth readings are rescaled exactly (up) or truncated (down), or refused; never wrapped or served as zero | `scaling_a_reading_up_is_exact_or_refused`, `scaling_a_reading_down_truncates_or_refuses` |
+| A step of the risk price lands between where it was and the oracle, never at zero, and moves no more than its cap | `the_risk_price_never_overshoots_or_passes_its_cap` |
 | For a confidence inside the price, `conf_bps` is the floor of the true ratio | `conf_bps_is_the_floor_of_the_true_ratio` |
 
 Money math, with the bounds each harness states:

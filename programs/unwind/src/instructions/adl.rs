@@ -123,7 +123,8 @@ pub fn auto_deleverage(ctx: Context<AutoDeleverage>) -> Result<()> {
         &ctx.accounts.market.key(),
     )?;
 
-    ctx.accounts.market.accept_price(&oracle)?;
+    // Stepped like every other accepted price, so the risk price keeps up.
+    ctx.accounts.market.accept_price(&oracle, clock.slot)?;
 
     let is_long = ctx.accounts.position.is_long;
     let close_size = ctx.accounts.position.size_usd;

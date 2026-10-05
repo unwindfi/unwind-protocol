@@ -2,7 +2,7 @@
 //! and what either does to the LPs who stay. Also the in-kind valuation that
 //! AUM adds on top of USDC liquidity.
 //!
-//! `add_liquidity` and `remove_liquidity` are Anchor handlers, so their share
+//! `add_liquidity` and `claim_withdraw` are Anchor handlers, so their share
 //! arithmetic cannot be called on its own. The helpers below repeat it line
 //! for line, built from the program's own `mul_div_u64`, `bps_of`,
 //! `Pool::aum_usd` and `Pool::free_liquidity_usd`, and each one names the
@@ -135,8 +135,8 @@ fn shares_for_deposit(amount: u64, fee_bps: u16, lp_supply: u64, aum_before: u64
 }
 
 /// What burning `lp_amount` pays, as `(gross, net)`. Mirrors
-/// `remove_liquidity`, from `let gross = mul_div_u64(...)` to the
-/// `net > 0` check.
+/// `withdrawal_value` (used by `claim_withdraw`), from
+/// `let gross = mul_div_u64(...)` to the `net > 0` check.
 fn value_of_withdrawal(lp_amount: u64, aum: u64, lp_supply: u64, fee_bps: u16) -> Result<(u64, u64)> {
     let gross = mul_div_u64(lp_amount, aum as u128, lp_supply as u128)?;
     let fee = bps_of(gross, fee_bps)?;
@@ -147,8 +147,8 @@ fn value_of_withdrawal(lp_amount: u64, aum: u64, lp_supply: u64, fee_bps: u16) -
     Ok((gross, net))
 }
 
-/// The liquidity checks on a withdrawal. Mirrors the block in
-/// `remove_liquidity` that starts `let pool = &ctx.accounts.pool;`.
+/// The liquidity checks on a withdrawal. Mirrors
+/// `check_withdrawal_allowed` (used by `claim_withdraw`).
 fn withdrawal_allowed(pool: &Pool, gross: u64) -> bool {
     if gross > pool.free_liquidity_usd() {
         return false;
@@ -213,7 +213,7 @@ fn a_deposit_mints_every_whole_share_it_paid_for_and_no_more() {
 /// shares, priced at the AUM and supply after the deposit, are worth at
 /// most the deposit (`lp * aum_after <= amount * (supply + lp)`); with
 /// `a_withdrawal_pays_at_most_its_share` that bounds what
-/// `remove_liquidity` pays for them. This is the round trip a depositor
+/// `claim_withdraw` pays for them. This is the round trip a depositor
 /// would use to pull value out of the LPs already in.
 ///
 /// Bounds: liquidity, in-kind value, supply and deposit 0 to 31, PnL from
@@ -406,7 +406,7 @@ fn a_deposit_raises_aum_by_at_most_itself() {
 
 /// A withdrawal pays at most its pro rata share of AUM, and withdrawing
 /// every share pays exactly AUM, so the last LP out is not shorted either.
-/// This is the `gross` of `remove_liquidity`, before the fee. That the fee
+/// This is the `gross` of `claim_withdraw`, before the fee. That the fee
 /// only lowers it is `mul_div_by_at_most_one_never_grows` in `money.rs`
 /// (`bps_of` of at most 10,000 bps never exceeds the amount), and that the
 /// share is short by less than one unit is `mul_div_is_floor_and_never_panics`.
@@ -466,7 +466,7 @@ fn a_withdrawal_lowers_aum_by_at_most_what_it_pays() {
 /// LP's exit from being paid out of the others.
 ///
 /// The payout is taken as unknown, constrained only by what
-/// `a_withdrawal_pays_at_most_its_share` proves of `remove_liquidity`'s
+/// `a_withdrawal_pays_at_most_its_share` proves of `claim_withdraw`'s
 /// arithmetic (`gross * supply <= lp * aum`, `net <= gross`). Running the
 /// division here as well took over eight minutes.
 ///

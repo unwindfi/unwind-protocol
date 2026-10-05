@@ -83,7 +83,11 @@ fn blank_market() -> Market {
         backing_drawn_usd: 0,
         last_price_ts: 0,
         depth_leverage_x: 0,
-        _reserved: [0; 2],
+        risk_step_rem: 0,
+        last_price: 0,
+        risk_price: 0,
+        risk_slot: 0,
+        _reserved: [0; 32],
         volume_usd: 0,
         deployer_synced_volume_usd: 0,
         deployer_rewards_usd: 0,
@@ -556,13 +560,13 @@ fn a_market_never_goes_back_to_an_older_price() {
     }
     let start = m.last_price_ts;
 
-    let first_ok = m.accept_price(&first).is_ok();
+    let first_ok = m.accept_price(&first, 0).is_ok();
     let mid = m.last_price_ts;
     assert!(mid >= start);
     if !first_ok {
         assert_eq!(mid, start, "a refused price is not recorded");
     }
-    let second_ok = m.accept_price(&second).is_ok();
+    let second_ok = m.accept_price(&second, 0).is_ok();
     assert!(m.last_price_ts >= mid);
     if first_ok {
         assert_eq!(mid as i64, first.published_ts);

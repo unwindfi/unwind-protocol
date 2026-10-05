@@ -79,6 +79,16 @@ impl MarketParams {
             (self.liquidation_fee_bps as u128) < self.maintenance_margin_bps as u128,
             PerpError::InvalidParameter
         );
+        // One step of the risk price is at most `RISK_PRICE_STEP_BPS_PER_SLOT`
+        // x `RISK_PRICE_MAX_GAP_SLOTS`. A position healthy before a step must
+        // still have its liquidation fee left after it, or a liquidation would
+        // be paid out of LP capital.
+        require!(
+            self.maintenance_margin_bps as u64
+                >= RISK_PRICE_STEP_BPS_PER_SLOT * RISK_PRICE_MAX_GAP_SLOTS
+                    + self.liquidation_fee_bps as u64,
+            PerpError::MarginEnvelope
+        );
         Ok(())
     }
 
@@ -624,6 +634,57 @@ pub fn add_custody(ctx: Context<AddCustody>, params: CustodyParams) -> Result<()
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct ResizeMarket<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: Owned by this program and carrying `Market`'s discriminator,
+    /// both checked in the handler. Not an `Account<Market>`: a market listed
+    /// before the account grew is too short to deserialise, which is the
+    /// whole reason this instruction exists.
+    #[account(mut, owner = crate::ID)]
+    pub market: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Grows a market listed before `Market` gained its newer fields to the
+/// current size, zero-filling the new bytes; the payer covers the rent.
+///
+/// Permissionless: it writes nothing but zeroes, and each new field reads
+/// zero as "nothing recorded yet". A market already at the current size is
+/// left alone.
+pub fn resize_market(ctx: Context<ResizeMarket>) -> Result<()> {
+    let market = ctx.accounts.market.to_account_info();
+    let target = 8 + Market::INIT_SPACE;
+    {
+        let data = market.try_borrow_data()?;
+        require!(
+            data.len() >= 8 && data[..8] == *Market::DISCRIMINATOR,
+            PerpError::InvalidParameter
+        );
+        if data.len() >= target {
+            return Ok(());
+        }
+    }
+    let need = Rent::get()?
+        .minimum_balance(target)
+        .saturating_sub(market.lamports());
+    if need > 0 {
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: ctx.accounts.payer.to_account_info(),
+                    to: market.clone(),
+                },
+            ),
+            need,
+        )?;
+    }
+    market.resize(target)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,6 +716,21 @@ mod tests {
             price_source: 1,
             observation: Pubkey::default(),
         }
+    }
+
+    #[test]
+    fn maintenance_must_cover_the_risk_price_envelope_and_the_fee() {
+        let envelope = (RISK_PRICE_STEP_BPS_PER_SLOT * RISK_PRICE_MAX_GAP_SLOTS) as u16;
+        let mut p = site_listing();
+        p.max_leverage_bps = 200_000; // 20x, so maintenance can sit low
+        p.liquidation_fee_bps = 100;
+        p.maintenance_margin_bps = envelope + 100;
+        p.validate().unwrap();
+        p.maintenance_margin_bps = envelope + 99;
+        assert!(p.validate().is_err(), "one bp short of the envelope is refused");
+        // The 20x market the authority lists (scripts/markets.ts) still fits.
+        p.maintenance_margin_bps = 250;
+        p.validate().unwrap();
     }
 
     #[test]

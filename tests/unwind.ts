@@ -11,39 +11,97 @@ import {
   getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { assert } from "chai";
+import { createHash } from "crypto";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { Unwind } from "../target/types/unwind";
 
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 const USD = (n: number) => new BN(Math.round(n * 1e6));
-/// These fixtures are written as accounts of the real receiver's address, so
-/// this pool is told to trust that program.
-const PYTH_RECEIVER = new PublicKey("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 const PRICE = (n: number) => new BN(Math.round(n * 1e6));
+const EXP = -8;
 
-const manifest = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "fixtures", "manifest.json"), "utf8")
-);
-const FEED_ID = Buffer.from(manifest.feedId, "hex");
-const oracle = (name: string) => new PublicKey(manifest.accounts[name]);
+/// Prices are posted through `mock-pyth`, one account for the feed, rather
+/// than swapped between fixture accounts. A market refuses a second, different
+/// price under a publish time it has already acted on, and fixtures generated
+/// in one run all share one, so every move here is a fresh post at a later
+/// second.
+const FEED_ID = createHash("sha256").update("test-feed:AAPLx").digest().subarray(0, 32);
 
-/// The fixtures are named for the price they hold, so the limit an order needs
-/// can be read off the name rather than fetched back out of the account.
-/// Fixtures named `at_N` hold $N. The others — `partial`, `wide_conf` — exist
-/// to be rejected, and what an order's limit is on a market that will not
-/// quote does not matter, so they take the default.
-const priceOf = (name: string) => {
-  const dollars = Number(name.replace(/^at_/, ""));
-  return (Number.isFinite(dollars) ? dollars : 200) * 1e6;
-};
+/// A price to post: dollars, with a 1 bp confidence interval and full
+/// verification unless a test asks for the kind the program must refuse.
+type Quote = number | { price: number; confBps?: number; full?: boolean };
+const quoteOf = (q: Quote) => (typeof q === "number" ? { price: q } : q);
+
+/// Who signs price posts. `npm run build` passes `--features devnet` to every
+/// program, because the perps program needs it to trust a stand-in receiver;
+/// mock-pyth's `devnet` build then accepts posts from its relay key alone
+/// (NotRelayAuthority otherwise). Sign with that key when it is on this
+/// machine, and with the wallet when it is not, which a plain build accepts.
+function pricePoster(fallback: Keypair): Keypair {
+  const file = process.env.RELAY_KEYPAIR ?? path.join(os.homedir(), ".config/unwind/relay.json");
+  if (!fs.existsSync(file)) return fallback;
+  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));
+}
 
 describe("unwind", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Unwind as Program<Unwind>;
+  const pyth = anchor.workspace.MockPyth as Program<any>;
   const authority = provider.wallet as anchor.Wallet;
+  const poster = pricePoster(authority.payer);
+  const oracle = PublicKey.findProgramAddressSync(
+    [Buffer.from("price"), FEED_ID], pyth.programId)[0];
+
+  /// What was last posted, and under which second, so an unchanged quote is
+  /// not posted again and a changed one never reuses a second.
+  let lastQuote = "";
+  let lastTs = 0;
+
+  const post = async (q: Quote) => {
+    const { price, confBps, full = true } = quoteOf(q);
+    const key = JSON.stringify([price, confBps, full]);
+    if (key === lastQuote) return;
+    let ts = Math.floor(Date.now() / 1000);
+    if (ts <= lastTs) {
+      await new Promise((r) => setTimeout(r, (lastTs + 1) * 1000 - Date.now() + 50));
+      ts = lastTs + 1;
+    }
+    const raw = Math.round(price * 10 ** -EXP);
+    await pyth.methods
+      .postPrice({
+        feedId: Array.from(FEED_ID),
+        price: new BN(raw),
+        conf: new BN(Math.round(raw * (confBps ?? 1) / 10_000)),
+        exponent: EXP,
+        publishTime: new BN(ts),
+        fullyVerified: full,
+      })
+      .accounts({ payer: poster.publicKey, priceUpdate: oracle, systemProgram: SystemProgram.programId })
+      .signers([poster])
+      .rpc();
+    lastQuote = key;
+    lastTs = ts;
+  };
+
+  /// Cranks the risk price until it reaches the posted one. Liquidation reads
+  /// a risk price that walks toward the oracle by at most 40 bps a slot, so a
+  /// test that moves the market and then liquidates has to let it walk.
+  const catchUp = async () => {
+    for (let i = 0; i < 60; i++) {
+      await program.methods.stepRiskPrice()
+        .accounts({ pool, market, priceUpdate: oracle } as any)
+        .rpc();
+      const m: any = await program.account.market.fetch(market);
+      if (m.riskPrice.eq(m.lastPrice)) return;
+      // Three slots: the most one step counts.
+      await new Promise((r) => setTimeout(r, 1_300));
+    }
+    throw new Error("the risk price did not reach the oracle");
+  };
 
   let usdcMint: PublicKey;
   let pool: PublicKey;
@@ -110,15 +168,17 @@ describe("unwind", () => {
   /// Deposits and withdrawals price LP shares from the pool's AUM
   /// checkpoint, so one is taken, over every market with open interest,
   /// before each.
-  const checkpoint = async (price = "at_200") =>
-    program.methods.checkpointAum(true)
+  const checkpoint = async (price: Quote = 200) => {
+    await post(price);
+    return program.methods.checkpointAum(true)
       .accounts({ payer: lp.publicKey, pool })
-      .remainingAccounts(await allMarkets(oracle(price)))
+      .remainingAccounts(await allMarkets(oracle))
       .signers([lp])
       .rpc();
+  };
 
   before(async () => {
-    for (const kp of [lp, trader, liquidator]) {
+    for (const kp of [lp, trader, liquidator, poster]) {
       const sig = await provider.connection.requestAirdrop(kp.publicKey, 2e9);
       await provider.connection.confirmTransaction(sig);
     }
@@ -148,9 +208,11 @@ describe("unwind", () => {
       program.programId
     );
 
+    await post(200);
+
     await program.methods
       .initializePool({
-        pythReceiver: PYTH_RECEIVER,
+        pythReceiver: pyth.programId,
         // Write-once, like the receiver. The authority stands in for it here.
         chainFeeDestination: authority.publicKey,
         addLiquidityFeeBps: 0,
@@ -226,7 +288,7 @@ describe("unwind", () => {
       authority.publicKey, 100_000e6);
   });
 
-  const addLiquidity = async (amount: BN, price = "at_200") => {
+  const addLiquidity = async (amount: BN, price: Quote = 200) => {
     await checkpoint(price);
     return program.methods
       .addLiquidity(amount, new BN(0))
@@ -258,12 +320,12 @@ describe("unwind", () => {
   const BATCH_WAIT_MS = 2_000;
 
   const open = async (
-    isLong: boolean, collateral: BN, size: BN, price = "at_200", who = trader,
+    isLong: boolean, collateral: BN, size: BN, price: Quote = 200, who = trader,
     whoUsdc = () => traderUsdc
   ) => {
     // A limit well through the index, so the order crosses whatever the batch
     // finds. The limit is the slippage control now; there is no separate one.
-    const px = Number(priceOf(price));
+    const px = quoteOf(price).price * 1e6;
     const limit = new BN(Math.round(px * (isLong ? 1.1 : 0.9)));
 
     await program.methods
@@ -286,12 +348,13 @@ describe("unwind", () => {
   /// Seals the batch and settles it. Shared by opening and closing, because
   /// the program stopped distinguishing the two at this point.
   const runBatch = async (
-    price = "at_200", who = trader, whoUsdc = () => traderUsdc
+    price: Quote = 200, who = trader, whoUsdc = () => traderUsdc
   ) => {
     await new Promise((r) => setTimeout(r, BATCH_WAIT_MS));
+    await post(price);
     await program.methods
       .clearBatch()
-      .accounts({ pool, market, batch: batchPda(), priceUpdate: oracle(price) })
+      .accounts({ pool, market, batch: batchPda(), priceUpdate: oracle })
       .rpc();
 
     const sealed: any = await program.account.batch.fetch(batchPda());
@@ -311,15 +374,35 @@ describe("unwind", () => {
     }
   };
 
+  /// Takes back an order a refused clear left resting in the batch. Left there,
+  /// the next clear would book it alongside whatever the next test opens.
+  const cancelResting = async (who = trader, whoUsdc = () => traderUsdc) => {
+    const b: any = await program.account.batch.fetch(batchPda());
+    for (let i = 0; i < b.orders.length; i++) {
+      const o = b.orders[i];
+      if (!o.active || !new PublicKey(o.owner).equals(who.publicKey)) continue;
+      await program.methods
+        .cancelBatchOrder(i)
+        .accounts({
+          owner: who.publicKey, pool, market, batch: batchPda(),
+          usdcMint, usdcVault, ownerUsdc: whoUsdc(),
+          position: positionPda(who.publicKey),
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([who])
+        .rpc();
+    }
+  };
+
   /// Closing is a reduce-only order through the same batch as everything else.
   /// `size` of zero means whatever is left unpromised.
   const close = async (
-    size: BN, price = "at_200", who = trader, whoUsdc = () => traderUsdc
+    size: BN, price: Quote = 200, who = trader, whoUsdc = () => traderUsdc
   ) => {
     const pos: any = await program.account.position.fetch(positionPda(who.publicKey));
     const want = size.isZero() ? pos.sizeUsd.sub(pos.closingUsd) : size;
     const isBid = !pos.isLong;
-    const px = Number(priceOf(price));
+    const px = quoteOf(price).price * 1e6;
     const limit = new BN(Math.round(px * (isBid ? 1.1 : 0.9)));
 
     await program.methods
@@ -366,7 +449,7 @@ describe("unwind", () => {
     const poolMid = await program.account.pool.fetch(pool);
     assert.equal(poolMid.lockedUsd.toString(), "0");
 
-    await close(new BN(0), "at_220"); // +10% on the index
+    await close(new BN(0), 220); // +10% on the index
     const after = await getAccount(provider.connection, traderUsdc);
 
     const pnl = Number(after.amount - before.amount) / 1e6;
@@ -385,8 +468,8 @@ describe("unwind", () => {
 
   it("keeps a losing trader's collateral in the pool", async () => {
     const poolBefore = await program.account.pool.fetch(pool);
-    await open(true, USD(1_200), USD(10_000), "at_200");
-    await close(new BN(0), "at_180"); // -10% on $10k of notional wipes out $1.2k
+    await open(true, USD(1_200), USD(10_000), 200);
+    await close(new BN(0), 180); // -10% on $10k of notional wipes out $1.2k
     const poolAfter = await program.account.pool.fetch(pool);
 
     assert.isAbove(
@@ -400,20 +483,23 @@ describe("unwind", () => {
 
   it("refuses to quote when the oracle confidence is too wide", async () => {
     try {
-      await open(true, USD(1_000), USD(5_000), "wide_conf");
+      // A 5% confidence interval, against a 2% cap.
+      await open(true, USD(1_000), USD(5_000), { price: 200, confBps: 500 });
       assert.fail("expected the market to halt on a wide confidence interval");
     } catch (e) {
       assert.include(e.toString(), "OracleConfidenceTooWide");
     }
+    await cancelResting();
   });
 
   it("rejects a partially verified price update", async () => {
     try {
-      await open(true, USD(1_000), USD(5_000), "partial");
+      await open(true, USD(1_000), USD(5_000), { price: 200, full: false });
       assert.fail("expected partial verification to be rejected");
     } catch (e) {
       assert.include(e.toString(), "InsufficientOracleVerification");
     }
+    await cancelResting();
   });
 
   it("rejects leverage above the market maximum", async () => {
@@ -423,6 +509,7 @@ describe("unwind", () => {
     } catch (e) {
       assert.include(e.toString(), "LeverageTooHigh");
     }
+    await cancelResting();
   });
 
   it("tightens leverage while the underlying market is closed", async () => {
@@ -437,6 +524,7 @@ describe("unwind", () => {
     } catch (e) {
       assert.include(e.toString(), "LeverageTooHigh");
     }
+    await cancelResting();
 
     await program.methods
       .setSession(0)
@@ -445,7 +533,7 @@ describe("unwind", () => {
   });
 
   it("lets anyone liquidate a position through its maintenance margin", async () => {
-    await open(true, USD(1_000), USD(8_000), "at_200"); // 8x
+    await open(true, USD(1_000), USD(8_000), 200); // 8x
 
     // Healthy at $200: liquidation must not be possible yet.
     try {
@@ -456,7 +544,7 @@ describe("unwind", () => {
           pool, market,
           position: positionPda(trader.publicKey),
           owner: trader.publicKey,
-          priceUpdate: oracle("at_200"),
+          priceUpdate: oracle,
           usdcMint, usdcVault,
           ownerUsdc: traderUsdc,
           liquidatorUsdc,
@@ -469,7 +557,11 @@ describe("unwind", () => {
       assert.include(e.toString(), "PositionHealthy", `got: ${e}`);
     }
 
-    // At $100 the position is far through its margin.
+    // At $180, 10% down at 8x, the position is through its margin. The risk
+    // price liquidation reads follows a move at 40 bps a slot, so the move is
+    // stepped in before anyone can act on it.
+    await post(180);
+    await catchUp();
     await program.methods
       .liquidate()
       .accounts({
@@ -477,7 +569,7 @@ describe("unwind", () => {
         pool, market,
         position: positionPda(trader.publicKey),
         owner: trader.publicKey,
-        priceUpdate: oracle("at_100"),
+        priceUpdate: oracle,
         usdcMint, usdcVault,
         ownerUsdc: traderUsdc,
         liquidatorUsdc,
@@ -493,7 +585,7 @@ describe("unwind", () => {
   });
 
   it("prices LP shares against unrealized trader PnL", async () => {
-    await open(true, USD(2_000), USD(10_000), "at_200");
+    await open(true, USD(2_000), USD(10_000), 200);
 
     // Two identical deposits, differing only in where the index sits. The
     // second is made while traders are ~$1,000 up, which is a loss the pool has
@@ -502,11 +594,15 @@ describe("unwind", () => {
     // than either one in isolation keeps the assertion independent of fees and
     // PnL accumulated by earlier tests.
     const before1 = (await getAccount(provider.connection, lpLp)).amount;
-    await addLiquidity(USD(10_000), "at_200");
+    await addLiquidity(USD(10_000), 200);
     const minted1 = (await getAccount(provider.connection, lpLp)).amount - before1;
 
+    // A deposit counts the market at whichever of the oracle and the risk
+    // price owes traders less, so the move has to be stepped in first.
+    await post(220);
+    await catchUp();
     const before2 = (await getAccount(provider.connection, lpLp)).amount;
-    await addLiquidity(USD(10_000), "at_220");
+    await addLiquidity(USD(10_000), 220);
     const minted2 = (await getAccount(provider.connection, lpLp)).amount - before2;
 
     assert.isAbove(
@@ -514,7 +610,7 @@ describe("unwind", () => {
       "unrealized trader profit must lower the LP share price"
     );
 
-    await close(new BN(0), "at_220");
+    await close(new BN(0), 220);
   });
 
   it("leaves a market nobody trades out of the LP share price", async () => {
@@ -561,11 +657,12 @@ describe("unwind", () => {
     }
     // A pass over the traded market makes it priceable again.
     await addLiquidity(USD(1_000));
-    await close(new BN(0));
+    await close(new BN(0), 200);
+    assert.equal((await program.account.pool.fetch(pool)).marketsWithOi, 0);
   });
 
   it("carries a position through a stock split unchanged", async () => {
-    await open(true, USD(2_000), USD(10_000), "at_200");
+    await open(true, USD(2_000), USD(10_000), 200);
     const before = await program.account.position.fetch(positionPda(trader.publicKey));
 
     await program.methods
@@ -593,7 +690,7 @@ describe("unwind", () => {
     // return the collateral less fees, not a 50% loss.
     const collateral = Number(after.collateralUsd) / 1e6;
     const balBefore = (await getAccount(provider.connection, traderUsdc)).amount;
-    await close(new BN(0), "at_100");
+    await close(new BN(0), 100);
     const returned = Number(
       (await getAccount(provider.connection, traderUsdc)).amount - balBefore
     ) / 1e6;
@@ -608,28 +705,62 @@ describe("unwind", () => {
     );
   });
 
-  it("lets LPs withdraw with positions open, since nothing is held for them", async () => {
-    await open(true, USD(50_000), USD(400_000), "at_200");
+  it("lets LPs withdraw with positions open, after the cooldown, at the value then", async () => {
+    await open(true, USD(50_000), USD(400_000), 200);
 
     // Half the pool: far past what the old $400k reserve would have left free.
     const lpSupply = (await getAccount(provider.connection, lpLp)).amount;
     const half = new BN((lpSupply / 2n).toString());
+    const [request] = PublicKey.findProgramAddressSync(
+      [Buffer.from("withdraw_request"), pool.toBuffer(), lp.publicKey.toBuffer()], program.programId);
+    const [escrowLp] = PublicKey.findProgramAddressSync(
+      [Buffer.from("withdraw_escrow"), request.toBuffer()], program.programId);
+    const [traderRecord] = PublicKey.findProgramAddressSync(
+      [Buffer.from("trader"), lp.publicKey.toBuffer()], program.programId);
+    const accounts = {
+      owner: lp.publicKey,
+      pool, usdcMint, usdcVault, lpMint,
+      ownerUsdc: lpUsdc, ownerLp: lpLp,
+      request, escrowLp, trader: traderRecord,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any;
+
+    await program.methods.requestWithdraw(half).accounts(accounts).signers([lp]).rpc();
+    // The shares left the wallet but not the supply.
+    assert.equal((await getAccount(provider.connection, escrowLp)).amount.toString(), half.toString());
+
+    // Claims price from the AUM checkpoint as deposits do, so one is taken
+    // right before each.
+    const claim = async () => {
+      await checkpoint();
+      return program.methods
+        .claimWithdraw(half, new BN(0))
+        .accounts(accounts)
+        .remainingAccounts([])
+        .signers([lp])
+        .rpc();
+    };
+
+    // Straight away it is refused: the cooldown has not run.
+    try {
+      await claim();
+      assert.fail("claimed inside the cooldown");
+    } catch (e: any) {
+      assert.match(String(e), /WithdrawCooling/);
+    }
+
+    const r: any = await program.account.withdrawRequest.fetch(request);
+    const ready = Number(r.requestSlot) + 150;
+    while ((await provider.connection.getSlot("confirmed")) < ready) {
+      await new Promise((ok) => setTimeout(ok, 400));
+    }
+
     const before = (await getAccount(provider.connection, lpUsdc)).amount;
-    await checkpoint();
-    await program.methods
-      .removeLiquidity(half, new BN(0))
-      .accounts({
-        owner: lp.publicKey,
-        pool, usdcMint, usdcVault, lpMint,
-        ownerUsdc: lpUsdc, ownerLp: lpLp,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .remainingAccounts([])
-      .signers([lp])
-      .rpc();
+    await claim();
     const after = (await getAccount(provider.connection, lpUsdc)).amount;
     assert.isTrue(after > before, "the withdrawal paid out");
+    assert.isNull(await program.account.withdrawRequest.fetchNullable(request), "the request closed");
 
-    await close(new BN(0), "at_200");
+    await close(new BN(0), 200);
   });
 });

@@ -64,8 +64,8 @@ fn any_market_params() -> MarketParams {
 /// The consistency rules `validate` documents, written out independently of
 /// it: a position opened at the maximum leverage starts with more margin than
 /// maintenance (initial margin is 1 / leverage, in bps), a liquidation fee
-/// fits inside maintenance, the spread cap is above its floor, and the rates
-/// that are fractions stay fractions.
+/// fits inside maintenance with one risk price step to spare, the spread cap
+/// is above its floor, and the rates that are fractions stay fractions.
 fn consistent(p: &MarketParams) -> bool {
     let bps = BPS as u64;
     p.max_leverage_bps > 0
@@ -80,6 +80,9 @@ fn consistent(p: &MarketParams) -> bool {
         && (p.max_conf_bps as u64) < bps
         && (p.closed_session_oi_mult_bps as u64) <= bps
         && p.liquidation_fee_bps < p.maintenance_margin_bps
+        // maintenance covers the risk price's largest step (40 bps a slot,
+        // at most 3 slots) and the liquidation fee
+        && p.maintenance_margin_bps as u64 >= 120 + p.liquidation_fee_bps as u64
 }
 
 /// The listing bounds from constants.rs, written out independently of

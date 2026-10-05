@@ -531,3 +531,32 @@ fn a_wider_confidence_never_reads_as_narrower() {
     let b = OraclePrice { price, conf: wide, published_ts: 0 }.conf_bps().unwrap();
     assert!(a <= b);
 }
+
+// Risk price
+
+/// One step of the risk price lands between where it was and the oracle,
+/// never past the oracle, never at zero, and moves no further than the cap
+/// allows (plus the carried remainder, which is under one unit). The
+/// remainder it carries is always under one unit too.
+///
+/// Bounds: prices up to 2^20 units (about $1 at six decimals, the range
+/// where truncation and the carried remainder matter most) and caps up
+/// to the largest single step, 120 bps; the remainder over its whole range.
+#[kani::proof]
+#[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
+fn the_risk_price_never_overshoots_or_passes_its_cap() {
+    let cur: u64 = kani::any();
+    let target: u64 = kani::any();
+    let bps: u64 = kani::any();
+    let rem: u16 = kani::any();
+    kani::assume(cur > 0 && cur <= 1 << 20);
+    kani::assume(target > 0 && target <= 1 << 20);
+    kani::assume(bps <= RISK_PRICE_STEP_BPS_PER_SLOT * RISK_PRICE_MAX_GAP_SLOTS);
+    kani::assume((rem as u128) < BPS);
+
+    let (next, rem_after) = crate::oracle::risk_step(cur, target, bps, rem).unwrap();
+    assert!(next >= cur.min(target) && next <= cur.max(target));
+    assert!(next > 0);
+    assert!((next.abs_diff(cur) as u128) * BPS <= cur as u128 * bps as u128 + rem as u128);
+    assert!((rem_after as u128) < BPS);
+}

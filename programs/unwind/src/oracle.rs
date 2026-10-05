@@ -107,6 +107,7 @@ pub fn read_price(
         msg.publish_time.saturating_add(max_age_sec as i64) >= clock.unix_timestamp,
         PerpError::StaleOracle
     );
+    check_not_future(msg.publish_time, clock.unix_timestamp)?;
     require!(msg.price > 0, PerpError::InvalidOraclePrice);
 
     let out = rescale(msg.price, msg.conf, msg.exponent, msg.publish_time)?;
@@ -115,6 +116,51 @@ pub fn read_price(
         PerpError::OracleConfidenceTooWide
     );
     Ok(out)
+}
+
+/// Refuses a publish time more than `ORACLE_MAX_FUTURE_SEC` ahead of `now`.
+///
+/// Prices only move forward in time for a market (`Market::accept_price`), so
+/// one accepted from the future would refuse every honest price after it until
+/// the clock caught up.
+pub fn check_not_future(publish_time: i64, now: i64) -> Result<()> {
+    require!(
+        publish_time <= now.saturating_add(ORACLE_MAX_FUTURE_SEC),
+        PerpError::OracleFromFuture
+    );
+    Ok(())
+}
+
+/// One step of a risk price from `current` toward `target`, by at most
+/// `max_bps` of `current`.
+///
+/// `rem` is what the last step's division left over, in bps of a unit,
+/// carried so that a price too small for a step to move it a whole unit is
+/// not pinned there for good: it moves a unit every few steps instead. Returns
+/// the new price and the remainder to carry. Lands on the target, and clears
+/// the remainder, when the target is inside the allowance.
+pub fn risk_step(current: u64, target: u64, max_bps: u64, rem: u16) -> Result<(u64, u16)> {
+    if current == target {
+        return Ok((current, 0));
+    }
+    if max_bps == 0 {
+        return Ok((current, rem));
+    }
+    let numerator = (current as u128)
+        .checked_mul(max_bps as u128)
+        .and_then(|n| n.checked_add(rem as u128))
+        .ok_or(PerpError::MathOverflow)?;
+    let max_delta = numerator / BPS;
+    let rem_after = (numerator % BPS) as u16;
+    let distance = current.abs_diff(target) as u128;
+    if max_delta >= distance {
+        return Ok((target, 0));
+    }
+    // `max_delta < distance <= u64::MAX`, so it fits, and the step stays
+    // strictly between the two prices.
+    let delta = max_delta as u64;
+    let next = if target > current { current + delta } else { current - delta };
+    Ok((next, rem_after))
 }
 
 /// Reads a mark from an `Observation` account, for assets Pyth does not cover.
@@ -196,6 +242,68 @@ pub(crate) fn rescale(price: i64, conf: u64, exponent: i32, published_ts: i64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_publish_time_ahead_of_the_chain_is_refused() {
+        let now = 1_700_000_000;
+        check_not_future(now, now).unwrap();
+        check_not_future(now - 30, now).unwrap();
+        // Inside the clock-skew allowance: the relay posts at wall time and
+        // the chain's clock can trail it by a second or two.
+        check_not_future(now + ORACLE_MAX_FUTURE_SEC, now).unwrap();
+        assert!(check_not_future(now + ORACLE_MAX_FUTURE_SEC + 1, now).is_err());
+        assert!(check_not_future(i64::MAX, now).is_err());
+    }
+
+    #[test]
+    fn the_risk_price_moves_at_most_the_cap() {
+        // $100, 40 bps allowed: $0.40 of a $10 gap, either way.
+        assert_eq!(risk_step(100_000_000, 110_000_000, 40, 0).unwrap(), (100_400_000, 0));
+        assert_eq!(risk_step(100_000_000, 90_000_000, 40, 0).unwrap(), (99_600_000, 0));
+    }
+
+    #[test]
+    fn the_risk_price_lands_on_a_target_inside_the_cap() {
+        assert_eq!(risk_step(100_000_000, 100_300_000, 40, 0).unwrap(), (100_300_000, 0));
+        assert_eq!(risk_step(100_000_000, 100_000_000, 40, 0).unwrap(), (100_000_000, 0));
+    }
+
+    #[test]
+    fn a_zero_allowance_holds_the_risk_price_still() {
+        // Two readings in one slot: the second moves nothing.
+        assert_eq!(risk_step(100_000_000, 200_000_000, 0, 7).unwrap(), (100_000_000, 7));
+    }
+
+    #[test]
+    fn a_tiny_price_still_reaches_its_target() {
+        // 40 bps of 100 units is 0.4 of a unit. Truncating every step would
+        // pin the price for good; the carried remainder moves it one unit
+        // every few steps instead.
+        let (mut p, mut rem) = (100u64, 0u16);
+        let mut steps = 0;
+        while p != 200 {
+            (p, rem) = risk_step(p, 200, 40, rem).unwrap();
+            steps += 1;
+            assert!(steps < 10_000, "stuck at {p}");
+        }
+        // And never faster than the cap allows on average.
+        assert!(steps >= 100 * 10_000 / (40 * 200));
+    }
+
+    #[test]
+    fn the_risk_price_never_overshoots() {
+        for (cur, target, bps) in [
+            (1u64, u64::MAX / 2, 40u64),
+            (u64::MAX / 2, 1, 40),
+            (100_000_000, 100_000_001, 10_000),
+            (100_000_000, 1, 10_000),
+        ] {
+            let (next, _) = risk_step(cur, target, bps, 0).unwrap();
+            assert!(next.abs_diff(target) <= cur.abs_diff(target));
+            assert!((cur.min(target)..=cur.max(target)).contains(&next));
+            assert!(next > 0);
+        }
+    }
 
     #[test]
     fn rescales_an_eight_decimal_feed_down_to_six() {

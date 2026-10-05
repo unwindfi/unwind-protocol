@@ -5,6 +5,7 @@ use crate::instructions::trade::{
 };
 use crate::math::*;
 use crate::instructions::batch::market_price;
+use crate::oracle::OraclePrice;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
@@ -95,11 +96,25 @@ pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
         &ctx.accounts.market.key(),
     )?;
 
-    ctx.accounts.market.accept_price(&oracle)?;
+    let risk_price = ctx.accounts.market.accept_price(&oracle, clock.slot)?;
 
     let is_long = ctx.accounts.position.is_long;
     let close_size = ctx.accounts.position.size_usd;
-    let fill = ctx.accounts.market.fill_price(&oracle, !is_long)?;
+    let (trigger_fill, fill) =
+        liquidation_fills(&ctx.accounts.market, &oracle, risk_price, is_long)?;
+
+    // Whether the position may be liquidated is read at the risk price, which
+    // a single reading cannot drag further than one step.
+    let at_risk = settle(
+        &ctx.accounts.position,
+        &ctx.accounts.market,
+        close_size,
+        trigger_fill,
+    )?;
+    require!(
+        below_maintenance(&ctx.accounts.market, &at_risk, close_size)?,
+        PerpError::PositionHealthy
+    );
 
     let settlement = settle(
         &ctx.accounts.position,
@@ -194,6 +209,68 @@ pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct StepRiskPrice<'info> {
+    #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
+    pub pool: Box<Account<'info, Pool>>,
+
+    #[account(
+        mut,
+        has_one = pool @ PerpError::MarketPoolMismatch,
+        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
+        bump = market.bump,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    /// CHECK: Validated by `market_price`, as for `liquidate`.
+    pub price_update: UncheckedAccount<'info>,
+}
+
+/// Steps a market's risk price toward the current oracle reading.
+///
+/// Permissionless, and a crank: every instruction that reads a market's price
+/// steps it too, but a market nobody is trading can sit with its risk price
+/// behind the oracle, and a liquidation that fails does not keep the step it
+/// took. A keeper calls this once a second for a market with a position near
+/// its margin, so the risk price reaches a real move in at most a few seconds.
+pub fn step_risk_price(ctx: Context<StepRiskPrice>) -> Result<()> {
+    let oracle = market_price(
+        &ctx.accounts.price_update.to_account_info(),
+        &ctx.accounts.pool,
+        &ctx.accounts.market,
+        &ctx.accounts.market.key(),
+    )?;
+    let slot = Clock::get()?.slot;
+    ctx.accounts.market.accept_price(&oracle, slot)?;
+    Ok(())
+}
+
+/// The two prices a liquidation uses,/// The two prices a liquidation uses, as fills on the side that closes the
+/// position: `(trigger, close)`.
+///
+/// The trigger is the risk price, so a reading the risk price has not had time
+/// to follow liquidates nobody. The close is the worse of the risk price and
+/// the oracle for the position, so what the owner takes back is never priced
+/// off a risk price that is still catching up with a fall. A position that
+/// fails at the risk price fails at least as badly at the close.
+pub fn liquidation_fills(
+    market: &Market,
+    oracle: &OraclePrice,
+    risk_price: u64,
+    is_long: bool,
+) -> Result<(u64, u64)> {
+    let at_risk = market.fill_price(&OraclePrice { price: risk_price, ..*oracle }, !is_long)?;
+    let at_oracle = market.fill_price(oracle, !is_long)?;
+    // A long closes by selling, so lower is worse for it; a short buys.
+    let close = if is_long { at_risk.min(at_oracle) } else { at_risk.max(at_oracle) };
+    Ok((at_risk, close))
+}
+
+/// Whether a settled position's equity is under its maintenance margin.
+pub fn below_maintenance(market: &Market, settlement: &Settlement, close_size: u64) -> Result<bool> {
+    Ok(settlement.equity_usd < bps_of(close_size, market.maintenance_margin_bps)?)
+}
+
 /// How a liquidation splits what a position has left.
 pub struct Liquidation {
     /// The liquidation fee, before its cuts.
@@ -219,9 +296,8 @@ pub fn liquidation(
     settlement: &Settlement,
     close_size: u64,
 ) -> Result<Liquidation> {
-    let maintenance_req = bps_of(close_size, market.maintenance_margin_bps)?;
     require!(
-        settlement.equity_usd < maintenance_req,
+        below_maintenance(market, settlement, close_size)?,
         PerpError::PositionHealthy
     );
 
@@ -273,6 +349,44 @@ mod tests {
     use crate::instructions::trade::tests::{market, pool, settlement};
 
     const SIZE: u64 = 5_000_000_000; // $5,000, so the 5% maintenance is $250
+
+    fn at(price: u64) -> OraclePrice {
+        OraclePrice { price, conf: 0, published_ts: 0 }
+    }
+
+    #[test]
+    fn the_trigger_is_read_at_the_risk_price() {
+        let m = market();
+        // The oracle has spiked 10% down; the risk price has not followed.
+        let (trigger, _) = liquidation_fills(&m, &at(90_000_000), 100_000_000, true).unwrap();
+        assert_eq!(trigger, m.fill_price(&at(100_000_000), false).unwrap());
+        let (trigger, _) = liquidation_fills(&m, &at(110_000_000), 100_000_000, false).unwrap();
+        assert_eq!(trigger, m.fill_price(&at(100_000_000), true).unwrap());
+    }
+
+    #[test]
+    fn the_close_is_at_the_worse_of_the_two_for_the_position() {
+        let m = market();
+        // A long sells: the lower of the two fills.
+        let (_, close) = liquidation_fills(&m, &at(90_000_000), 100_000_000, true).unwrap();
+        assert_eq!(close, m.fill_price(&at(90_000_000), false).unwrap());
+        let (_, close) = liquidation_fills(&m, &at(110_000_000), 100_000_000, true).unwrap();
+        assert_eq!(close, m.fill_price(&at(100_000_000), false).unwrap());
+        // A short buys: the higher.
+        let (_, close) = liquidation_fills(&m, &at(110_000_000), 100_000_000, false).unwrap();
+        assert_eq!(close, m.fill_price(&at(110_000_000), true).unwrap());
+        let (_, close) = liquidation_fills(&m, &at(90_000_000), 100_000_000, false).unwrap();
+        assert_eq!(close, m.fill_price(&at(100_000_000), true).unwrap());
+    }
+
+    #[test]
+    fn a_position_healthy_at_the_risk_price_is_not_liquidated() {
+        let m = market();
+        // $5,000 at 5% is $250 of maintenance: $260 of equity at the risk
+        // price is healthy, whatever the oracle reading alone would say.
+        assert!(!below_maintenance(&m, &settlement(1_000_000_000, 260_000_000), SIZE).unwrap());
+        assert!(below_maintenance(&m, &settlement(1_000_000_000, 240_000_000), SIZE).unwrap());
+    }
 
     #[test]
     fn a_position_at_its_maintenance_margin_is_healthy() {

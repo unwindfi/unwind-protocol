@@ -1,6 +1,6 @@
 /// Address Lookup Table plumbing for the liquidity instructions.
 ///
-/// `add_liquidity` and `remove_liquidity` must see every market so the pool's
+/// `add_liquidity` and `claim_withdraw` must see every market so the pool's
 /// liability is priced in full, and in a legacy transaction each market costs
 /// 66 bytes — two 32-byte keys plus their indices. Twelve markets serialises to
 /// 1482 bytes against the 1232 limit, which is why the market list was capped

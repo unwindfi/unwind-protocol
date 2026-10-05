@@ -18,6 +18,40 @@ instruction could choose the most favourable price inside that window, for
 example a liquidator picking the one that liquidates. With it, the newest price
 is the only one there is.
 
+Two more rules close the gaps around it. A second, different price under a
+publish time the market has already used is refused, so two updates published
+in the same second are not a choice either; the same price may be used again.
+And a price published more than 5 seconds ahead of the chain's clock is
+refused, because one accepted price from the future would hold the market to
+that time and refuse every honest price after it. The 5 seconds allow for the
+cluster clock trailing wall time. Valuing the pool for a deposit or a
+withdrawal only reads a market, so it cannot record a price, but it still
+refuses one older than the newest the market has acted on. Custody tokens are
+held to the future-time rule and their maximum age, not to the ordering rule:
+custodies are only ever read, never written, when they are priced.
+
+## The risk price
+
+Liquidation does not read the oracle directly. Each market keeps a risk price
+that follows the oracle at a capped speed: every accepted price steps it
+toward that price by at most 40 basis points of itself per slot since the last
+step, counting at most 3 slots. That is 1 percent a second at 400ms slots, the
+same speed an observed mark is clamped to, and at most 1.2 percent per step.
+A market nobody holds a position in follows the oracle at once, since a jump
+there can liquidate nobody.
+
+So a price that spikes and comes back moves the risk price at most one step,
+and a liquidation needs the risk price itself to have crossed the position's
+margin. Every instruction that reads a market's price steps it: clearing a
+batch, firing a trigger order, liquidating, deleveraging, and the
+permissionless `step_risk_price` crank, which the venue's keeper calls for any
+market with a position past its margin.
+
+Where the two differ, money moving out is priced at the worse of the two for
+the mover. A liquidation closes at the worse of the risk price and the oracle
+for the position. A deposit values the pool at the higher of the two values,
+and a withdrawal claim at the lower.
+
 ## Pyth feeds
 
 A market opened against a Pyth feed reads that feed directly. The feed's

@@ -56,6 +56,12 @@ pub mod unwind {
         instructions::admin::update_market_params(ctx, params)
     }
 
+    /// Grows a market listed before the account gained its price-ordering and
+    /// risk-price fields. Permissionless; the payer covers the extra rent.
+    pub fn resize_market(ctx: Context<ResizeMarket>) -> Result<()> {
+        instructions::admin::resize_market(ctx)
+    }
+
     /// 0 = regular hours, 1 = extended, 2 = closed.
     pub fn set_session(ctx: Context<UpdateMarket>, session: u8) -> Result<()> {
         instructions::admin::set_session(ctx, session)
@@ -236,12 +242,27 @@ pub mod unwind {
         instructions::liquidity::add_liquidity(ctx, amount_usd, min_lp_out)
     }
 
-    pub fn remove_liquidity<'info>(
-        ctx: Context<'_, '_, 'info, 'info, ManageLiquidity<'info>>,
+    /// Starts a withdrawal: moves `lp_amount` shares into escrow, where they
+    /// keep bearing the pool's gains and losses until claimed. There is no
+    /// instant withdrawal.
+    pub fn request_withdraw(ctx: Context<RequestWithdraw>, lp_amount: u64) -> Result<()> {
+        instructions::liquidity::request_withdraw(ctx, lp_amount)
+    }
+
+    /// Returns every escrowed share to the owner.
+    pub fn cancel_withdraw(ctx: Context<CancelWithdraw>) -> Result<()> {
+        instructions::liquidity::cancel_withdraw(ctx)
+    }
+
+    /// Burns escrowed shares once `WITHDRAW_COOLDOWN_SLOTS` have passed and
+    /// pays them at the pool's value now. `remaining_accounts` as for
+    /// `add_liquidity`.
+    pub fn claim_withdraw<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ClaimWithdraw<'info>>,
         lp_amount: u64,
         min_usd_out: u64,
     ) -> Result<()> {
-        instructions::liquidity::remove_liquidity(ctx, lp_amount, min_usd_out)
+        instructions::liquidity::claim_withdraw(ctx, lp_amount, min_usd_out)
     }
 
     // --- trading ---
@@ -252,6 +273,11 @@ pub mod unwind {
 
     pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
         instructions::liquidate::liquidate(ctx)
+    }
+
+    /// Steps a market's risk price toward the oracle. Permissionless crank.
+    pub fn step_risk_price(ctx: Context<StepRiskPrice>) -> Result<()> {
+        instructions::liquidate::step_risk_price(ctx)
     }
 
     /// Force-closes a position whose profit has outgrown the liquidity reserved

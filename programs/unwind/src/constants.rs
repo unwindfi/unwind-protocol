@@ -48,6 +48,8 @@ pub const CUSTODY_VAULT_SEED: &[u8] = b"custody_vault";
 pub const BACKING_BOOK_SEED: &[u8] = b"backing_book";
 pub const TRADER_SEED: &[u8] = b"trader";
 pub const REFERRAL_CODE_SEED: &[u8] = b"referral_code";
+pub const WITHDRAW_REQUEST_SEED: &[u8] = b"withdraw_request";
+pub const WITHDRAW_ESCROW_SEED: &[u8] = b"withdraw_escrow";
 
 /// Share of every trading fee routed back to the chain.
 ///
@@ -90,6 +92,17 @@ pub const DEPTH_CONF_REFERENCE_BPS: u16 = 50;
 /// pricing is meaningless, so the first deposit must clear it and withdrawals
 /// may not cross back under it while any position is open.
 pub const MIN_POOL_LIQUIDITY_USD: u64 = 1_000_000; // 1 USDC
+
+/// Slots an LP withdrawal waits between `request_withdraw` and
+/// `claim_withdraw`, about a minute at 400ms a slot.
+///
+/// The shares sit in escrow for this long, still in supply, and are paid at
+/// what the pool is worth when claimed. Long enough that a keeper mark or a
+/// Pyth update reflecting a move lands before the leaver is paid, so nobody
+/// can deposit and withdraw around a price they can already see; short enough
+/// that an LP is not locked in. A handful of slots protects nothing: a
+/// visible move takes longer than that to reach the mark.
+pub const WITHDRAW_COOLDOWN_SLOTS: u64 = 150;
 
 /// How far through the index a fired stop or take-profit will reach for a
 /// clearing price.
@@ -173,6 +186,35 @@ pub const LISTING_MIN_PNL_RESERVE_BPS: u16 = 10_000;
 pub const LISTING_MIN_BASE_SPREAD_BPS: u16 = 10;
 pub const LISTING_MIN_POSITION_USD: u64 = 10 * USD_SCALE as u64;
 pub const LISTING_MAX_FUNDING_RATE_BPS_PER_HOUR: u16 = 200;
+
+// --- the risk price ---
+//
+// Liquidation reads a market's risk price, not the oracle directly. The risk
+// price walks toward each accepted oracle reading by at most this much per
+// slot, so a reading that spikes and comes back cannot liquidate anyone on
+// its own, and every market's maintenance margin is sized at listing to cover
+// the most it can move in one step plus the liquidation fee.
+
+/// Most the risk price moves per slot, in bps of itself. 40 bps a slot is 1% a
+/// second at 400ms slots: the same speed an observed mark is clamped to (1% a
+/// reading, a reading a second), so a Pyth market's risk price is no easier to
+/// move than an observed market's mark.
+pub const RISK_PRICE_STEP_BPS_PER_SLOT: u64 = 40;
+
+/// Most slots one step of the risk price counts, however long since the last.
+/// The crank clears every market's batch about once a second (2 to 3 slots),
+/// so a step normally counts all of its slots; after a longer gap the risk
+/// price moves 1.2% per reading until it catches up. 40 x 3 = 120 bps plus a
+/// 100 bps liquidation fee is 220 bps, under the 250 bps maintenance of the
+/// 20x market the authority lists and well under `LISTING_MIN_MAINTENANCE_BPS`.
+pub const RISK_PRICE_MAX_GAP_SLOTS: u64 = 3;
+
+/// How far past the chain's clock a price's publish time may be, in seconds.
+/// The relay posts at wall time and the cluster clock can trail it by a
+/// second or two; anything further ahead is refused, because one accepted
+/// price from the future would hold the market to that time and refuse every
+/// honest price until the clock caught up.
+pub const ORACLE_MAX_FUTURE_SEC: i64 = 5;
 
 /// Resting orders one wallet may hold in a market's batch at once.
 pub const MAX_ORDERS_PER_OWNER: usize = 4;

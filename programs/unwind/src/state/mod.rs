@@ -7,6 +7,7 @@ pub mod order;
 pub mod pool;
 pub mod position;
 pub mod trader;
+pub mod withdraw;
 
 pub use aum_checkpoint::*;
 pub use batch::*;
@@ -17,3 +18,4 @@ pub use order::*;
 pub use pool::*;
 pub use position::*;
 pub use trader::*;
+pub use withdraw::*;

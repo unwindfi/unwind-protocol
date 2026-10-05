@@ -22,6 +22,9 @@ import {
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { createHash } from "crypto";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { createLookupTable, loadLookupTable, sendV0 } from "../scripts/alt";
 import { MAX_COMPUTE_UNITS, packInstructions, withComputeLimit } from "../scripts/pack";
 
@@ -38,6 +41,17 @@ const priceArgs = (price: number, over: Partial<any> = {}) => ({
   ...over,
 });
 
+/// Who signs price posts. `npm run build` passes `--features devnet` to every
+/// program, because the perps program needs it to trust a stand-in receiver;
+/// mock-pyth's `devnet` build then accepts posts from its relay key alone
+/// (NotRelayAuthority otherwise). Sign with that key when it is on this
+/// machine, and with the wallet when it is not, which a plain build accepts.
+function pricePoster(fallback: Keypair): Keypair {
+  const file = process.env.RELAY_KEYPAIR ?? path.join(os.homedir(), ".config/unwind/relay.json");
+  if (!fs.existsSync(file)) return fallback;
+  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));
+}
+
 const feedFor = (sym: string) =>
   createHash("sha256").update(`test-feed:${sym}`).digest().subarray(0, 32);
 
@@ -48,6 +62,7 @@ describe("system", () => {
   const pyth = anchor.workspace.MockPyth as Program<any>;
   const conn = provider.connection;
   const authority = (provider.wallet as anchor.Wallet).payer;
+  const poster = pricePoster(authority);
 
   // Two traders, because a keeper that only works for one is the bug this
   // suite exists to catch.
@@ -76,17 +91,49 @@ describe("system", () => {
   /// relative to it without reading the oracle account back.
   const lastPosted = new Map<string, number>();
 
+  /// The publish time each market was last posted at. A market refuses a
+  /// second, different price under a publish time it has already used, so
+  /// two posts never share a second.
+  const lastPostTs = new Map<string, number>();
+
   async function post(sym: string, price: number, over: Partial<any> = {}) {
     lastPosted.set(sym, price);
     const feed = feedFor(sym);
+    if (over.publishTime === undefined) {
+      const prev = lastPostTs.get(sym) ?? 0;
+      let ts = Math.floor(Date.now() / 1000);
+      if (ts <= prev) {
+        await new Promise((r) => setTimeout(r, (prev + 1) * 1000 - Date.now() + 50));
+        ts = prev + 1;
+      }
+      lastPostTs.set(sym, ts);
+      over = { ...over, publishTime: new BN(ts) };
+    }
     await pyth.methods
       .postPrice({ feedId: Array.from(feed), ...priceArgs(price, over) })
       .accounts({
-        payer: authority.publicKey,
+        payer: poster.publicKey,
         priceUpdate: priceAccount(feed),
         systemProgram: SystemProgram.programId,
       })
+      .signers([poster])
       .rpc();
+  }
+
+  /// Cranks a market's risk price until it reaches the posted price. The risk
+  /// price liquidation reads walks toward the oracle by at most 40 bps a slot,
+  /// so a test that moves the market and then liquidates has to let it walk.
+  async function catchUp(sym: string) {
+    for (let i = 0; i < 60; i++) {
+      await perps.methods.stepRiskPrice()
+        .accounts({ pool, market: markets.get(sym)!, priceUpdate: priceAccount(feedFor(sym)) })
+        .rpc();
+      const m = await perps.account.market.fetch(markets.get(sym)!);
+      if (m.riskPrice.eq(m.lastPrice)) return;
+      // Three slots: the most one step counts.
+      await new Promise((r) => setTimeout(r, 1_300));
+    }
+    throw new Error(`the risk price of ${sym} did not reach the oracle`);
   }
 
   async function seedLiquidity(amount: number) {
@@ -271,7 +318,7 @@ describe("system", () => {
       .rpc();
 
   before(async () => {
-    for (const kp of [alice, bob, lp]) {
+    for (const kp of [alice, bob, lp, poster]) {
       await conn.confirmTransaction(await conn.requestAirdrop(kp.publicKey, 100e9), "confirmed");
     }
     usdcMint = await createMint(conn, authority, authority.publicKey, null, 6);
@@ -598,6 +645,7 @@ describe("system", () => {
 
       // A move that takes Alice through her margin and leaves Bob fine.
       await post("EEE", 89);
+      await catchUp("EEE");
 
       // The setup made it when the authority backed the markets.
       const liquidatorUsdc = getAssociatedTokenAddressSync(usdcMint, authority.publicKey);
@@ -968,16 +1016,25 @@ describe("system", () => {
       await close("JJJ", alice);
     });
 
-    it("goes home unfilled rather than freezing the batch", async () => {
-      // Both sides from one wallet in one batch: whichever settles second
-      // cannot be booked, because positions do not flip.
+    it("is refused on the other side of the same wallet's order in one batch", async () => {
+      // Both sides from one wallet in one batch: only one could ever book,
+      // because positions do not flip, so the second is refused at the door
+      // (`Batch::push`) rather than left to go home at settlement.
       const before = Number((await getAccount(conn, usdcOf.get(bob.publicKey.toBase58())!)).amount);
-      for (const isBid of [true, false]) {
+      await perps.methods
+        .submitOrder(USD(120), USD(2_000), USD(1_000), true, false, false)
+        .accounts(orderAccounts("JJJ", bob.publicKey))
+        .signers([bob])
+        .rpc();
+      try {
         await perps.methods
-          .submitOrder(USD(isBid ? 120 : 80), USD(2_000), USD(1_000), isBid, false, false)
+          .submitOrder(USD(80), USD(2_000), USD(1_000), false, false, false)
           .accounts(orderAccounts("JJJ", bob.publicKey))
           .signers([bob])
           .rpc();
+        assert.fail("an open against the wallet's own resting open must not be accepted");
+      } catch (e: any) {
+        assert.match(e.toString(), /PositionAlreadyOpen/);
       }
       const seq = Number((await perps.account.batch.fetch(batchPda("JJJ"))).seq);
       await runBatch("JJJ");
@@ -987,10 +1044,10 @@ describe("system", () => {
       assert.equal(Number(b.clearedTs), 0, "and it is collecting again");
 
       const pos: any = await perps.account.position.fetch(positionPda(markets.get("JJJ")!, bob.publicKey));
-      assert.isAbove(Number(pos.sizeUsd), 0, "one side was booked");
+      assert.isAbove(Number(pos.sizeUsd), 0, "the first side was booked");
       const after = Number((await getAccount(conn, usdcOf.get(bob.publicKey.toBase58())!)).amount);
-      // $2,000 posted, one $1,000 escrow booked as margin, the other returned.
-      assert.approximately((before - after) / 1e6, 1_000, 1, "the unbookable side came back in full");
+      // Only the accepted order's $1,000 left the wallet, booked as margin.
+      assert.approximately((before - after) / 1e6, 1_000, 1, "the refused side took nothing");
       await close("JJJ", bob);
     });
   });

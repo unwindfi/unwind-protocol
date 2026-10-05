@@ -26,7 +26,13 @@ pub struct AumCheckpoint {
     pub pass_markets: u16,
     pub pass_counted: u16,
     pub pass_last_market: Pubkey,
+    /// Trader PnL as a deposit reads it: each market at whichever of its
+    /// oracle and risk price leaves the pool worth more (see
+    /// `lp_pnl_against_the_mover`).
     pub pass_pnl_usd: i64,
+    /// The same pass as a withdrawal claim reads it: each market at whichever
+    /// leaves the pool worth less.
+    pub pass_claim_pnl_usd: i64,
     /// Markets the pass counted at their worst because their price could not
     /// be read (see `Unpriced`).
     pub pass_unpriced: u16,
@@ -37,7 +43,8 @@ pub struct AumCheckpoint {
     pub done_version: u16,
     pub done_markets: u16,
     pub done_pnl_usd: i64,
+    pub done_claim_pnl_usd: i64,
     pub done_unpriced: u16,
 
-    pub _reserved: [u8; 28],
+    pub _reserved: [u8; 12],
 }

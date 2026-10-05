@@ -24,7 +24,7 @@ pub fn pool_aum_usd<'info>(
         remaining_accounts.len() == (pool.num_custodies as usize) * 2,
         PerpError::IncompleteCustodyList
     );
-    let pnl = checkpoint_pnl_usd(pool.key(), pool.oi_version, pool.markets_with_oi, checkpoint, now)?;
+    let pnl = checkpoint_pnl_usd(pool.key(), pool.oi_version, pool.markets_with_oi, checkpoint, now, unpriced)?;
     // A checkpoint that counted a market at its worst because its price could
     // not be read refuses a deposit, which can wait for the price, and prices
     // a withdrawal, which must not be locked in by one stalled feed.
@@ -62,13 +62,16 @@ fn price_unusable(e: &Error) -> bool {
     }
 }
 
-/// Trader PnL from a checkpoint, if the pool may be priced from it now.
+/// Trader PnL from a checkpoint, if the pool may be priced from it now: the
+/// deposit-side sum for a deposit (`Refuse`), the claim-side sum for a
+/// withdrawal (`AtWorst`). See `lp_pnl_against_the_mover`.
 pub fn checkpoint_pnl_usd(
     pool: Pubkey,
     oi_version: u16,
     markets_with_oi: u16,
     c: &AumCheckpoint,
     now: i64,
+    side: Unpriced,
 ) -> Result<i64> {
     require_keys_eq!(c.pool, pool, PerpError::MarketPoolMismatch);
     require!(
@@ -78,7 +81,10 @@ pub fn checkpoint_pnl_usd(
             && now.saturating_sub(c.done_ts) <= AUM_MAX_AGE_SEC,
         PerpError::AumCheckpointStale
     );
-    Ok(c.done_pnl_usd)
+    Ok(match side {
+        Unpriced::Refuse => c.done_pnl_usd,
+        Unpriced::AtWorst => c.done_claim_pnl_usd,
+    })
 }
 
 /// One step of a checkpoint pass: optionally start a new pass, then add the
@@ -109,6 +115,7 @@ pub fn fold_checkpoint<'info>(
         c.pass_counted = 0;
         c.pass_last_market = Pubkey::default();
         c.pass_pnl_usd = 0;
+        c.pass_claim_pnl_usd = 0;
         c.pass_unpriced = 0;
     } else {
         require!(c.pass_open && !stale && !moved, PerpError::AumCheckpointStale);
@@ -122,15 +129,26 @@ pub fn fold_checkpoint<'info>(
         require!(pair[0].key() > c.pass_last_market, PerpError::IncompleteMarketList);
         require!(market.has_open_interest(), PerpError::IncompleteMarketList);
         require!(c.pass_counted < c.pass_markets, PerpError::IncompleteMarketList);
-        let pnl = match market_price(&pair[1], pool, &market, pair[0].key) {
-            Ok(oracle) => market.lp_pnl_usd(oracle.price)?,
+        // Both sides from the same reading: a deposit at whichever of the
+        // oracle and the risk price makes the pool worth more, a claim at
+        // whichever makes it worth less.
+        let (deposit_pnl, claim_pnl) = match market_price(&pair[1], pool, &market, pair[0].key) {
+            Ok(oracle) => (
+                lp_pnl_against_the_mover(&market, oracle.price, Unpriced::Refuse)?,
+                lp_pnl_against_the_mover(&market, oracle.price, Unpriced::AtWorst)?,
+            ),
             Err(e) if price_unusable(&e) => {
                 c.pass_unpriced += 1;
-                market.lp_worst_pnl_usd()
+                let worst = market.lp_worst_pnl_usd();
+                (worst, worst)
             }
             Err(e) => return Err(e),
         };
-        c.pass_pnl_usd = c.pass_pnl_usd.checked_add(pnl).ok_or(PerpError::MathOverflow)?;
+        c.pass_pnl_usd = c.pass_pnl_usd.checked_add(deposit_pnl).ok_or(PerpError::MathOverflow)?;
+        c.pass_claim_pnl_usd = c
+            .pass_claim_pnl_usd
+            .checked_add(claim_pnl)
+            .ok_or(PerpError::MathOverflow)?;
         c.pass_counted += 1;
         c.pass_last_market = pair[0].key();
     }
@@ -140,6 +158,7 @@ pub fn fold_checkpoint<'info>(
         c.done_version = c.pass_version;
         c.done_markets = c.pass_markets;
         c.done_pnl_usd = c.pass_pnl_usd;
+        c.done_claim_pnl_usd = c.pass_claim_pnl_usd;
         c.done_unpriced = c.pass_unpriced;
         c.pass_open = false;
     }
@@ -162,6 +181,30 @@ fn lp_in_kind_usd<'info>(pool: &Account<'info, Pool>, pairs: &'info [AccountInfo
             .ok_or(PerpError::MathOverflow)?;
     }
     Ok(total)
+}
+
+/// What a market's traders are up, as the pool owes it (see
+/// `Market::lp_pnl_usd`: positive is the pool down), at whichever of the oracle and the market's
+/// risk price is worse for whoever is moving money now.
+///
+/// The risk price trails the oracle by up to one step per slot, so after a
+/// move the two disagree for a while. Valuing the pool at the oracle alone
+/// lets a depositor buy in just before the risk price catches up with a loss,
+/// or a leaver claim just before it catches up with a gain. So a deposit
+/// (`Refuse`) counts the pool at the higher of the two values, and buys fewer
+/// shares; a claim (`AtWorst`) counts it at the lower, and is paid less. A
+/// market with no risk price on record yet is valued at the oracle.
+pub fn lp_pnl_against_the_mover(market: &Market, target: u64, unpriced: Unpriced) -> Result<i64> {
+    let at_target = market.lp_pnl_usd(target)?;
+    if market.risk_price == 0 || market.risk_price == target {
+        return Ok(at_target);
+    }
+    let at_risk = market.lp_pnl_usd(market.risk_price)?;
+    Ok(match unpriced {
+        // Less owed is more pool value.
+        Unpriced::Refuse => at_target.min(at_risk),
+        Unpriced::AtWorst => at_target.max(at_risk),
+    })
 }
 
 #[cfg(test)]
@@ -287,11 +330,37 @@ mod tests {
             pass_open: false, pass_started_ts: NOW - age, pass_version: version,
             pass_markets: markets, pass_counted: markets, pass_last_market: Pubkey::default(),
             pass_pnl_usd: pnl,
+            pass_claim_pnl_usd: pnl,
             pass_unpriced: 0,
             done_ts: NOW - age, done_version: version, done_markets: markets, done_pnl_usd: pnl,
+            done_claim_pnl_usd: pnl,
             done_unpriced: 0,
-            _reserved: [0; 28],
+            _reserved: [0; 12],
         }
+    }
+
+    #[test]
+    fn a_lagging_risk_price_is_read_against_whoever_moves_money() {
+        let mut m = crate::instructions::trade::tests::market();
+        // $10,000 long from $100. The oracle is at $110, the risk price still
+        // at $105: the longs are up less at $105, so the pool is worth more.
+        m.long_size_usd = 10_000_000_000;
+        m.long_avg_entry_price = 100_000_000;
+        m.risk_price = 105_000_000;
+        let at_target = m.lp_pnl_usd(110_000_000).unwrap();
+        let at_risk = m.lp_pnl_usd(105_000_000).unwrap();
+        assert!(at_risk < at_target, "the pool owes less at $105");
+        // A deposit buys at the higher pool value, a claim is paid at the lower.
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::Refuse).unwrap(), at_risk);
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtWorst).unwrap(), at_target);
+        // And the other way round when the risk price trails a fall.
+        m.risk_price = 115_000_000;
+        let at_risk = m.lp_pnl_usd(115_000_000).unwrap();
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::Refuse).unwrap(), at_target);
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtWorst).unwrap(), at_risk);
+        // No risk price on record: the oracle alone.
+        m.risk_price = 0;
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtWorst).unwrap(), at_target);
     }
 
     #[test]
@@ -306,6 +375,17 @@ mod tests {
         let (key, p) = pool_account(&pool(7_000_000, 3, 0));
         let c = done(key, 0, 3, 1_500_000, 5);
         assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), 5_500_000);
+    }
+
+    #[test]
+    fn a_deposit_reads_the_deposit_side_and_a_claim_the_claim_side() {
+        // The pass summed traders up $1.0 at the reading that makes the pool
+        // worth more and $1.5 at the one that makes it worth less.
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 1_000_000, 5);
+        c.done_claim_pnl_usd = 1_500_000;
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), 6_000_000);
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), 5_500_000);
     }
 
     #[test]

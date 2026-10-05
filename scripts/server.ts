@@ -1593,6 +1593,42 @@ const liquidityAccounts = (owner: PublicKey) => ({
   tokenProgram: TOKEN_PROGRAM_ID,
 });
 
+/// A withdrawal waits this many slots between request and claim. Mirrors
+/// `WITHDRAW_COOLDOWN_SLOTS` in the program.
+const WITHDRAW_COOLDOWN_SLOTS = 150;
+/// One per owner: the shares on their way out, and the token account they
+/// sit in until claimed.
+const withdrawRequestPda = (owner: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("withdraw_request"), pool.toBuffer(), owner.toBuffer()], program.programId)[0];
+const withdrawEscrowPda = (request: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("withdraw_escrow"), request.toBuffer()], program.programId)[0];
+const withdrawAccounts = (owner: PublicKey) => {
+  const request = withdrawRequestPda(owner);
+  return {
+    owner, pool, usdcMint, usdcVault, lpMint,
+    ownerUsdc: ata(owner, usdcMint), ownerLp: ata(owner, lpMint),
+    request, escrowLp: withdrawEscrowPda(request), trader: traderPda(owner),
+    tokenProgram: TOKEN_PROGRAM_ID,
+  };
+};
+
+/// The instructions that withdraw: escrow shares, then after the cooldown
+/// burn them for USDC at that moment's value, or hand them back.
+async function requestWithdrawIx(owner: PublicKey, lp: number) {
+  return program.methods.requestWithdraw(USD(lp))
+    .accounts(withdrawAccounts(owner)).instruction();
+}
+async function claimWithdrawIx(owner: PublicKey, shares: BN, accounts: any[]) {
+  return program.methods.claimWithdraw(shares, new BN(0))
+    .accounts({ ...withdrawAccounts(owner), checkpoint: aumCheckpointPda } as any)
+    .remainingAccounts(accounts).instruction();
+}
+async function cancelWithdrawIx(owner: PublicKey) {
+  return program.methods.cancelWithdraw().accounts(withdrawAccounts(owner)).instruction();
+}
+
 /// Parses `owner` from a request, falling back to the demo account.
 function ownerOf(req: any): PublicKey {
   const raw = req.query?.owner ?? req.body?.owner;
@@ -1692,6 +1728,7 @@ async function liquidationCheck() {
     return;
   }
   let closed = false;
+  const stepped = new Set<string>();
 
   const byMarket = new Map<string, MarketRt>();
   for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
@@ -1707,6 +1744,20 @@ async function liquidationCheck() {
     const d = describePosition(pos, ma, m);
     if (!d?.liquidatable) continue;
 
+    // The program liquidates at the market's risk price, which walks toward
+    // the oracle by at most 40 bps a slot and only when something steps it.
+    // Step it once a pass for every market with a position past its margin,
+    // in its own transaction, so a liquidation that is still early lands on
+    // a later pass instead of waiting on someone else's trade.
+    const marketKey = m.address.toBase58();
+    if (!stepped.has(marketKey)) {
+      stepped.add(marketKey);
+      await program.methods.stepRiskPrice()
+        .accounts({ pool, market: m.address, priceUpdate: oracleOf(m) })
+        .rpc()
+        .catch((e: any) => console.warn(`step risk price ${m.symbol}: ${explain(e)}`));
+    }
+
     const owner = new PublicKey(String(pos.owner));
     try {
       await program.methods.liquidate().accounts({
@@ -1719,7 +1770,10 @@ async function liquidationCheck() {
         tokenProgram: TOKEN_PROGRAM_ID,
       }).rpc();
     } catch (e: any) {
-      // Raced to close, or the chain's view of its health differs from ours.
+      // Healthy at the risk price: it is still catching up, and the next
+      // pass steps it again. Anything else is a race or a disagreement about
+      // health, and waits.
+      if (/PositionHealthy/.test(String(e?.message ?? e))) continue;
       console.warn(`liquidate ${m.symbol} (${owner.toBase58().slice(0, 4)}…): ${explain(e)}`);
       liqRetryAt.set(key, Date.now() + 30_000);
       continue;
@@ -2590,7 +2644,7 @@ async function accountView(owner: PublicKey) {
     const zero = { amount: 0n } as any;
     // All at once: none depends on another, and against a remote RPC each
     // round trip is hundreds of milliseconds the page polls through.
-    const [usdc, sol, lpTok, supply, p, positions, orderAccounts, traderPnl] = await Promise.all([
+    const [usdc, sol, lpTok, supply, p, positions, orderAccounts, traderPnl, request, slot] = await Promise.all([
       getAccount(conn, ata(owner, usdcMint)).catch(() => zero),
       // For the faucet prompt: a wallet short of rent cannot list or back.
       conn.getBalance(owner).then((l) => l / 1e9).catch(() => null),
@@ -2600,6 +2654,8 @@ async function accountView(owner: PublicKey) {
       loadPositions(owner),
       ordersOf(owner),
       traderPnlNow(),
+      program.account.withdrawRequest.fetchNullable(withdrawRequestPda(owner)).catch(() => null),
+      conn.getSlot("confirmed").catch(() => null),
     ]);
     const orders = orderAccounts.map((e: any) => ({
       address: e.publicKey.toBase58(),
@@ -2620,6 +2676,16 @@ async function accountView(owner: PublicKey) {
     const lpSupply = Number(supply.value.amount) / 1e6;
     const lpPrice = lpSupply > 0 ? aum / lpSupply : 1;
     const held = Number(lpTok.amount) / 1e6;
+    // Shares in escrow are still the owner's and still in supply: they move
+    // with the pool until claimed, and are paid at the value then.
+    const escrowed = request ? num(request.shares) / 1e6 : 0;
+    const readySlot = request ? num(request.requestSlot) + WITHDRAW_COOLDOWN_SLOTS : 0;
+    const slotsLeft = request && slot != null ? Math.max(0, readySlot - slot) : 0;
+    const pending = escrowed > 0 ? {
+      shares: escrowed, value: escrowed * lpPrice, readySlot, slotsLeft,
+      // 400ms a slot is the target; the claim checks slots, not seconds.
+      secondsLeft: Math.ceil(slotsLeft * 0.4),
+    } : null;
 
     const unrealized = Object.values(positions).reduce(
       (a: number, x: any) => a + x.pnl, 0);
@@ -2632,13 +2698,13 @@ async function accountView(owner: PublicKey) {
       usdc: Number(usdc.amount) / 1e6,
       sol,
       margin, unrealized,
-      equity: Number(usdc.amount) / 1e6 + margin + unrealized + held * lpPrice,
+      equity: Number(usdc.amount) / 1e6 + margin + unrealized + (held + escrowed) * lpPrice,
       positions,
       orders,
       liquidations,
       deleverages,
       orderFills,
-      lp: { held, price: lpPrice, value: held * lpPrice },
+      lp: { held, price: lpPrice, value: held * lpPrice, pending },
       pool: {
         aum, liquidity, locked, free: liquidity - locked,
         utilization: liquidity > 0 ? (locked / liquidity) * 100 : 0,
@@ -2735,18 +2801,13 @@ app.post("/api/deposit", demoOnly, async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
+/// Starts the demo account's withdrawal. It is claimed after the cooldown
+/// through `/api/tx/withdraw-claim`, like anyone's.
 app.post("/api/withdraw", demoOnly, async (req, res) => {
   try {
-    const accounts = await allMarketAccounts();
-    const ix = await program.methods
-      .removeLiquidity(USD(Number(req.body.amount)), new BN(0))
-      .accounts(liquidityAccounts(trader.publicKey))
-      .remainingAccounts(accounts).instruction();
-    await sendV0(conn, trader, [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
-      ix,
-    ], await tablesFor(accounts));
-    res.json({ ok: true });
+    const ix = await requestWithdrawIx(trader.publicKey, Number(req.body.amount));
+    await sendV0(conn, trader, [ix], []);
+    res.json({ ok: true, pending: true });
   } catch (e) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
@@ -3787,21 +3848,43 @@ app.post("/api/tx/deposit", async (req, res) => {
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
-/// Takes LP tokens, not dollars: the instruction burns shares, and what they
-/// are worth is decided by the pool at the moment it runs, not by the page.
+/*
+ * Withdrawing is two transactions. `withdraw` moves LP tokens into escrow;
+ * `withdraw-claim`, once the cooldown has passed, burns them and pays USDC at
+ * what the pool is worth then; `withdraw-cancel` hands them back. The page
+ * never prices the payout: the program does, at the claim.
+ */
+
+/// Takes LP tokens, not dollars. Escrows them; nothing is paid yet.
 app.post("/api/tx/withdraw", async (req, res) => {
   try {
     const owner = ownerOf(req);
     const lp = Number(req.body.lpAmount);
     if (!(lp > 0)) return res.status(400).json({ error: "amount must be positive" });
+    res.json(await buildTx(owner, [await requestWithdrawIx(owner, lp)]));
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
+});
+
+/// Claims everything in escrow, priced from a fresh AUM checkpoint.
+app.post("/api/tx/withdraw-claim", async (req, res) => {
+  try {
+    const owner = ownerOf(req);
+    const r: any = await program.account.withdrawRequest.fetchNullable(withdrawRequestPda(owner));
+    if (!r || num(r.shares) === 0) return res.status(400).json({ error: "nothing waiting to be claimed" });
     const accounts = await allMarketAccounts();
-    const ix = await program.methods
-      .removeLiquidity(USD(lp), new BN(0))
-      .accounts(liquidityAccounts(owner))
-      .remainingAccounts(accounts).instruction();
+    const ix = await claimWithdrawIx(owner, new BN(r.shares.toString()), accounts);
     res.json(await buildTx(owner,
       [LIQUIDITY_CU, ...(await ataIxs(owner, [usdcMint])), ix],
       await tablesFor(accounts)));
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
+});
+
+/// Returns every escrowed share to the wallet.
+app.post("/api/tx/withdraw-cancel", async (req, res) => {
+  try {
+    const owner = ownerOf(req);
+    res.json(await buildTx(owner,
+      [...(await ataIxs(owner, [lpMint])), await cancelWithdrawIx(owner)]));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
@@ -4036,22 +4119,8 @@ app.post("/api/tx/close", async (req, res) => {
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
-for (const [route, method] of [["deposit", "addLiquidity"], ["withdraw", "removeLiquidity"]] as const) {
-  app.post(`/api/tx/${route}`, async (req, res) => {
-    try {
-      const owner = ownerOf(req);
-      const accounts = await allMarketAccounts();
-      const ix = await (program.methods as any)[method](USD(Number(req.body.amount)), new BN(0))
-        .accounts(liquidityAccounts(owner))
-        .remainingAccounts(accounts).instruction();
-      res.json(await buildTx(owner, [
-        ...(await ataIxs(owner, [usdcMint, lpMint])),
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
-        ix,
-      ], await tablesFor(accounts)));
-    } catch (e: any) { res.status(400).json({ error: explain(e) }); }
-  });
-}
+// `/api/tx/deposit` and the withdrawal routes are defined once, above.
+// A second registration here never ran: Express answers with the first.
 
 /// Submits a wallet-signed transaction. Kept server-side so the client does not
 /// need its own RPC endpoint, and so failures come back already explained.

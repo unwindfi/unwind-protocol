@@ -170,7 +170,23 @@ pub struct Market {
     pub deployer_rewards_usd: u64,
     /// Everything the deployer has been owed from this market, synced or not.
     pub deployer_earned_usd: u64,
-    pub _reserved: [u8; 2],
+    /// What the last risk price step's division left over, in bps of a unit.
+    /// See `oracle::risk_step`. Was the last two bytes of `_reserved`.
+    pub risk_step_rem: u16,
+
+    // Everything below was added after the first markets were listed, which
+    // grew the account. `resize_market` grows an older one; the new fields
+    // start at zero, which each of them reads as "nothing recorded yet".
+
+    /// The price published at `last_price_ts`, so a second, different price
+    /// under the same publish time is refused. Zero when not yet recorded.
+    pub last_price: u64,
+    /// The price liquidation reads: the oracle, followed at no more than
+    /// `RISK_PRICE_STEP_BPS_PER_SLOT` a slot. See `accept_price`.
+    pub risk_price: u64,
+    /// Slot `risk_price` was last stepped in.
+    pub risk_slot: u64,
+    pub _reserved: [u8; 32],
 }
 
 /// Where a market's mark comes from.
@@ -423,10 +439,50 @@ impl Market {
     /// themselves, could hand over the most favourable price of the last two
     /// minutes. Holding each market to prices that only move forward in time
     /// leaves the newest one as the only choice there is.
-    pub fn accept_price(&mut self, oracle: &OraclePrice) -> Result<()> {
+    ///
+    /// Two different prices under one publish time are a choice as well, so
+    /// the second is refused: the same price may be used again, a different
+    /// one waits for the next publish time.
+    ///
+    /// An accepted price then steps the market's risk price toward it, by at
+    /// most `RISK_PRICE_STEP_BPS_PER_SLOT` per slot since the last step, and
+    /// counting no more than `RISK_PRICE_MAX_GAP_SLOTS` of them. Returns the
+    /// risk price. A market nobody holds a position in follows the oracle at
+    /// once: there is nobody a jump could liquidate.
+    pub fn accept_price(&mut self, oracle: &OraclePrice, slot: u64) -> Result<u64> {
         let ts = u32::try_from(oracle.published_ts.max(0)).unwrap_or(u32::MAX);
         require!(ts >= self.last_price_ts, PerpError::OraclePriceRegressed);
+        require!(
+            ts > self.last_price_ts || self.last_price == 0 || self.last_price == oracle.price,
+            PerpError::OraclePriceConflict
+        );
         self.last_price_ts = ts;
+        self.last_price = oracle.price;
+
+        if self.risk_price == 0 || !self.has_open_interest() {
+            self.risk_price = oracle.price;
+            self.risk_step_rem = 0;
+        } else {
+            let slots = slot.saturating_sub(self.risk_slot).min(RISK_PRICE_MAX_GAP_SLOTS);
+            let (next, rem) = crate::oracle::risk_step(
+                self.risk_price,
+                oracle.price,
+                RISK_PRICE_STEP_BPS_PER_SLOT * slots,
+                self.risk_step_rem,
+            )?;
+            self.risk_price = next;
+            self.risk_step_rem = rem;
+        }
+        self.risk_slot = self.risk_slot.max(slot);
+        Ok(self.risk_price)
+    }
+
+    /// The part of `accept_price` a read-only caller can apply: a price older
+    /// than the newest this market has acted on is refused. Used where the
+    /// market is read but not written, such as valuing the pool for an LP.
+    pub fn check_price_floor(&self, oracle: &OraclePrice) -> Result<()> {
+        let ts = u32::try_from(oracle.published_ts.max(0)).unwrap_or(u32::MAX);
+        require!(ts >= self.last_price_ts, PerpError::OraclePriceRegressed);
         Ok(())
     }
 
@@ -706,7 +762,11 @@ mod tests {
             deployer_synced_volume_usd: 0,
             deployer_rewards_usd: 0,
             deployer_earned_usd: 0,
-            _reserved: [0; 2],
+            risk_step_rem: 0,
+            last_price: 0,
+            risk_price: 0,
+            risk_slot: 0,
+            _reserved: [0; 32],
         }
     }
 
@@ -1139,11 +1199,95 @@ mod tests {
     fn a_market_never_goes_back_to_an_older_price() {
         let mut m = market();
         let at = |published_ts| OraclePrice { price: 100_000_000, conf: 0, published_ts };
-        m.accept_price(&at(1_000)).unwrap();
-        m.accept_price(&at(1_000)).unwrap(); // the same price twice is fine
-        assert!(m.accept_price(&at(999)).is_err(), "an older one is refused");
-        m.accept_price(&at(1_060)).unwrap();
+        m.accept_price(&at(1_000), 1).unwrap();
+        m.accept_price(&at(1_000), 2).unwrap(); // the same price twice is fine
+        assert!(m.accept_price(&at(999), 3).is_err(), "an older one is refused");
+        m.accept_price(&at(1_060), 4).unwrap();
         assert_eq!(m.last_price_ts, 1_060);
+    }
+
+    #[test]
+    fn two_prices_with_one_publish_time_are_not_a_choice() {
+        let mut m = market();
+        let at = |price| OraclePrice { price, conf: 0, published_ts: 1_000 };
+        m.accept_price(&at(100_000_000), 1).unwrap();
+        assert!(
+            m.accept_price(&at(100_100_000), 2).is_err(),
+            "a second price under the same publish time is refused"
+        );
+        assert_eq!(m.last_price, 100_000_000, "a refused price is not recorded");
+        m.accept_price(&at(100_000_000), 3).unwrap();
+    }
+
+    #[test]
+    fn a_market_grown_from_the_old_layout_accepts_its_next_price() {
+        // A resized account has the publish time but no price on record.
+        let mut m = market();
+        m.last_price_ts = 1_000;
+        m.last_price = 0;
+        m.accept_price(&OraclePrice { price: 5, conf: 0, published_ts: 1_000 }, 1).unwrap();
+        assert_eq!(m.last_price, 5);
+    }
+
+    #[test]
+    fn a_read_only_price_is_held_to_the_newest_time_used() {
+        let mut m = market();
+        let at = |published_ts| OraclePrice { price: 100_000_000, conf: 0, published_ts };
+        m.accept_price(&at(1_000), 1).unwrap();
+        assert!(m.check_price_floor(&at(1_000)).is_ok());
+        assert!(m.check_price_floor(&at(1_001)).is_ok());
+        assert!(m.check_price_floor(&at(999)).is_err());
+    }
+
+    fn with_open_interest() -> Market {
+        let mut m = market();
+        m.long_size_usd = 1_000_000_000;
+        m
+    }
+
+    #[test]
+    fn the_risk_price_follows_an_empty_market_at_once() {
+        let mut m = market();
+        let at = |price, published_ts| OraclePrice { price, conf: 0, published_ts };
+        assert_eq!(m.accept_price(&at(100_000_000, 1), 10).unwrap(), 100_000_000);
+        // Nobody holds a position, so nobody can be hurt by a jump.
+        assert_eq!(m.accept_price(&at(150_000_000, 2), 11).unwrap(), 150_000_000);
+        assert_eq!(m.risk_price, 150_000_000);
+    }
+
+    #[test]
+    fn the_risk_price_walks_toward_a_jump_at_the_per_slot_cap() {
+        let mut m = with_open_interest();
+        let at = |price, published_ts| OraclePrice { price, conf: 0, published_ts };
+        assert_eq!(m.accept_price(&at(100_000_000, 1), 10).unwrap(), 100_000_000);
+        // A 20% jump, one slot later: the risk price moves one slot's cap.
+        let step = 100_000_000 * RISK_PRICE_STEP_BPS_PER_SLOT / 10_000;
+        assert_eq!(m.accept_price(&at(120_000_000, 2), 11).unwrap(), 100_000_000 + step);
+        // A second reading in the same slot moves it no further.
+        assert_eq!(m.accept_price(&at(120_000_000, 2), 11).unwrap(), 100_000_000 + step);
+        assert_eq!(m.risk_slot, 11);
+    }
+
+    #[test]
+    fn a_long_gap_moves_the_risk_price_no_more_than_the_max_gap_allows() {
+        let mut m = with_open_interest();
+        let at = |price, published_ts| OraclePrice { price, conf: 0, published_ts };
+        m.accept_price(&at(100_000_000, 1), 10).unwrap();
+        // A thousand slots unattended and then a 50% drop: one reading moves
+        // the risk price by at most the envelope maintenance was sized for.
+        let r = m.accept_price(&at(50_000_000, 2), 1_010).unwrap();
+        let most = RISK_PRICE_STEP_BPS_PER_SLOT * RISK_PRICE_MAX_GAP_SLOTS;
+        assert_eq!(r, 100_000_000 - 100_000_000 * most / 10_000);
+        assert!(m.risk_price >= 50_000_000);
+    }
+
+    #[test]
+    fn a_refused_price_does_not_move_the_risk_price() {
+        let mut m = with_open_interest();
+        let at = |price, published_ts| OraclePrice { price, conf: 0, published_ts };
+        m.accept_price(&at(100_000_000, 100), 10).unwrap();
+        assert!(m.accept_price(&at(50_000_000, 99), 20).is_err());
+        assert_eq!((m.risk_price, m.risk_slot), (100_000_000, 10));
     }
 
 
@@ -1241,9 +1385,9 @@ mod tests {
     fn the_same_price_may_be_used_twice_but_not_an_older_one() {
         let mut m = market();
         let at = |ts| OraclePrice { price: 1, conf: 0, published_ts: ts };
-        m.accept_price(&at(100)).unwrap();
-        m.accept_price(&at(100)).unwrap();
-        assert!(m.accept_price(&at(99)).is_err());
+        m.accept_price(&at(100), 1).unwrap();
+        m.accept_price(&at(100), 2).unwrap();
+        assert!(m.accept_price(&at(99), 3).is_err());
         assert_eq!(m.last_price_ts, 100, "a refused price is not recorded");
     }
 

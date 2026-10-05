@@ -38,7 +38,9 @@ stop in proportion to the shares withdrawn.
 Pool points are counted on the xLP a wallet minted and still holds. xLP can be
 moved to another wallet without the program seeing it, so tokens sent away
 stop earning at the next update and do not start again if they come back, and
-tokens received from someone else earn nothing.
+tokens received from someone else earn nothing. xLP in escrow waiting to be
+claimed (see [The pool](pool.md)) earns nothing, and a cancelled withdrawal
+earns again from the cancel.
 
 ## Referrals
 

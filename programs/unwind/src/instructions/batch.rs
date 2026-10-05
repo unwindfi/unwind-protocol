@@ -32,14 +32,14 @@ pub fn market_price(
     market: &Market,
     market_key: &Pubkey,
 ) -> Result<OraclePrice> {
-    match PriceSource::from_u8(market.price_source)? {
+    let price = match PriceSource::from_u8(market.price_source)? {
         PriceSource::Pyth => read_price(
             account,
             &pool.pyth_receiver,
             &market.feed_id,
             market.max_price_age_sec,
             market.max_conf_bps,
-        ),
+        )?,
         PriceSource::Observed => {
             require_keys_eq!(*account.key, market.observation, PerpError::WrongOracleFeed);
             // Deserialised by hand rather than through `Account::try_from`,
@@ -55,9 +55,14 @@ pub fn market_price(
                 market.max_price_age_sec,
                 market.max_conf_bps,
                 DEPTH_CONF_REFERENCE_BPS,
-            )
+            )?
         }
-    }
+    };
+    // Never older than a price the market has already acted on, even where
+    // the caller only reads the market (valuing the pool for an LP) and so
+    // cannot record this one. Writers go on to `Market::accept_price`.
+    market.check_price_floor(&price)?;
+    Ok(price)
 }
 
 #[derive(Accounts)]
@@ -553,7 +558,7 @@ pub fn clear_batch(ctx: Context<ClearBatch>) -> Result<()> {
         &ctx.accounts.market,
         &market_key,
     )?;
-    ctx.accounts.market.accept_price(&oracle)?;
+    ctx.accounts.market.accept_price(&oracle, clock.slot)?;
 
     // The pool fills takers the makers left standing. Its size is capped out
     // of the budget it was listed with, so it can seed a market nobody is

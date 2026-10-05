@@ -139,7 +139,8 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
       tvlNote: `${compact(pool.lpSupply)} xLP`,
       apy: apyCell(apy?.pool, "no deposits"),
       strategy: "Default",
-      yours: owned ? account!.lp.value : 0,
+      // Shares waiting out the cooldown are still the owner's.
+      yours: owned ? account!.lp.value + (account!.lp.pending?.value ?? 0) : 0,
       group: "pool",
       util: { pct: pool.utilization, note: `of ${pool.maxUtilization}% cap` },
     });
@@ -216,12 +217,28 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     ? (side === "in" ? pool?.addFeePct ?? 0 : pool?.removeFeePct ?? 0) : 0;
   const paying = v.kind === "market" && side === "in" ? payWith : "USDC";
   // Nothing is held back for open positions: all of a stake can come out.
-  const ceiling = side === "in" ? (account?.usdc ?? 0) : v.yours;
+  // Pool shares already in escrow are not counted twice.
+  const ceiling = side === "in" ? (account?.usdc ?? 0)
+    : v.kind === "pool" ? account?.lp.value ?? 0 : v.yours;
+  const pending = v.kind === "pool" ? account?.lp.pending ?? null : null;
   // Only USDC has a balance this page knows; a SOL or USDT amount is checked
   // by the wallet instead.
   const over = paying === "USDC" && usd > ceiling + 1e-9;
   const usdOf = (n: number) => n * (paying === "USDC" ? 1 : prices?.[paying] ?? 0);
-  const verb = side === "in" ? (v.kind === "pool" ? "Deposit" : "Back") : "Withdraw";
+  const verb = side === "in" ? (v.kind === "pool" ? "Deposit" : "Back")
+    : v.kind === "pool" ? "Request withdrawal" : "Withdraw";
+
+  /// Claims or cancels the pool withdrawal waiting in escrow.
+  const settle = async (how: "claim" | "cancel") => {
+    setBusy(true); setNote(null);
+    try {
+      const r = await signAndSend(wallet, `withdraw-${how}`, {});
+      setNote(r.ok
+        ? { ok: true, text: how === "claim" ? "Claimed." : "Cancelled. The xLP is back in your wallet." }
+        : { ok: false, text: r.error ?? "Not accepted. Try again." });
+      if (r.ok) onDone();
+    } finally { setBusy(false); }
+  };
 
   const submit = async () => {
     if (!usd || over) return;
@@ -236,8 +253,10 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     try {
       const r = await signAndSend(wallet, path, body);
       setNote(r.ok
-        ? { ok: true, text: `${side === "out" ? "Withdrew" : v.kind === "pool" ? "Deposited" : "Backed with"} ${
-          paying === "USDC" ? money(usd) : `${usd} ${paying}`}.` }
+        ? { ok: true, text: side === "out" && v.kind === "pool"
+          ? `Requested ${money(usd)}. Claim it in about a minute, at the pool's value then.`
+          : `${side === "out" ? "Withdrew" : v.kind === "pool" ? "Deposited" : "Backed with"} ${
+            paying === "USDC" ? money(usd) : `${usd} ${paying}`}.` }
         : { ok: false, text: r.error ?? "Not accepted. Check your balance and try again." });
       if (r.ok) { setAmount(""); setAll(false); onDone(); }
     } finally { setBusy(false); }
@@ -300,6 +319,37 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {side === "out" && pending && (
+            <div className="mt-5 rounded-[12px] border border-line bg-panel2 px-4 py-3.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[13px] text-foreground">Withdrawal pending</span>
+                <span className="n text-[13px] font-semibold">≈{money(pending.value)}</span>
+              </div>
+              <p className="n mt-1 text-[12px] text-muted-foreground">
+                {pending.shares.toLocaleString(undefined, { maximumFractionDigits: 2 })} xLP.{" "}
+                {pending.slotsLeft > 0
+                  ? `Claimable in about ${pending.secondsLeft < 60 ? `${pending.secondsLeft}s`
+                    : `${Math.ceil(pending.secondsLeft / 60)} min`} (${pending.slotsLeft} slots).`
+                  : "Ready to claim."}
+              </p>
+              {owner && (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => settle("claim")}
+                    disabled={busy || pending.slotsLeft > 0 || api.readOnly}
+                    className="press h-9 rounded-full bg-foreground text-[13px] font-medium text-background
+                               transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-35">
+                    Claim
+                  </button>
+                  <button type="button" onClick={() => settle("cancel")} disabled={busy || api.readOnly}
+                    className="press h-9 rounded-full bg-panel3 text-[13px] font-medium transition-colors
+                               hover:opacity-90 disabled:pointer-events-none disabled:opacity-35">
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -370,7 +420,9 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
               ? `${(usd * (1 - fee / 100) / price).toLocaleString(undefined, { maximumFractionDigits: 2 })} xLP`
               : paying !== "USDC"
                 ? `≈${money(usdOf(usd), 0)} backing, held as ${paying}`
-                : money(usd * (1 - fee / 100))}
+                : v.kind === "pool" && side === "out"
+                  ? `≈${money(usd * (1 - fee / 100))} at today's value`
+                  : money(usd * (1 - fee / 100))}
           </Stat>
           <Stat k="Fee">{fee ? `${fee}%, paid to remaining LPs` : "none"}</Stat>
           <Stat k="Yours now">{money(v.yours)}</Stat>
@@ -382,7 +434,9 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           {/* The risk, where the money is committed rather than on another page. */}
           <p className="text-pretty border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
             {v.kind === "pool"
-              ? "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
+              ? side === "out"
+                ? "Withdrawing takes two steps. Your xLP waits about a minute (150 slots) in escrow, still earning and losing with the pool, then pays out at the pool's value when you claim. Cancel any time before."
+                : "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
               : `First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
                 paying === "SOL" ? "; counts at 80%" : ""
               }. Withdraw any time, in the same mix. Winners are paid only from what is left, so leaving early cuts their payout, not yours.`}
@@ -559,6 +613,14 @@ export default function Earn() {
               <Stat k="Deposited">
                 {owner ? <AnimatedNumber value={yours} duration={0.9} format={(n) => money(n)} /> : <span className="font-normal text-dim">–</span>}
               </Stat>
+              {owner && account?.lp.pending && (
+                <Stat k="Withdrawing">
+                  {money(account.lp.pending.value)}
+                  <span className="ml-1.5 font-normal text-dim">
+                    {account.lp.pending.slotsLeft > 0 ? `${account.lp.pending.secondsLeft}s left` : "ready to claim"}
+                  </span>
+                </Stat>
+              )}
             </div>
 
             {/* Without a wallet there is nothing to deposit from, and a greyed

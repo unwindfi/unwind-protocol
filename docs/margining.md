@@ -26,6 +26,15 @@ opened at the maximum permitted leverage would otherwise be liquidatable at
 the moment it was opened. The program rejects a configuration in which this
 does not hold.
 
+The maintenance margin must also cover the largest step the risk price can
+take plus the liquidation fee: at least 120 basis points (40 a slot, 3 slots)
+above the liquidation fee. A position healthy before a step then still has its
+liquidation fee left after it, so a liquidation is paid out of the position
+and not out of the pool. The 20x market at 250 basis points of maintenance and
+a 100 basis point fee fits with 30 to spare. The program refuses a listing or
+a parameter change that does not fit. See
+[Price sources](price-sources.md#the-risk-price).
+
 Both parameters are per market. While the tracked asset's session is closed,
 maximum leverage and the open interest cap tighten; the maintenance margin
 does not change.

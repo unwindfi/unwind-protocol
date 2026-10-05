@@ -6,8 +6,8 @@ use crate::math::*;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
-    burn, mint_to, transfer_checked, Burn, Mint, MintTo, TokenAccount, TokenInterface,
-    TransferChecked,
+    burn, close_account, mint_to, transfer_checked, Burn, CloseAccount, Mint, MintTo,
+    TokenAccount, TokenInterface, TransferChecked,
 };
 
 #[derive(Accounts)]
@@ -166,14 +166,315 @@ pub fn add_liquidity<'info>(
     Ok(())
 }
 
-pub fn remove_liquidity<'info>(
-    ctx: Context<'_, '_, 'info, 'info, ManageLiquidity<'info>>,
+/// What burning `lp_amount` of `lp_supply` shares pays out of a pool worth
+/// `aum`, as `(gross, net)`: their part of the pool, then less the
+/// withdrawal fee. Refuses a pool worth nothing, no shares, and a payout that
+/// rounds to nothing.
+pub fn withdrawal_value(lp_amount: u64, aum: u64, lp_supply: u64, fee_bps: u16) -> Result<(u64, u64)> {
+    require!(lp_amount > 0, PerpError::ZeroAmount);
+    require!(lp_supply > 0 && aum > 0, PerpError::InsufficientLiquidity);
+    let gross = mul_div_u64(lp_amount, aum as u128, lp_supply as u128)?;
+    let fee = bps_of(gross, fee_bps)?;
+    let net = gross.checked_sub(fee).ok_or(PerpError::MathOverflow)?;
+    require!(net > 0, PerpError::ZeroAmount);
+    Ok((gross, net))
+}
+
+/// Whether the pool can pay `gross` out to a leaving LP.
+///
+/// Only against unlocked LP capital. `locked_usd` is already promised to open
+/// positions, and trader collateral is not LP money at all, so neither may be
+/// paid out. While anything is locked the pool keeps at least
+/// `MIN_POOL_LIQUIDITY_USD`.
+pub fn check_withdrawal_allowed(pool: &Pool, gross: u64) -> Result<()> {
+    require!(gross <= pool.free_liquidity_usd(), PerpError::InsufficientLiquidity);
+    let remaining = pool.liquidity_usd.saturating_sub(gross);
+    require!(remaining >= pool.locked_usd, PerpError::InsufficientLiquidity);
+    if pool.locked_usd > 0 {
+        require!(
+            remaining >= MIN_POOL_LIQUIDITY_USD,
+            PerpError::BelowMinimumLiquidity
+        );
+    }
+    Ok(())
+}
+
+// There is no instant withdrawal. `remove_liquidity` burned shares and paid at
+// the price of the moment, so an LP who could see a loss coming (a mark about
+// to catch up, a feed about to update) could leave at the old value and hand
+// the loss to everyone who stayed, or deposit and leave around the move.
+// Leaving now takes `request_withdraw`, `WITHDRAW_COOLDOWN_SLOTS`, then
+// `claim_withdraw` at the value at that time.
+
+#[derive(Accounts)]
+pub struct RequestWithdraw<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
+    pub pool: Box<Account<'info, Pool>>,
+
+    #[account(address = pool.lp_mint)]
+    pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = owner_lp.mint == pool.lp_mint,
+        constraint = owner_lp.owner == owner.key(),
+    )]
+    pub owner_lp: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + WithdrawRequest::INIT_SPACE,
+        seeds = [WITHDRAW_REQUEST_SEED, pool.key().as_ref(), owner.key().as_ref()],
+        bump,
+    )]
+    pub request: Box<Account<'info, WithdrawRequest>>,
+
+    /// Holds the escrowed shares. Owned by the pool, so only a claim or a
+    /// cancel can move them.
+    #[account(
+        init_if_needed,
+        payer = owner,
+        seeds = [WITHDRAW_ESCROW_SEED, request.key().as_ref()],
+        bump,
+        token::mint = lp_mint,
+        token::authority = pool,
+        token::token_program = token_program,
+    )]
+    pub escrow_lp: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + Trader::INIT_SPACE,
+        seeds = [TRADER_SEED, owner.key().as_ref()],
+        bump,
+    )]
+    pub trader: Box<Account<'info, Trader>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Moves `lp_amount` shares into escrow and starts the cooldown. They are not
+/// burned, so they keep their part of every gain and loss until claimed.
+pub fn request_withdraw(ctx: Context<RequestWithdraw>, lp_amount: u64) -> Result<()> {
+    require!(lp_amount > 0, PerpError::ZeroAmount);
+
+    let now = Clock::get()?.unix_timestamp;
+    let owner = ctx.accounts.owner.key();
+    let held = ctx.accounts.owner_lp.amount;
+    let trader = &mut ctx.accounts.trader;
+    open_trader(trader, owner, ctx.bumps.trader, now);
+    trader.accrue_lp(held, now)?;
+    let before = trader.lp_usd;
+    trader.remove_lp(lp_amount);
+    let points_usd = before - trader.lp_usd;
+
+    transfer_checked(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.owner_lp.to_account_info(),
+                mint: ctx.accounts.lp_mint.to_account_info(),
+                to: ctx.accounts.escrow_lp.to_account_info(),
+                authority: ctx.accounts.owner.to_account_info(),
+            },
+        ),
+        lp_amount,
+        ctx.accounts.lp_mint.decimals,
+    )?;
+
+    let slot = Clock::get()?.slot;
+    let pool = ctx.accounts.pool.key();
+    let r = &mut ctx.accounts.request;
+    if r.shares == 0 {
+        r.bump = ctx.bumps.request;
+        r.escrow_bump = ctx.bumps.escrow_lp;
+        r.pool = pool;
+        r.owner = owner;
+        r.points_usd = 0;
+    }
+    r.escrow(lp_amount, points_usd, slot)?;
+
+    emit!(WithdrawRequested {
+        pool,
+        owner,
+        lp_amount,
+        escrowed: r.shares,
+        ready_slot: r.ready_slot(),
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct CancelWithdraw<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
+    pub pool: Box<Account<'info, Pool>>,
+
+    #[account(address = pool.lp_mint)]
+    pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = owner_lp.mint == pool.lp_mint,
+        constraint = owner_lp.owner == owner.key(),
+    )]
+    pub owner_lp: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        close = owner,
+        seeds = [WITHDRAW_REQUEST_SEED, pool.key().as_ref(), owner.key().as_ref()],
+        bump = request.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub request: Box<Account<'info, WithdrawRequest>>,
+
+    #[account(
+        mut,
+        seeds = [WITHDRAW_ESCROW_SEED, request.key().as_ref()],
+        bump = request.escrow_bump,
+    )]
+    pub escrow_lp: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [TRADER_SEED, owner.key().as_ref()],
+        bump = trader.bump,
+    )]
+    pub trader: Box<Account<'info, Trader>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// Returns every escrowed share to the owner and closes the request.
+/// Allowed at any time, paused or not: it moves no value.
+pub fn cancel_withdraw(ctx: Context<CancelWithdraw>) -> Result<()> {
+    let shares = ctx.accounts.request.shares;
+    let points_usd = ctx.accounts.request.points_usd;
+
+    let now = Clock::get()?.unix_timestamp;
+    let held = ctx.accounts.owner_lp.amount;
+    let trader = &mut ctx.accounts.trader;
+    trader.accrue_lp(held, now)?;
+    trader.add_lp(shares, points_usd)?;
+
+    let usdc_mint_key = ctx.accounts.pool.usdc_mint;
+    let bump = ctx.accounts.pool.bump;
+    let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, usdc_mint_key.as_ref(), &[bump]]];
+
+    if shares > 0 {
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.escrow_lp.to_account_info(),
+                    mint: ctx.accounts.lp_mint.to_account_info(),
+                    to: ctx.accounts.owner_lp.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            shares,
+            ctx.accounts.lp_mint.decimals,
+        )?;
+    }
+    close_escrow(
+        &ctx.accounts.token_program,
+        &ctx.accounts.escrow_lp,
+        &ctx.accounts.owner,
+        &ctx.accounts.pool,
+        signer_seeds,
+    )?;
+
+    emit!(WithdrawCancelled {
+        pool: ctx.accounts.pool.key(),
+        owner: ctx.accounts.owner.key(),
+        lp_amount: shares,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct ClaimWithdraw<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, pool.usdc_mint.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Box<Account<'info, Pool>>,
+
+    #[account(address = pool.usdc_mint)]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, address = pool.usdc_vault)]
+    pub usdc_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut, address = pool.lp_mint)]
+    pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = owner_usdc.mint == pool.usdc_mint,
+        constraint = owner_usdc.owner == owner.key(),
+    )]
+    pub owner_usdc: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [WITHDRAW_REQUEST_SEED, pool.key().as_ref(), owner.key().as_ref()],
+        bump = request.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub request: Box<Account<'info, WithdrawRequest>>,
+
+    #[account(
+        mut,
+        seeds = [WITHDRAW_ESCROW_SEED, request.key().as_ref()],
+        bump = request.escrow_bump,
+    )]
+    pub escrow_lp: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// What traders are up across every market with open interest, summed
+    /// by `checkpoint_aum`, as for `add_liquidity`.
+    #[account(seeds = [AUM_SEED, pool.key().as_ref()], bump = checkpoint.bump)]
+    pub checkpoint: Box<Account<'info, AumCheckpoint>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// Burns `lp_amount` escrowed shares once the cooldown is over and pays them
+/// at what the pool is worth now. What is left in escrow stays claimable; the
+/// request closes when the last share is claimed.
+///
+/// `remaining_accounts` as for `add_liquidity`.
+pub fn claim_withdraw<'info>(
+    ctx: Context<'_, '_, 'info, 'info, ClaimWithdraw<'info>>,
     lp_amount: u64,
     min_usd_out: u64,
 ) -> Result<()> {
     require!(lp_amount > 0, PerpError::ZeroAmount);
     require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
+    require!(
+        ctx.accounts.request.is_ready(Clock::get()?.slot),
+        PerpError::WithdrawCooling
+    );
 
+    // Priced now, not at the request: the escrowed shares are still in the
+    // mint's supply, so whatever the pool lost while they waited is theirs too.
+    //
     // A market whose price could not be read when the checkpoint was taken
     // is counted at the most it could cost the LPs rather than refusing: one
     // stalled feed or emptied pool must not lock every LP's capital in the
@@ -183,53 +484,33 @@ pub fn remove_liquidity<'info>(
         ctx.remaining_accounts, Unpriced::AtWorst,
     )?;
     let lp_supply = ctx.accounts.lp_mint.supply;
-    require!(lp_supply > 0 && aum > 0, PerpError::InsufficientLiquidity);
-
-    let gross = mul_div_u64(lp_amount, aum as u128, lp_supply as u128)?;
-    let fee = bps_of(gross, ctx.accounts.pool.remove_liquidity_fee_bps)?;
-    let net = gross.checked_sub(fee).ok_or(PerpError::MathOverflow)?;
-    require!(net > 0, PerpError::ZeroAmount);
-    require!(net >= min_usd_out, PerpError::SlippageExceeded);
-
-    {
-        let pool = &ctx.accounts.pool;
-        // Withdraw only against unlocked LP capital. `locked_usd` is already
-        // promised to open positions and trader collateral is not LP money at
-        // all, so neither may be paid out here.
-        require!(gross <= pool.free_liquidity_usd(), PerpError::InsufficientLiquidity);
-        let remaining = pool.liquidity_usd.saturating_sub(gross);
-        require!(remaining >= pool.locked_usd, PerpError::InsufficientLiquidity);
-        if pool.locked_usd > 0 {
-            require!(
-                remaining >= MIN_POOL_LIQUIDITY_USD,
-                PerpError::BelowMinimumLiquidity
-            );
-        }
-    }
-
-    let now = Clock::get()?.unix_timestamp;
-    let owner = ctx.accounts.owner.key();
-    let held = ctx.accounts.owner_lp.amount;
-    let trader = &mut ctx.accounts.trader;
-    open_trader(trader, owner, ctx.bumps.trader, now);
-    trader.accrue_lp(held, now)?;
-    trader.remove_lp(lp_amount);
-
-    burn(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            Burn {
-                mint: ctx.accounts.lp_mint.to_account_info(),
-                from: ctx.accounts.owner_lp.to_account_info(),
-                authority: ctx.accounts.owner.to_account_info(),
-            },
-        ),
+    let (gross, net) = withdrawal_value(
         lp_amount,
+        aum,
+        lp_supply,
+        ctx.accounts.pool.remove_liquidity_fee_bps,
     )?;
+    require!(net >= min_usd_out, PerpError::SlippageExceeded);
+    check_withdrawal_allowed(&ctx.accounts.pool, gross)?;
+
+    ctx.accounts.request.release(lp_amount)?;
 
     let usdc_mint_key = ctx.accounts.pool.usdc_mint;
     let bump = ctx.accounts.pool.bump;
     let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, usdc_mint_key.as_ref(), &[bump]]];
+
+    burn(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.lp_mint.to_account_info(),
+                from: ctx.accounts.escrow_lp.to_account_info(),
+                authority: ctx.accounts.pool.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        lp_amount,
+    )?;
 
     transfer_checked(
         CpiContext::new_with_signer(
@@ -246,6 +527,19 @@ pub fn remove_liquidity<'info>(
         ctx.accounts.usdc_mint.decimals,
     )?;
 
+    if ctx.accounts.request.shares == 0 {
+        close_escrow(
+            &ctx.accounts.token_program,
+            &ctx.accounts.escrow_lp,
+            &ctx.accounts.owner,
+            &ctx.accounts.pool,
+            signer_seeds,
+        )?;
+        ctx.accounts
+            .request
+            .close(ctx.accounts.owner.to_account_info())?;
+    }
+
     let pool = &mut ctx.accounts.pool;
     // The withdrawal fee stays behind with the remaining LPs.
     pool.liquidity_usd = pool.liquidity_usd.saturating_sub(net);
@@ -258,6 +552,42 @@ pub fn remove_liquidity<'info>(
         aum_before: aum,
     });
     Ok(())
+}
+
+/// Closes an emptied escrow account, rent to the owner.
+fn close_escrow<'info>(
+    token_program: &Interface<'info, TokenInterface>,
+    escrow: &InterfaceAccount<'info, TokenAccount>,
+    owner: &Signer<'info>,
+    pool: &Account<'info, Pool>,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    close_account(CpiContext::new_with_signer(
+        token_program.to_account_info(),
+        CloseAccount {
+            account: escrow.to_account_info(),
+            destination: owner.to_account_info(),
+            authority: pool.to_account_info(),
+        },
+        signer_seeds,
+    ))
+}
+
+#[event]
+pub struct WithdrawRequested {
+    pub pool: Pubkey,
+    pub owner: Pubkey,
+    pub lp_amount: u64,
+    /// Everything now in escrow, this request included.
+    pub escrowed: u64,
+    pub ready_slot: u64,
+}
+
+#[event]
+pub struct WithdrawCancelled {
+    pub pool: Pubkey,
+    pub owner: Pubkey,
+    pub lp_amount: u64,
 }
 
 #[event]
@@ -284,11 +614,9 @@ mod tests {
 
     // The handlers take accounts, so these put their share arithmetic onto
     // plain numbers. `deposit` takes the fee as `add_liquidity` does and calls
-    // the real `lp_out_for_deposit`; `withdraw` mirrors
-    // `remove_liquidity` from `let gross = mul_div_u64(...)` to the `net > 0`
-    // check; `allowed` mirrors the block that checks free liquidity. Keep
-    // them in step with the handlers (and with src/proofs/liquidity.rs,
-    // which proves the same lines).
+    // the real `lp_out_for_deposit`; `withdraw` and `allowed` call the real
+    // `withdrawal_value` and `check_withdrawal_allowed` that `claim_withdraw`
+    // uses. src/proofs/liquidity.rs proves the same lines.
 
     fn deposit(amount: u64, fee_bps: u16, supply: u64, aum: u64) -> Option<u64> {
         let fee = bps_of(amount, fee_bps).ok()?;
@@ -300,19 +628,11 @@ mod tests {
     }
 
     fn withdraw(lp: u64, aum: u64, supply: u64, fee_bps: u16) -> Option<(u64, u64)> {
-        if supply == 0 || aum == 0 {
-            return None;
-        }
-        let gross = mul_div_u64(lp, aum as u128, supply as u128).ok()?;
-        let net = gross - bps_of(gross, fee_bps).ok()?;
-        (net > 0).then_some((gross, net))
+        withdrawal_value(lp, aum, supply, fee_bps).ok()
     }
 
     fn allowed(p: &Pool, gross: u64) -> bool {
-        let remaining = p.liquidity_usd.saturating_sub(gross);
-        gross <= p.free_liquidity_usd()
-            && remaining >= p.locked_usd
-            && (p.locked_usd == 0 || remaining >= MIN_POOL_LIQUIDITY_USD)
+        check_withdrawal_allowed(p, gross).is_ok()
     }
 
     fn pool(liquidity_usd: u64) -> Pool {
@@ -519,5 +839,30 @@ mod tests {
             last = net;
         }
         assert_eq!(last, 0, "a pool whose traders are owed all of it pays nothing out");
+    }
+
+    #[test]
+    fn a_claim_is_priced_when_it_is_claimed_not_when_it_was_requested() {
+        // 50k of 1m shares escrowed while the pool is worth 1m. Traders go up
+        // 100k during the cooldown: the escrowed shares are still in supply,
+        // so the claim pays their 5% of the 900k left, not of the 1m.
+        let (liq, supply, lp) = (1_000_000 * USD, 1_000_000 * USD, 50_000 * USD);
+        let (at_request, _) = withdraw(lp, aum(liq, 0, 0), supply, 0).unwrap();
+        let (at_claim, _) = withdraw(lp, aum(liq, 100_000 * USD as i64, 0), supply, 0).unwrap();
+        assert_eq!(at_request, 50_000 * USD);
+        assert_eq!(at_claim, 45_000 * USD);
+        // And the LPs who stay lose exactly their share, no more.
+        let left = aum(liq, 100_000 * USD as i64, 0) - at_claim;
+        assert_eq!(left, 855_000 * USD);
+        assert_eq!(left as u128 * supply as u128, 900_000 * USD as u128 * (supply - lp) as u128);
+    }
+
+    #[test]
+    fn a_claim_against_a_worthless_pool_or_no_supply_pays_nothing() {
+        assert!(withdrawal_value(1, 0, 10, 0).is_err());
+        assert!(withdrawal_value(1, 10, 0, 0).is_err());
+        assert!(withdrawal_value(0, 10, 10, 0).is_err());
+        // Worth less than a unit: refused rather than burned for nothing.
+        assert!(withdrawal_value(1, 1, 2, 0).is_err());
     }
 }

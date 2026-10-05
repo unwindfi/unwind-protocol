@@ -15,8 +15,12 @@ never out of pool capital, so a position already through zero pays none.
 ## Why liquidation is permissionless
 
 The operation accepts no price and no discretionary input. It reads the
-market's mark, evaluates whether the position's equity has fallen below the
-maintenance margin, and closes it if so.
+market's mark, steps the market's risk price toward it, evaluates whether the
+position's equity at the risk price has fallen below the maintenance margin,
+and closes it if so. The close is at the worse of the risk price and the mark
+for the position, so what the owner gets back is never priced off a risk price
+still catching up with a fall. See
+[Price sources](price-sources.md#the-risk-price).
 
 Restricting that to a designated keeper would therefore add a dependency
 without adding a safeguard: a keeper cannot produce a better outcome than an
@@ -31,8 +35,14 @@ The worst it can do is leave orders resting where their owners placed them.
 Anyone may liquidate, but the venue runs a keeper so nobody has to. It keeps
 every open position in memory and checks each against the live price every
 3 seconds. The list is read from the chain again every minute, after every
-batch that fills, and after every transaction the venue relays. A
-liquidation that fails is retried after 30 seconds.
+batch that fills, and after every transaction the venue relays.
+
+On each check the keeper first steps the risk price of every market with a
+position past its margin, then tries the liquidation. A position the program
+still finds healthy at the risk price is tried again on the next check; the
+risk price moves at most 1.2 percent per step, so a 6 percent move takes about
+five checks to reach. A liquidation that fails for any other reason is retried
+after 30 seconds.
 
 The keeper that pushes marks moves one at most 10% a push. A larger move is
 held for one push, then walked toward 10% at a time, so a crash crosses each

@@ -405,7 +405,7 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
         &ctx.accounts.market.key(),
     )?;
 
-    ctx.accounts.market.accept_price(&oracle)?;
+    ctx.accounts.market.accept_price(&oracle, clock.slot)?;
 
     // The trigger is measured against the index, not the fill price. A stop is
     // a statement about the market, not about the spread the pool happens to

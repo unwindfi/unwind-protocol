@@ -110,4 +110,12 @@ pub enum PerpError {
     LpAccountRequired,
     #[msg("The pool's valuation checkpoint is stale or incomplete; run checkpoint_aum and try again")]
     AumCheckpointStale,
+    #[msg("This withdrawal is still in its cooldown; claim it once the wait is over")]
+    WithdrawCooling,
+    #[msg("That price's publish time is ahead of the chain's clock")]
+    OracleFromFuture,
+    #[msg("A different price was already used under this publish time")]
+    OraclePriceConflict,
+    #[msg("Maintenance margin must cover the risk price's largest step plus the liquidation fee")]
+    MarginEnvelope,
 }

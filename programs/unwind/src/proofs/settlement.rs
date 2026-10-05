@@ -174,7 +174,11 @@ fn any_market() -> Market {
         locked_usd: small(MAX_BAL),
         last_price_ts: 0,
         depth_leverage_x: 0,
-        _reserved: [0; 2],
+        risk_step_rem: 0,
+        last_price: 0,
+        risk_price: 0,
+        risk_slot: 0,
+        _reserved: [0; 32],
         volume_usd: 0,
         deployer_synced_volume_usd: 0,
         deployer_rewards_usd: 0,
@@ -491,12 +495,15 @@ fn a_haircut_pays_no_more_than_the_market_can() {
     let owed = small(7);
     let fill = any_fill();
 
-    let paid = haircut_profit_usd(&p, &m, owed, fill).unwrap();
+    let is_long: bool = kani::any();
+
+    let paid = haircut_profit_usd(&p, &m, owed, fill, is_long).unwrap();
     let cash = m.backing_usd + p.liquidity_usd + p.insurance_usd;
     assert!(paid <= owed);
     assert!(paid <= m.remaining_budget_usd().min(cash));
-    // And in full whenever the market can cover every winner.
-    if m.winning_pnl_usd(fill).unwrap().max(owed) <= m.remaining_budget_usd().min(cash) {
+    // And in full whenever the market can cover every winner, this close's
+    // profit counted on top of its side's.
+    if m.winning_pnl_usd(fill).unwrap() + owed <= m.remaining_budget_usd().min(cash) {
         assert!(paid == owed);
     }
 }

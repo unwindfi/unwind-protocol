@@ -79,12 +79,55 @@ transaction once about two dozen markets had positions, and then nobody could
 enter or leave the pool. The checkpoint is a pass anyone may run
 (`checkpoint_aum`): it adds the markets with open interest in increasing
 address order over as many transactions as it needs, and completes when it
-has counted all of them. A deposit or withdrawal accepts only a completed
-checkpoint under a minute old, taken while the same set of markets carried
+has counted all of them. A deposit or a withdrawal claim accepts only a
+completed checkpoint under a minute old, taken while the same set of markets carried
 open interest; the pool records a version that changes whenever that set
 does, so a checkpoint from before a market gained or lost its positions is
 refused. The venue's server runs a pass every twenty seconds, and before
-building a deposit or withdrawal if the last one is older than 45 seconds.
+building a deposit or claim if the last one is older than 45 seconds.
+
+Each pass keeps two sums from the same readings, because a market's risk
+price (see [Price sources](price-sources.md)) can trail its oracle after a
+move. The deposit sum counts each market at whichever of the two leaves the
+pool worth more, so a depositor buys fewer shares; the claim sum counts it at
+whichever leaves the pool worth less, so a leaver is paid less. Neither side
+can time its move against the gap.
+
+### Withdrawing takes two steps
+
+There is no instant withdrawal. Leaving the pool is a request, a wait, and a
+claim:
+
+1. `request_withdraw` moves the xLP into an escrow account the pool controls.
+   Nothing is paid yet.
+2. The shares wait 150 slots, about one minute.
+3. `claim_withdraw` burns them and pays USDC at what the pool is worth at the
+   claim, less the withdrawal fee.
+
+Escrowed shares are not burned until the claim, so they stay in the share
+supply and take their part of every gain and loss for the whole wait. Example:
+50,000 of 1,000,000 shares are requested while the pool is worth $1,000,000.
+Traders go up $100,000 before the claim. The claim pays 5% of $900,000, which
+is $45,000, not the $50,000 the shares were worth at the request.
+
+That is what the wait is for. With an instant withdrawal, an LP who could see a
+loss coming (a feed about to update, a mark about to catch up) could leave at
+the old value and leave the loss with everyone who stayed. A move takes longer
+than a few slots to reach the price, so a few slots would protect nothing; 150
+covers it without locking anyone in.
+
+The shares are escrowed rather than timed in the wallet because xLP moves
+freely. A timer on the wallet would reset by sending the tokens to another one.
+
+The claim runs every check a withdrawal always ran: the pool must not be
+paused, only free liquidity can leave, the pool keeps its minimum while
+positions are open, and a market that cannot be priced counts at its worst.
+A claim may take part of what is escrowed; the rest stays claimable. Adding
+to an open request restarts the 150 slots for all of it.
+
+`cancel_withdraw` returns every escrowed share at any time, paused or not.
+Escrowed shares earn no points; a cancel puts them back on the wallet's
+points stake.
 
 ## Batch reporting
 

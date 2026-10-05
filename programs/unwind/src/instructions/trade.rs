@@ -410,9 +410,19 @@ pub fn payable_usd(market: &Market, settlement: &Settlement) -> u64 {
 /// no winner can beat another to the money by closing first.
 ///
 /// `winners` is read from the market's side aggregates, so a side holding
-/// both winners and losers counts net; it is never taken below `owed_usd`,
-/// which keeps a single payout within `available` whatever the aggregate says.
-pub fn haircut_profit_usd(pool: &Pool, market: &Market, owed_usd: u64, price: u64) -> Result<u64> {
+/// both winners and losers counts net. Netting understates what winners are
+/// owed: a loser's loss is not money the market holds until that loser
+/// closes, while `available` counts only money it holds. So the closer's own
+/// side is never counted below `owed_usd`, the profit this close alone
+/// proves is on it. The other side's aggregate can still hide winners behind
+/// losers; see docs/loss-budget.md.
+pub fn haircut_profit_usd(
+    pool: &Pool,
+    market: &Market,
+    owed_usd: u64,
+    price: u64,
+    is_long: bool,
+) -> Result<u64> {
     if owed_usd == 0 {
         return Ok(0);
     }
@@ -422,7 +432,21 @@ pub fn haircut_profit_usd(pool: &Pool, market: &Market, owed_usd: u64, price: u6
             .saturating_add(pool.liquidity_usd)
             .saturating_add(pool.insurance_usd),
     );
-    let winners = market.winning_pnl_usd(price)?.max(owed_usd);
+    let side_profit = |long: bool| -> Result<u64> {
+        let (size, entry) = if long {
+            (market.long_size_usd, market.long_avg_entry_price)
+        } else {
+            (market.short_size_usd, market.short_avg_entry_price)
+        };
+        if size == 0 {
+            return Ok(0);
+        }
+        Ok(position_pnl_usd(long, size, entry, price)?.max(0) as u64)
+    };
+    let winners = side_profit(is_long)?
+        .max(owed_usd)
+        .checked_add(side_profit(!is_long)?)
+        .ok_or(PerpError::MathOverflow)?;
     if winners <= available {
         return Ok(owed_usd);
     }
@@ -720,7 +744,7 @@ pub fn book_close_at(
     // read before this close leaves the side aggregates it is counted in.
     let gross = settlement.equity_usd - fee_usd;
     let owed = gross.saturating_sub(settlement.collateral_share);
-    let haircut_usd = owed - haircut_profit_usd(pool, market, owed, fill)?;
+    let haircut_usd = owed - haircut_profit_usd(pool, market, owed, fill, is_long)?;
     let payout = gross - haircut_usd;
 
     let backer_fee_usd = apply_settlement_to_pool(
@@ -932,7 +956,11 @@ pub(crate) mod tests {
             deployer_synced_volume_usd: 0,
             deployer_rewards_usd: 0,
             deployer_earned_usd: 0,
-            _reserved: [0; 2],
+            risk_step_rem: 0,
+            last_price: 0,
+            risk_price: 0,
+            risk_slot: 0,
+            _reserved: [0; 32],
         };
         m.last_funding_ts = 0;
         m
@@ -1234,6 +1262,58 @@ pub(crate) mod tests {
             }
             assert!(m.net_loss_usd as u64 <= m.loss_budget_usd);
         }
+    }
+
+    /// At $110: long A (entry $100, $5,000) is up $500; long B (entry $120,
+    /// $6,000) is down $500, so the long side nets to zero; short C (entry
+    /// $120, $6,000) is up $500. $500 of budget. B's loss is not money the
+    /// market holds until B closes, so A and C are owed $1,000 between them
+    /// against $500. Returns what A and C are paid past their collateral.
+    fn a_and_c_paid_behind_a_netted_loser(a_first: bool) -> (u64, u64) {
+        let entry_hi = PX + PX / 5;
+        let up = PX + PX / 10;
+        let (mut p, mut m) = (pool(), market());
+        let (mut a, mut b, mut c) = (position(), position(), position());
+        book_open(&mut p, &mut m, &mut a, Pubkey::new_unique(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
+        book_open(&mut p, &mut m, &mut b, Pubkey::new_unique(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 6_000_000_000, entry_hi, 0).unwrap();
+        book_open(&mut p, &mut m, &mut c, Pubkey::new_unique(), 1, false,
+                  1_000_000_000, 0, Pubkey::default(), 6_000_000_000, entry_hi, 0).unwrap();
+        m.charge_loss(m.remaining_budget_usd() - 500_000_000).unwrap();
+        let mut close = |pos: &mut Position| {
+            let size = pos.size_usd;
+            book_close(&mut p, &mut m, pos, size, up, 1).unwrap().payout_usd - 1_000_000_000
+        };
+        let (paid_a, paid_c) = if a_first {
+            let a_paid = close(&mut a);
+            (a_paid, close(&mut c))
+        } else {
+            let c_paid = close(&mut c);
+            (close(&mut a), c_paid)
+        };
+        assert!(m.net_loss_usd as u64 <= m.loss_budget_usd);
+        (paid_a, paid_c)
+    }
+
+    #[test]
+    fn a_winner_netted_against_its_own_sides_loser_is_paid_only_its_share() {
+        // A's side nets to zero, so the aggregates alone said the only winner
+        // was C, and A closing first was paid all $500 and C nothing. A's own
+        // $500 now counts on its side: half each.
+        let (a, c) = a_and_c_paid_behind_a_netted_loser(true);
+        assert!(a.abs_diff(250_000_000) <= 1, "A paid {a}");
+        assert!(c.abs_diff(250_000_000) <= 1, "C paid {c}");
+    }
+
+    #[test]
+    fn a_winner_hidden_on_the_other_side_is_still_paid_last() {
+        // The order this rule cannot see: C closes first, and A's $500 is
+        // still hidden behind B in the long aggregate. Never past the budget,
+        // but not a fair share either; see docs/loss-budget.md.
+        let (a, c) = a_and_c_paid_behind_a_netted_loser(false);
+        assert!(a + c <= 500_000_000);
+        assert_eq!((a, c), (0, 500_000_000));
     }
 
     #[test]
