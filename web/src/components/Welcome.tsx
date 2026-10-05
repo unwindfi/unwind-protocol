@@ -8,12 +8,13 @@
  * sees it again and a returning one does not. Closing without signing is
  * remembered too: a welcome that nags is a welcome nobody reads.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TriangleAlert, X } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Checkbox } from "@/components/motion/checkbox";
 import { getApy, getMarkets, useHasBackend, usePoll } from "@/lib/api";
 import { DOCS, RISKS } from "@/site/Chrome";
+import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 
 const KEY = (wallet: string) => `unwind.welcome:${wallet}`;
 const VERSION = 1;
@@ -60,15 +61,8 @@ export function Welcome() {
     setOpen(true);
   }, [wallet]);
 
-  useEffect(() => {
-    if (!open) return;
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") skip(); };
-    window.addEventListener("keydown", key);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { window.removeEventListener("keydown", key); document.body.style.overflow = prev; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(dialog, open, () => skip());
 
   // Live figures for the two ways in, so the screen says what is true today.
   const markets = usePoll(() => (open ? getMarkets() : Promise.resolve([])), 30_000, [open]) ?? [];
@@ -102,7 +96,7 @@ export function Welcome() {
   const titles = ["Welcome to unwind", "How do you want to start?", "Before you start"];
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm
+    <div ref={dialog} className="fixed inset-0 z-[90] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm
                     sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label={titles[step]}>
       <div className="pane-scroll max-h-[100dvh] w-full max-w-[560px] overflow-y-auto rounded-t-[24px] border
                       border-line bg-panel sm:max-h-[90vh] sm:rounded-[24px]">

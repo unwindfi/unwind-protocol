@@ -483,7 +483,7 @@ function Markets({ r, self }: { r: Rewards; self: boolean }) {
           {r.listed.map((m) => (
             <a key={m.symbol} href={`/trade?symbol=${m.symbol}`}
               className={`${cols} border-t border-line px-5 py-3 text-[13.5px] hover:bg-panel2 sm:px-7`}>
-              <span className="min-w-0 truncate font-medium">{m.symbol}</span>
+              <span title={m.symbol} className="min-w-0 truncate font-medium">{m.symbol}</span>
               <span className="n">{compact(m.volume)}</span>
               <span className="n">{money(m.earned)}</span>
               <span className="n hidden md:block">{points(m.volume * 0.1)}</span>

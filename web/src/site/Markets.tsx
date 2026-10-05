@@ -524,7 +524,7 @@ export default function Markets() {
                 <span className="flex min-w-0 items-center gap-3">
                   <TickerLogo m={m} size={36} />
                   <span className="min-w-0">
-                    <span className="block truncate text-[15.5px] font-medium">{m.name}</span>
+                    <span title={m.name} className="block truncate text-[15.5px] font-medium">{m.name}</span>
                     <span className="block truncate text-[13px] text-muted-foreground">
                       {m.symbol}
                       <span className="hidden sm:inline">{m.observed ? " · opened by anyone" : " · Pyth"}</span>

@@ -44,6 +44,33 @@ function useHeight<T extends HTMLElement>() {
   return [ref, h] as const;
 }
 
+/// Close takes two taps: the first arms it for three seconds and says what
+/// the second will do. A position is the one thing on this panel a stray tap
+/// cannot take back.
+function CloseButton({
+  symbol, busy, onClose, className,
+}: { symbol: string; busy: boolean; onClose: (symbol: string) => void; className: string }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button disabled={busy}
+      aria-label={armed ? `Confirm close ${symbol} position` : `Close ${symbol} position`}
+      onClick={() => {
+        if (!armed) return setArmed(true);
+        setArmed(false);
+        onClose(symbol);
+      }}
+      onBlur={() => setArmed(false)}
+      className={`${className} ${armed ? "border-down text-down" : ""}`}>
+      {armed ? "Confirm" : "Close"}
+    </button>
+  );
+}
+
 /*
  * A position as a card, for the phone.
  *
@@ -92,12 +119,10 @@ function PositionCard({
         <span className="text-[11.5px] text-muted-foreground">
           Funding <span className={`n ${tone(-r.funding)}`}>{money(-r.funding)}</span>
         </span>
-        <button disabled={busy} onClick={() => onClose(r.symbol)}
+        <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
           className="press ml-auto min-h-[36px] rounded-full border border-line px-4 text-[12.5px]
                      font-medium transition-colors hover:border-foreground/40 active:bg-panel3
-                     disabled:opacity-40">
-          Close
-        </button>
+                     disabled:opacity-40" />
       </div>
     </div>
   );
@@ -173,11 +198,9 @@ export function BottomPanel({
       cell: (r: PosRow) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> }]),
     { key: "act", header: "", width: "76px",
       cell: (r) => (
-        <button disabled={busy} onClick={() => onClose(r.symbol)}
+        <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
           className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
-                     transition-colors hover:border-foreground/40 disabled:opacity-40">
-          Close
-        </button>) },
+                     transition-colors hover:border-foreground/40 disabled:opacity-40" />) },
   ];
 
 

@@ -47,7 +47,7 @@ export function MarketHeader({
                   feed {Math.round(m.priceAgeMs! / 1000)}s
                 </span>
               ) : (
-                <span className="truncate text-[12px] text-muted-foreground">{m.name}</span>
+                <span title={m.name} className="truncate text-[12px] text-muted-foreground">{m.name}</span>
               )}
             </span>
           </span>
@@ -58,8 +58,7 @@ export function MarketHeader({
         <BatchClock m={m} batch={batch} compact />
 
         <div className="flex flex-none flex-col items-end">
-          <DigitSwap value={pnum(m.ask)} animationKey={m.ask}
-            direction={m.change >= 0 ? "up" : "down"}
+          <DigitSwap value={pnum(m.ask)} tick={m.ask}
             className="text-[24px] font-semibold leading-none tracking-[-.025em]" />
           {/* The move in its own colour, no badge: the arrow the badge
               carried said what the sign already did. */}

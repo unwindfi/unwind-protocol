@@ -168,9 +168,11 @@ export default function App() {
       const r = await signAndSend(wallet, path.replace(/^\//, ""), body, record);
       showToast(r.ok
         ? { title: ok, description: note, status: "success" }
-        : { title: "Rejected", description: r.error, status: "error" });
-    } catch (e) {
-      showToast({ title: "Network error", description: String(e), status: "error" });
+        : { title: "Not accepted", description: r.error ?? "Try again.", status: "error" });
+    } catch {
+      showToast({ title: "Network error",
+        description: "Unable to reach the server. Check your connection and try again.",
+        status: "error" });
     } finally {
       setBusy(false);
       // An order lands in the next batch, a few seconds on, so read again
@@ -194,7 +196,10 @@ export default function App() {
             description: `${(r.usdc ?? 0).toLocaleString()} test USDC` + (r.sol ? ` and ${r.sol} SOL` : ""),
             status: "success",
           }
-        : { title: "Faucet failed", description: r.error, status: "error" });
+        : { title: "Faucet failed", description: r.error ?? "Try again in a minute.", status: "error" });
+    } catch {
+      showToast({ title: "Faucet failed",
+        description: "Unable to reach the server. Try again in a minute.", status: "error" });
     } finally {
       setBusy(false);
       setAccountTick((t) => t + 1);

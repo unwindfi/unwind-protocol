@@ -28,7 +28,7 @@ function Card({ m }: { m: Market }) {
         <TickerLogo m={m} size={28} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="truncate text-[13.5px] font-medium">{m.symbol}</span>
+            <span title={m.symbol} className="truncate text-[13.5px] font-medium">{m.symbol}</span>
             <span className="n flex-none text-[11px] text-dim">{age(o.spanSec)}</span>
           </div>
           <div className="n mt-[2px] text-[12.5px] text-muted-foreground">

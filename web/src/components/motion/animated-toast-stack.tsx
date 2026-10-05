@@ -134,7 +134,9 @@ let idSeed = 0;
 
 function createToast(input: ToastInput, defaultDuration: number): AnimatedToast {
   return {
-    duration: defaultDuration,
+    // An error stays until it is dismissed: it is the one toast the reader
+    // may need longer than four seconds to act on.
+    duration: input.status === "error" ? 0 : defaultDuration,
     dismissible: true,
     ...input,
     id: input.id ?? `toast-${Date.now()}-${idSeed++}`,

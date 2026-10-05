@@ -54,9 +54,11 @@ export function NumberTicker({
   }, [startOnView, inView]);
 
   const text = useMemo(() => {
+    // A custom format sets its own precision; rounding first would print
+    // every cent figure as .00.
     const rounded = Math.round(value);
     const formatted = format
-      ? format(rounded)
+      ? format(value)
       : locale
         ? rounded.toLocaleString()
         : rounded.toString();

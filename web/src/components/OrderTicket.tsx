@@ -740,7 +740,7 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
     return (
       <div className="px-5 py-1">
         <KV k="Portfolio value">
-          <NumberTicker value={account.equity} prefix="$" locale
+          <NumberTicker value={account.equity} prefix="$" locale duration={0.3} stagger={0}
             format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} />
         </KV>
         <KV k="Available">{money(account.usdc)}</KV>
@@ -769,7 +769,7 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
         {account.equity > 0 ? ((account.margin / account.equity) * 100).toFixed(2) : "0.00"}%
       </KV>
       <KV k="Portfolio value">
-        <NumberTicker value={account.equity} prefix="$" locale
+        <NumberTicker value={account.equity} prefix="$" locale duration={0.3} stagger={0}
           format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} />
       </KV>
       <KV k="Unrealized PnL">

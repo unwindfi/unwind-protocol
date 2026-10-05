@@ -92,7 +92,7 @@ function Card({ m, at }: { m: Market; at: { x: number; y: number } }) {
                   ease-[cubic-bezier(0.23,1,0.32,1)] ${shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-1 scale-[.98] opacity-0"}`}>
       <div className="flex items-center gap-3 border-b border-line pb-4">
         <TickerLogo m={m} size={36} />
-        <span className="min-w-0 flex-1 truncate text-[15.5px] font-semibold">{m.name}</span>
+        <span title={m.name} className="min-w-0 flex-1 truncate text-[15.5px] font-semibold">{m.name}</span>
         <span className="n text-[15px] font-semibold">{price(m.price)}</span>
       </div>
       <div className="py-4">

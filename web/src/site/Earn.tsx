@@ -26,6 +26,7 @@
  * "Measuring" rather than scaling a few minutes up to a year.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 import "@/site/serif.css";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
@@ -33,7 +34,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { useHasBackend } from "@/lib/api";
-import { Mark } from "@/components/Brand";
+import { GlassMark } from "@/components/GlassMark";
 import { TickerLogo } from "@/components/TickerLogo";
 import { WalletActions } from "@/components/WalletActions";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
@@ -203,12 +204,8 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   const [prices, setPrices] = useState<Record<PayWith, number> | null>(null);
   useEffect(() => { void usdPrices().then(setPrices).catch(() => {}); }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    addEventListener("keydown", onKey);
-    input.current?.focus();
-    return () => removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(dialog, true, onClose, input);
 
   const pool = account?.pool;
   const price = account?.lp.price ?? 1;
@@ -250,7 +247,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
         className="absolute inset-0 cursor-default bg-black/60" />
-      <motion.div role="dialog" aria-modal="true" aria-label={v.title}
+      <motion.div ref={dialog} role="dialog" aria-modal="true" aria-label={v.title}
         initial={{ opacity: 0, y: 24, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 16, scale: 0.98 }}
         transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
@@ -260,7 +257,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           <header className="flex items-center gap-3">
             <VaultIcon v={v} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[16px] font-medium">{v.title}</span>
+              <span title={v.title} className="block truncate text-[16px] font-medium">{v.title}</span>
               <span className="block truncate text-[12.5px] text-muted-foreground">
                 {v.strategy} · {money(v.tvl, 0)} deposited
               </span>
@@ -397,7 +394,7 @@ export function VaultIcon({ v }: { v: Vault }) {
   return v.kind === "pool" || !v.market ? (
     <span className="grid size-10 flex-none place-items-center rounded-full bg-panel2
                      bg-panel2">
-      <Mark size={22} />
+      <GlassMark className="size-[26px]" />
     </span>
   ) : (
     <span className="flex-none"><TickerLogo m={v.market} size={40} /></span>
@@ -662,7 +659,7 @@ export default function Earn() {
               <a href={`/vault?id=${encodeURIComponent(v.id)}`} className="flex min-w-0 items-center gap-3">
                 <VaultIcon v={v} />
                 <span className="min-w-0">
-                  <span className="block truncate text-[14px] font-medium">{v.title}</span>
+                  <span title={v.title} className="block truncate text-[14px] font-medium">{v.title}</span>
                   <span className="block truncate text-[12.5px] text-muted-foreground">{v.subtitle}</span>
                 </span>
               </a>

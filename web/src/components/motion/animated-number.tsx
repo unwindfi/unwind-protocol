@@ -25,7 +25,12 @@ export function AnimatedNumber({
   const inView = useInView(ref, { once: true, amount: 0.6 });
   const reduce = useReducedMotion();
   const [display, setDisplay] = useState(0);
+  // What is on screen now, so a value that lands mid-count carries on from
+  // there instead of jumping back to the last target.
   const fromRef = useRef(0);
+  // The first count is an entrance and takes its time; a live figure moving
+  // after that should settle quickly.
+  const entered = useRef(false);
 
   useEffect(() => {
     if (startOnView && !inView) return;
@@ -35,11 +40,11 @@ export function AnimatedNumber({
       return;
     }
     const controls = animate(fromRef.current, value, {
-      duration,
+      duration: entered.current ? Math.min(duration, 0.4) : duration,
       ease: EASE_OUT,
-      onUpdate: (v) => setDisplay(v),
+      onUpdate: (v) => { fromRef.current = v; setDisplay(v); },
     });
-    fromRef.current = value;
+    entered.current = true;
     return () => controls.stop();
   }, [value, duration, inView, startOnView, reduce]);
 

@@ -174,8 +174,7 @@ export function StatTiles({ m, dense = false }: {
   return (
     <div className={`strip-scroll flex items-start gap-y-4 overflow-x-auto ${dense ? "gap-x-6" : "gap-x-8"}`}>
       <Stat label="Mark" help="Pool mid this batch. Fills clear at the batch price.">
-        <DigitSwap value={price(mark)} animationKey={mark}
-          direction={m.change >= 0 ? "up" : "down"} />
+        <DigitSwap value={price(mark)} tick={mark} />
       </Stat>
       {/* Only when it says something: equal to the mark, it is the same figure
           twice and pushes funding off the end of the row. */}
@@ -215,8 +214,7 @@ export function PriceRow({ m, tf, onTf, frames }: {
       <div>
         <div className="text-[13px] text-muted-foreground">Price</div>
         <div className="mt-2.5 flex items-center gap-3">
-          <DigitSwap value={price(m.price)} animationKey={m.price}
-            direction={m.change >= 0 ? "up" : "down"}
+          <DigitSwap value={price(m.price)} tick={m.price}
             className="n text-[34px] font-medium leading-none tracking-[-.03em]" />
           {/* The move and its window in one soft chip, tinted by direction:
               one object to read rather than two figures side by side. */}

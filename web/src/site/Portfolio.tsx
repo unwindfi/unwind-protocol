@@ -323,7 +323,7 @@ function Positions({ rows, owner, loaded }: {
             <a key={r.symbol} href={`/trade?symbol=${r.symbol}`}
               className={`${POS} ${ROW} hover:bg-panel2`}>
               <span className="min-w-0">
-                <span className="block truncate font-medium">{r.symbol}</span>
+                <span title={r.symbol} className="block truncate font-medium">{r.symbol}</span>
                 <span className="block text-[12px] text-muted-foreground md:hidden">
                   {r.isLong ? "Long" : "Short"} {r.leverage.toFixed(1)}x
                 </span>
@@ -376,7 +376,7 @@ function Orders({ orders, owner, loaded, canAct, busy, onCancel }: {
             return (
               <div key={o.address} className={`${ORD} ${ROW}`}>
                 <a href={`/trade?symbol=${o.symbol}`} className="min-w-0 hover:underline">
-                  <span className="block truncate font-medium">{o.symbol}</span>
+                  <span title={o.symbol} className="block truncate font-medium">{o.symbol}</span>
                   <span className="block text-[12px] text-muted-foreground md:hidden">{orderKind(o)}</span>
                 </a>
                 <span className="hidden text-muted-foreground md:block">{orderKind(o)}</span>
@@ -451,7 +451,7 @@ function Holdings({ account, backings, rewards, owner, loaded }: {
             return (
               <a key={r.key} href="/earn" className={`${HOLD} ${ROW} hover:bg-panel2`}>
                 <span className="min-w-0">
-                  <span className="block truncate font-medium">{r.name}</span>
+                  <span title={r.name} className="block truncate font-medium">{r.name}</span>
                   <span className="block truncate text-[12px] text-muted-foreground">{r.sub}</span>
                 </span>
                 <span className="n">{money(r.value)}</span>
@@ -508,7 +508,7 @@ function History({ fills, account, owner, loaded }: {
             <div key={`${r.t}-${i}`} className={`${HIST} ${ROW}`}>
               <span className="n hidden text-muted-foreground md:block">{when(r.t)}</span>
               <span className="min-w-0">
-                <span className="block truncate font-medium">{r.symbol}</span>
+                <span title={r.symbol} className="block truncate font-medium">{r.symbol}</span>
                 <span className="block truncate text-[12px] text-muted-foreground md:hidden">
                   {ACTION[r.kind] ?? r.kind}{r.side ? ` ${r.side}` : ""} · {when(r.t)}
                 </span>

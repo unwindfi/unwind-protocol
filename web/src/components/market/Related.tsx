@@ -46,7 +46,7 @@ export function Related({ markets, current, onPick }: {
                      transition-colors hover:bg-panel2">
           <TickerLogo m={m} size={30} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13.5px] font-medium">{m.name}</span>
+            <span title={m.name} className="block truncate text-[13.5px] font-medium">{m.name}</span>
             <span className="n mt-px block text-[12px] text-muted-foreground">
               {price(m.price)}
             </span>

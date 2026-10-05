@@ -412,7 +412,7 @@ export const getCandles = async (symbol: string, tf: number) => {
 
 export async function post(path: string, body: unknown) {
   if (!(await hasBackend())) {
-    return { ok: false, error: "Read-only deploy — no chain connected" };
+    return { ok: false, error: "Read-only: no chain is connected to this site." };
   }
   const r = await fetch(apiUrl("/api" + path), {
     method: "POST",

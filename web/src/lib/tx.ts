@@ -22,7 +22,7 @@ export async function signAndSend(
   record?: { symbol: string; side: "buy" | "sell"; size: number; kind: string }
 ): Promise<{ ok: boolean; error?: string; sig?: string }> {
   if (!wallet.publicKey || !wallet.signTransaction) {
-    return { ok: false, error: "wallet not connected" };
+    return { ok: false, error: "Connect a wallet to sign." };
   }
   const owner = wallet.publicKey.toBase58();
 
@@ -34,7 +34,7 @@ export async function signAndSend(
     body: JSON.stringify({ ...body, owner, ...(path === "order" ? { ref: storedRef() } : {}) }),
   });
   const b = (await built.json()) as BuiltTx & { error?: string };
-  if (!built.ok) return { ok: false, error: b.error ?? "could not build transaction" };
+  if (!built.ok) return { ok: false, error: b.error ?? "Unable to build the transaction. Try again." };
 
   let signed: VersionedTransaction;
   try {

@@ -175,10 +175,10 @@ export function MarketList({ markets, current, onPick, onPalette }: {
                 <TickerLogo m={m} size={22} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[12.5px] font-medium">{m.symbol}</span>
+                    <span title={m.symbol} className="truncate text-[12.5px] font-medium">{m.symbol}</span>
                     <span className="n flex-none text-[11px] text-dim">{m.maxLeverage}x</span>
                   </span>
-                  <span className="block truncate text-[11px] text-dim">{m.name}</span>
+                  <span title={m.name} className="block truncate text-[11px] text-dim">{m.name}</span>
                 </span>
                 <span className="flex-none text-right">
                   <span className="n block text-[12.5px]">{price(m.price)}</span>

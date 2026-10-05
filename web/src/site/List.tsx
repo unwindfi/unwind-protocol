@@ -27,11 +27,10 @@ import {
   DOCS, PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, Shell, SiteFooter, SiteHeader,
 } from "@/site/Chrome";
 import { PayToken } from "@/components/PayToken";
-import { Mark } from "@/components/Brand";
+import { GlassMark } from "@/components/GlassMark";
 import { RangeSlider } from "@/components/motion/range-slider";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Checkbox } from "@/components/motion/checkbox";
-import { AnimatedNumber } from "@/components/motion/animated-number";
 import { WalletActions } from "@/components/WalletActions";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import {
@@ -540,8 +539,8 @@ export default function List() {
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
                                 <TokenIcon src={null} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
-                                  <span className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
+                                  <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
+                                  <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
                                 </span>
                                 <span className="flex-none text-[12px] text-muted-foreground">Listed · Trade</span>
                               </a>
@@ -551,8 +550,8 @@ export default function List() {
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
                                 <TokenIcon src={null} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
-                                  <span className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
+                                  <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
+                                  <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
                                 </span>
                                 <span className="flex-none text-[12px] text-foreground">List</span>
                               </button>
@@ -583,7 +582,7 @@ export default function List() {
                               <TokenIcon src={t.icon} label={t.symbol} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1 text-[13.5px] font-medium">
-                                  <span className="truncate">{t.symbol}</span>
+                                  <span title={t.symbol} className="truncate">{t.symbol}</span>
                                   {t.verified && <BadgeCheck size={14} className="flex-none text-brand" />}
                                 </span>
                                 <span className="block truncate text-[11.5px] text-muted-foreground">
@@ -883,7 +882,7 @@ export default function List() {
                 {token
                   ? <TokenIcon src={preview?.icon ?? token.icon} label={token.symbol} size={36} />
                   : <span className="grid size-9 flex-none place-items-center rounded-full bg-panel3">
-                      <Mark size={18} />
+                      <GlassMark className="size-[22px]" />
                     </span>}
                 <span className="min-w-0">
                   <span className="block text-[13px] font-medium">{status.title}</span>
@@ -916,13 +915,13 @@ export default function List() {
                 </div>
                 <div className="mt-1.5 flex items-baseline gap-4">
                   <span className="n text-[20px] font-semibold tracking-[-.01em]">
-                    {preview ? <AnimatedNumber value={preview.unitPrice} format={price} startOnView={false} duration={0.8} /> : reading ? "…" : "$0"}
+                    {preview ? price(preview.unitPrice) : reading ? "…" : "$0"}
                     <span className="ml-1 text-[12px] font-normal text-dim">
                       MARK{preview?.unitLabel ? ` / ${preview.unitLabel}` : ""}
                     </span>
                   </span>
                   <span className={`n text-[20px] font-semibold tracking-[-.01em] ${tooThin ? "text-down" : ""}`}>
-                    {preview ? <AnimatedNumber value={preview.depthUsd} format={compact} startOnView={false} duration={0.8} /> : "$0"}
+                    {preview ? compact(preview.depthUsd) : "$0"}
                     <span className="ml-1 text-[12px] font-normal text-dim">DEPTH</span>
                   </span>
                 </div>

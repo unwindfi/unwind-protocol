@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { CommandPalette, type CommandItem } from "@/components/motion/command-palette";
 import type { Market } from "@/lib/api";
-import { pct } from "@/lib/format";
+import { pct, pnum } from "@/lib/format";
 
 const GROUP: Record<string, string> = {
   AAPLx: "Equities", NVDAx: "Equities", TSLAx: "Equities", SPYx: "ETFs",
@@ -27,9 +27,9 @@ export function MarketPalette({
           label: `${m.symbol}-USDC`,
           group: GROUP[m.symbol] ?? "Markets",
           keywords: [m.name, m.symbol],
-          hint: `${m.price.toFixed(2)}  ${pct(m.changePct)}`,
+          hint: `${pnum(m.price)}  ${pct(m.changePct)}`,
           badge: (
-            <span className="rounded bg-brand/15 px-1.5 py-px text-[11px] font-semibold text-[#79a5ff]">
+            <span className="n text-[11px] font-semibold text-muted-foreground">
               {m.maxLeverage}x
             </span>
           ),

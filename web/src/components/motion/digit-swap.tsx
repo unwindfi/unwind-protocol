@@ -2,6 +2,7 @@
 // beui.dev/components/motion/number
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useRef } from "react";
 import { EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,9 @@ export interface DigitSwapProps {
   animationKey?: string | number;
   /** Direction the next glyph enters from. */
   direction?: DigitSwapDirection;
+  /** A live number behind `value`. When given, glyphs roll up on an uptick
+   *  and down on a downtick, whatever `direction` says. */
+  tick?: number;
   /** Per-glyph transition duration in seconds. */
   duration?: number;
   /** Delay in seconds between neighboring glyphs. */
@@ -53,7 +57,8 @@ const GLYPH_VARIANTS = {
 export function DigitSwap({
   value,
   animationKey,
-  direction = "up",
+  direction: directionProp = "up",
+  tick,
   duration = 0.18,
   stagger = 0.006,
   suffixLength = 0,
@@ -62,6 +67,14 @@ export function DigitSwap({
   suffixClassName,
 }: DigitSwapProps) {
   const reduceMotion = useReducedMotion() ?? false;
+  // Direction comes from the last tick, not the day: a downtick on a green
+  // day rolls down. Unchanged ticks keep the last direction.
+  const last = useRef<{ tick?: number; dir: DigitSwapDirection }>({ tick, dir: directionProp });
+  if (tick !== undefined && last.current.tick !== undefined && tick !== last.current.tick) {
+    last.current.dir = tick > last.current.tick ? "up" : "down";
+  }
+  if (tick !== undefined) last.current.tick = tick;
+  const direction = tick === undefined ? directionProp : last.current.dir;
   const text = String(value);
   const suffixStart = Math.max(0, text.length - Math.max(0, suffixLength));
   const motionContext: GlyphMotionContext = { direction, reduceMotion };
