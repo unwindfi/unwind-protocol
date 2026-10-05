@@ -76,7 +76,10 @@ against the mark every three seconds, so a take profit or stop fires within a
 few seconds of its price being reached.
 
 A trader may hold several orders against a single market simultaneously. A
-take profit and a stop loss on the same position is the ordinary case.
+take profit and a stop loss on the same position is the ordinary case. There
+is one of each per market: setting a take profit, stop or limit where one
+already stands replaces it, cancelling the old one and placing the new one in
+the same transaction.
 
 Closing a whole position from the site cancels its take profit and stop loss
 in the same transaction. A trigger order whose position is already gone, for

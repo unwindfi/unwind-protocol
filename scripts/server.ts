@@ -3987,7 +3987,15 @@ app.post("/api/order/cancel", demoOnly, async (req, res) => {
 app.post("/api/tx/order/trigger", async (req, res) => {
   try {
     const owner = ownerOf(req);
-    res.json(await buildTx(owner, [await placeOrderIx(owner, req.body)]));
+    // Setting a take profit, stop or limit where one already stands replaces
+    // it, in the same signature: cancel, then place. The program will not
+    // create an order account twice, and the second "set" failed with a bare
+    // "Simulation failed" (66 times in the load test).
+    const m = rt[req.body.symbol];
+    const slot = m ? orderParams(req.body).slot : -1;
+    const standing = m ? await conn.getAccountInfo(orderPda(m.address, owner, slot)) : null;
+    const replace = standing ? [await cancelOrderIx(owner, { symbol: req.body.symbol, slot })] : [];
+    res.json(await buildTx(owner, [...replace, await placeOrderIx(owner, req.body)]));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
