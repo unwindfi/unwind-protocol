@@ -666,10 +666,12 @@ function observedBars(m: MarketRt, tf: number): Candle[] {
  * real token's own chart is this market's chart before the venue's tape
  * begins. Read from Jupiter's chart data by mainnet mint, the source the
  * equities already chart from. (GeckoTerminal was tried first: its free API
- * refused most of a restart's reads, and most charts stayed empty.) Nothing
- * waits on it: a chart not read yet answers with the venue's own tape and is
- * fetched behind the answer, each is kept five minutes and answered stale
- * while it refreshes, and a failure leaves the market on its own tape.
+ * refused most of a restart's reads, and most charts stayed empty.) A chart
+ * not read yet waits up to three seconds for it, then answers with the
+ * venue's own tape and keeps fetching behind the answer: a page loads its
+ * history once, so a chart answered without it after a restart stayed short
+ * until the page reloaded. Each is kept five minutes and answered stale while
+ * it refreshes, and a failure leaves the market on its own tape.
  */
 const JUP_CHARTS_URL = "https://datapi.jup.ag/v2/charts";
 const JUP_FRAMES: Record<number, string> = {
@@ -727,7 +729,7 @@ async function realPricesByPool(): Promise<Map<string, number>> {
   return out;
 }
 const realSeeds = new Map<string, { at: number; bars: Candle[] }>();
-const realRefreshing = new Set<string>();
+const realLoads = new Map<string, Promise<Candle[]>>();
 async function fetchRealBars(mint: string, tf: number, unitExp: number): Promise<Candle[]> {
   // A breath between reads, so a restart's warm-up does not arrive at once.
   const wait = jupNext - Date.now();
@@ -757,11 +759,14 @@ async function realBars(m: MarketRt, tf: number): Promise<Candle[]> {
     .then((bars) => { realSeeds.set(key, { at: Date.now(), bars }); return bars; })
     .catch((e: any) => { console.warn(`real candles ${m.symbol}@${tf}s: ${e?.message ?? e}`); return hit?.bars ?? []; });
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.bars;
-  if (!realRefreshing.has(key)) {
-    realRefreshing.add(key);
-    void load().finally(() => realRefreshing.delete(key));
+  let pending = realLoads.get(key);
+  if (!pending) {
+    pending = load().finally(() => realLoads.delete(key));
+    realLoads.set(key, pending);
   }
-  return hit?.bars ?? [];
+  if (hit) return hit.bars;
+  const late = new Promise<Candle[]>((ok) => setTimeout(() => ok([]), 3_000));
+  return Promise.race([pending, late]);
 }
 
 async function fetchSeed(m: MarketRt, tf: number, key: string): Promise<Candle[]> {
