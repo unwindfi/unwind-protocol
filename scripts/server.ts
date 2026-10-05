@@ -356,7 +356,11 @@ async function confirmPass() {
     }
   } finally { confirming = false; }
 }
-setInterval(() => { void confirmPass().catch(() => { /* next pass */ }); }, CONFIRM_POLL_MS).unref();
+// Not unref'd: a confirmation the process is waiting on is work, and at
+// startup (a session change sends a transaction before the API listens) this
+// timer was the only thing keeping Node alive. Unref'd, Node saw nothing left
+// to do, exited cleanly mid-await, and systemd restarted it in a loop.
+setInterval(() => { void confirmPass().catch(() => { /* next pass */ }); }, CONFIRM_POLL_MS);
 (conn as any).confirmTransaction = (strategy: any) => new Promise((resolve, reject) => {
   const sig: string = typeof strategy === "string" ? strategy : strategy.signature;
   const lastValid: number | undefined = typeof strategy === "string" ? undefined : strategy.lastValidBlockHeight;
