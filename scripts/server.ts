@@ -126,24 +126,48 @@ const authority = kp(st.keys.authority);
 const lp = kp(st.keys.lp);
 const trader = kp(st.keys.trader);
 
-/// A dedicated RPC for the testnet, without touching the state file: the
-/// public devnet endpoint throttles a crank into missing batches.
-const RPC_URL = process.env.RPC_URL || st.rpc;
 /*
- * A second RPC for when the first says no.
+ * Dedicated RPCs for the testnet, without touching the state file: the
+ * public devnet endpoint throttles a crank into missing batches.
+ *
+ * RPC_URLS takes several keys, comma separated, and requests take turns
+ * across them, so a set of free plans adds up to one larger one. RPC_URL
+ * alone still works as a pool of one.
+ */
+const RPC_ENDPOINTS = (process.env.RPC_URLS || "").split(/[\s,]+/).filter(Boolean);
+const RPC_URL = RPC_ENDPOINTS[0] || process.env.RPC_URL || st.rpc;
+if (!RPC_ENDPOINTS.length) RPC_ENDPOINTS.push(RPC_URL);
+/// Where an endpoint is, without the key in its path or query, for logs.
+const rpcHost = (u: string) => { try { return new URL(u).host; } catch { return "rpc"; } };
+/*
+ * The last resort, when every key in the pool says no.
  *
  * A dedicated provider meters by the month, and the day its cap is reached
  * every read turns into a 429 and the venue is dark until somebody notices:
  * web3.js's own retry made it worse, backing off and trying the same dead
- * endpoint again for eight seconds per call. Each request goes to the
- * primary once; a 429 sends it straight to the fallback, and for the next
- * minute everything goes to the fallback without asking. The public devnet
- * endpoint is slower and throttles the crank, but a slow venue is a venue.
+ * endpoint again for eight seconds per call. A 429 rests that key for a
+ * minute and the request moves to the next one; only with the whole pool
+ * resting does it go to the fallback. The public devnet endpoint is slower
+ * and throttles the crank, but a slow venue is a venue.
  */
 const RPC_FALLBACK_URL = process.env.RPC_FALLBACK_URL
   || (CLUSTER === "devnet" && !RPC_URL.includes("api.devnet.solana.com")
     ? "https://api.devnet.solana.com" : "");
-let primaryLimitedUntil = 0;
+/// When each rate-limited key may be tried again.
+const restingUntil = new Map<string, number>();
+let rpcTurn = 0;
+/// The next key in turn that is not resting, or null with all of them resting.
+function nextEndpoint(): string | null {
+  const now = Date.now();
+  for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+    const at = (rpcTurn + i) % RPC_ENDPOINTS.length;
+    if ((restingUntil.get(RPC_ENDPOINTS[at]) ?? 0) <= now) {
+      rpcTurn = (at + 1) % RPC_ENDPOINTS.length;
+      return RPC_ENDPOINTS[at];
+    }
+  }
+  return null;
+}
 
 /*
  * The public endpoint meters connections, not only calls: a batch read
@@ -208,14 +232,21 @@ setInterval(() => {
 const rpcFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   countCall(init?.body);
-  if (!RPC_FALLBACK_URL) return metered(url, init);
-  const toFallback = url.startsWith(RPC_URL) ? RPC_FALLBACK_URL + url.slice(RPC_URL.length) : url;
-  if (Date.now() < primaryLimitedUntil) return metered(toFallback, init);
-  const r = await metered(url, init);
-  if (r.status !== 429) return r;
-  primaryLimitedUntil = Date.now() + 60_000;
-  console.warn("rpc: primary rate limited, using the fallback for 60s");
-  return metered(toFallback, init);
+  // web3.js always calls the first key's URL; anything else is not ours to route.
+  if (!url.startsWith(RPC_URL)) return metered(url, init);
+  const tail = url.slice(RPC_URL.length);
+  let last: Response | null = null;
+  for (let tries = 0; tries < RPC_ENDPOINTS.length; tries++) {
+    const ep = nextEndpoint();
+    if (!ep) break;
+    const r = await metered(ep + tail, init);
+    if (r.status !== 429) return r;
+    last = r;
+    restingUntil.set(ep, Date.now() + 60_000);
+    console.warn(`rpc: ${rpcHost(ep)} rate limited, resting that key for 60s`);
+  }
+  if (RPC_FALLBACK_URL) return metered(RPC_FALLBACK_URL + tail, init);
+  return last ?? metered(url, init);
 };
 // One try per request: a 429 is answered by the fallback or by the last
 // good snapshot, never by sitting on the socket.
@@ -705,6 +736,52 @@ async function marketAccount(m: MarketRt) {
   const body = program.account.market.fetch(m.address);
   marketReads.set(key, { at: Date.now(), body });
   body.catch(() => marketReads.delete(key));
+  return body;
+}
+
+/*
+ * Every market in one read, at most every two seconds.
+ *
+ * Trader PnL needs all of them, and the account view asks for it on every
+ * poll: one market at a time, against a one-second cache shorter than the
+ * page's poll, it was a getAccountInfo per market per view, most of the
+ * server's RPC spend. One getMultipleAccounts (100 accounts a call) replaces
+ * them, and seeds the per-market cache so a position read just after it
+ * costs nothing.
+ */
+/// Keyed by market address: markets are listed while the server runs, so a
+/// position in a list read two seconds ago is not a market.
+let allMarketsRead: { at: number; body: Promise<Map<string, any>> } | null = null;
+function allMarketAccounts(): Promise<Map<string, any>> {
+  if (allMarketsRead && Date.now() - allMarketsRead.at < 2_000) return allMarketsRead.body;
+  const markets = Object.values(rt);
+  const body = (async () => {
+    const out: any[] = [];
+    for (let i = 0; i < markets.length; i += 100) {
+      out.push(...await program.account.market.fetchMultiple(markets.slice(i, i + 100).map((m) => m.address)));
+    }
+    const at = Date.now();
+    const byAddress = new Map<string, any>();
+    markets.forEach((m, i) => {
+      if (!out[i]) return;
+      byAddress.set(m.address.toBase58(), out[i]);
+      marketReads.set(m.address.toBase58(), { at, body: Promise.resolve(out[i]) });
+    });
+    return byAddress;
+  })();
+  allMarketsRead = { at: Date.now(), body };
+  body.catch(() => { allMarketsRead = null; });
+  return body;
+}
+
+/// The LP mint's supply, read at most every five seconds: the account view
+/// and the tape both price the pool share from it.
+let supplyRead: { at: number; body: ReturnType<typeof conn.getTokenSupply> } | null = null;
+function lpSupplyRead() {
+  if (supplyRead && Date.now() - supplyRead.at < 5_000) return supplyRead.body;
+  const body = conn.getTokenSupply(lpMint);
+  supplyRead = { at: Date.now(), body };
+  body.catch(() => { supplyRead = null; });
   return body;
 }
 
@@ -1861,9 +1938,10 @@ app.get("/api/candles/:symbol", async (req, res) => {
 async function traderPnlNow() {
   let traderPnl = 0;
   const markets = Object.values(rt);
-  const accounts = await Promise.all(markets.map(marketAccount));
-  for (const [i, m] of markets.entries()) {
-    const ma = accounts[i];
+  const accounts = await allMarketAccounts();
+  for (const m of markets) {
+    const ma = accounts.get(m.address.toBase58());
+    if (!ma) continue;
     const price = px(m);
     const pnlOf = (isLong: boolean, size: number, entry: number) =>
       entry > 0 ? size * ((price - entry) / entry) * (isLong ? 1 : -1) : 0;
@@ -1906,7 +1984,7 @@ async function accountView(owner: PublicKey) {
     const [usdc, lpTok, supply, p, positions, orderAccounts, traderPnl] = await Promise.all([
       getAccount(conn, ata(owner, usdcMint)).catch(() => zero),
       getAccount(conn, ata(owner, lpMint)).catch(() => zero),
-      conn.getTokenSupply(lpMint),
+      lpSupplyRead(),
       poolAccount(),
       loadPositions(owner),
       program.account.order.all([{ memcmp: { offset: 8 + 1, bytes: owner.toBase58() } }]),
@@ -3137,7 +3215,7 @@ try { tape = JSON.parse(fs.readFileSync(TAPE_FILE, "utf8")); } catch { tape = []
 async function recordTape() {
   try {
     const [p, supply, all] = await Promise.all([
-      program.account.pool.fetch(pool), conn.getTokenSupply(lpMint),
+      program.account.pool.fetch(pool), lpSupplyRead(),
       // This pool's markets only: the program also owns markets from earlier
       // pools, some in layouts this build can no longer decode.
       program.account.market.all([{ memcmp: { offset: 9, bytes: pool.toBase58() } }]),
@@ -3475,7 +3553,8 @@ app.listen(PORT, () => {
   setInterval(() => rpcWho.run("vault tape", recordTape), TAPE_EVERY_MS);
     console.log(`unwind (${CLUSTER}) on http://localhost:${PORT}`);
   // The query string is where RPC providers put the API key.
-  console.log(`  rpc ${RPC_URL.split("?")[0]}`);
+  // Hosts only: an Alchemy key sits in the path, a Helius one in the query.
+  console.log(`  rpc ${RPC_ENDPOINTS.length} key(s): ${[...new Set(RPC_ENDPOINTS.map(rpcHost))].join(", ")}`);
     console.log(`  ${LIVE.length} markets, live prices every ${TICK_MS}ms, keeper ${KEEPER_MS}ms`);
     for (const m of Object.values(rt)) {
       console.log(m.quote

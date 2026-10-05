@@ -14,15 +14,17 @@ needs to stay up.
 | `target/idl/unwind.json`, `target/idl/mock_pyth.json` | `anchor build` locally, then `scp` (gitignored) |
 | `.devnet-state.json` in `/opt/unwind` | your machine (gitignored, holds the pool authority key) |
 | `/etc/unwind/relay.json` | `~/.config/unwind/relay.json` on your machine |
-| `/etc/unwind/testnet.env` | `testnet.env.example`, with a dedicated devnet RPC |
+| `/etc/unwind/testnet.env` | `testnet.env.example`, with dedicated devnet RPC keys |
 
-The dedicated RPC is metered. When it answers 429 the server sends that read
-to `RPC_FALLBACK_URL` (the public devnet endpoint unless set) and stays on
-the fallback for a minute, and `/api/markets` and `/api/account` answer
-with the last list they read in full, dated in an `X-Stale-Since` header,
-rather than an error. The crank is slower on the fallback, so a key that
-has stopped answering still needs replacing; the log says
-`rpc: primary rate limited` when that is happening.
+Dedicated RPCs are metered. `RPC_URLS` takes several keys, comma separated,
+and requests take turns across them. A key that answers 429 rests for a
+minute while the others carry on (the log says `rpc: <host> rate limited`);
+only with every key resting does a read go to `RPC_FALLBACK_URL` (the public
+devnet endpoint unless set). Meanwhile `/api/markets` and `/api/account`
+answer with the last list they read in full, dated in an `X-Stale-Since`
+header, rather than an error. The crank is slower on the fallback, so a pool
+that keeps resting needs more keys. The startup log names the hosts and the
+number of keys, never the keys themselves.
 
 Every ten minutes the log prints how many RPC calls the server made, with a
 daily projection and the busiest methods (`rpc: 4210 calls in 10m (~606k/day):
