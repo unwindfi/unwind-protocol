@@ -5,7 +5,6 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavIcon } from "@/components/NavIcon";
-import { useHasBackend } from "@/lib/api";
 
 export const REPO = "https://github.com/prarimz/unwind";
 

@@ -124,7 +124,7 @@ function usePoolShareHistory(symbol: string, last: Batch["last"] | undefined) {
 /// takers selling to them), how much of that the pool had to fill, and the
 /// orders resting in the next one. Rendered as a book because it is a book.
 /// The pool fills only the takers the makers leave standing.
-function BatchTab({ m, batch, narrow }: { m: Market; batch: Batch | null; narrow: boolean }) {
+function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolean }) {
   const history = usePoolShareHistory(m.symbol, batch?.last);
   const backend = useHasBackend();
   if (!batch) {

@@ -35,7 +35,7 @@ const SOFT_TRIGGER =
   "[&_[data-tabs-label]]:text-foreground";
 const SOFT_INDICATOR = "bg-panel3";
 
-export function TabsList({ children, className, soft = false }: {
+export function TabsList({ children, className }: {
   children: ReactNode; className?: string; soft?: boolean;
 }) {
   return (
@@ -47,7 +47,7 @@ export function TabsList({ children, className, soft = false }: {
 
 /// `className` sizes a row that needs it (the ticket's full-width side
 /// switch, the book's narrow column); the look itself stays the shared one.
-export function TabsTrigger({ value, children, className, soft = false }: {
+export function TabsTrigger({ value, children, className }: {
   value: string; children: ReactNode; className?: string; soft?: boolean;
 }) {
   return (

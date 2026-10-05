@@ -83,7 +83,7 @@ export function Chart({
   // Decimals the axis prints, from the price's own size: at two, a PENGU
   // chart at $0.0098 labelled every gridline "0.01".
   const decimals = useRef(2);
-  decimals.current = decimalsFor(price);
+  decimals.current = decimalsFor(price ?? 0);
   draw.current = { drawMode, onDraw, onModeChange };
   /*
    * The chart is a canvas, so it is the one surface a CSS variable cannot

@@ -17,7 +17,6 @@ import "@/site/serif.css";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ListFilter, Search, Star as LucideStar } from "lucide-react";
 import { Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
-import { Mark } from "@/components/Brand";
 import { Track } from "@/components/Track";
 import { TickerLogo } from "@/components/TickerLogo";
 import { MarketPeek } from "@/components/MarketPeek";
