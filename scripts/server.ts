@@ -757,23 +757,50 @@ async function realMintOf(m: MarketRt): Promise<string | null> {
  * falls back to the pool.
  */
 const JUP_PRICE_URL = "https://lite-api.jup.ag/price/v3";
+/*
+ * One Jupiter read shared by every pass for REAL_PRICE_MS, and a minute's rest
+ * after a 429. Each observer pass asked on its own, and under load (a hundred
+ * wallets, discovery running on every send) that was a call every couple of
+ * seconds: Jupiter answered 429 to all of them, and every devnet copy fell
+ * back to its pool's price for as long as it lasted. While Jupiter is resting
+ * or failing, the last good prices stand for up to REAL_PRICE_STALE_MS, which
+ * is still the real price and far closer to it than the pool.
+ */
+const REAL_PRICE_MS = 20_000;
+const REAL_PRICE_STALE_MS = 5 * 60_000;
+let realGood: { at: number; prices: Map<string, number> } | null = null;
+let realReading: Promise<Map<string, number>> | null = null;
+let realRestUntil = 0;
 async function realPricesByPool(): Promise<Map<string, number>> {
-  const mints = await shadowMintMap();
-  const out = new Map<string, number>();
-  if (!mints.size) return out;
-  try {
-    const r = await fetch(`${JUP_PRICE_URL}?ids=${[...new Set(mints.values())].join(",")}`,
-      { signal: AbortSignal.timeout(8_000) });
-    if (!r.ok) throw new Error(`jupiter price ${r.status}`);
-    const j = (await r.json()) as Record<string, { usdPrice?: number }>;
-    for (const [pair, mint] of mints) {
-      const p = j[mint]?.usdPrice;
-      if (p && p > 0) out.set(pair, p);
+  const now = Date.now();
+  if (realGood && now - realGood.at < REAL_PRICE_MS) return realGood.prices;
+  const lastGood = () =>
+    realGood && Date.now() - realGood.at < REAL_PRICE_STALE_MS ? realGood.prices : new Map<string, number>();
+  if (now < realRestUntil) return lastGood();
+  if (realReading) return realReading;
+  realReading = (async () => {
+    const mints = await shadowMintMap();
+    const out = new Map<string, number>();
+    if (!mints.size) return out;
+    try {
+      const r = await fetch(`${JUP_PRICE_URL}?ids=${[...new Set(mints.values())].join(",")}`,
+        { signal: AbortSignal.timeout(8_000) });
+      if (r.status === 429) realRestUntil = Date.now() + 60_000;
+      if (!r.ok) throw new Error(`jupiter price ${r.status}`);
+      const j = (await r.json()) as Record<string, { usdPrice?: number }>;
+      for (const [pair, mint] of mints) {
+        const p = j[mint]?.usdPrice;
+        if (p && p > 0) out.set(pair, p);
+      }
+      realGood = { at: Date.now(), prices: out };
+      return out;
+    } catch (e: any) {
+      const kept = lastGood();
+      console.warn(`real prices: ${e?.message ?? e}; ${kept.size ? "keeping the last real prices" : "marking from the pools"}`);
+      return kept;
     }
-  } catch (e: any) {
-    console.warn(`real prices: ${e?.message ?? e}; marking from the pools this pass`);
-  }
-  return out;
+  })().finally(() => { realReading = null; });
+  return realReading;
 }
 const realSeeds = new Map<string, { at: number; bars: Candle[] }>();
 const realLoads = new Map<string, Promise<Candle[]>>();
@@ -2949,15 +2976,39 @@ app.get("/api/pool/:address", async (req, res) => {
 // seconds: run the auction at full speed for a while.
 app.use("/api/tx", (_req, _res, next) => { heatAuction(); next(); });
 
-/// When a listing was last built. The send that follows it looks for the new
-/// market straight away: discovery runs every ten minutes otherwise, and the
-/// lister was told "live" while the site did not show the market for that long.
-let listingBuiltAt = 0;
+/// Who has a listing built and not yet sent, and when. The send that carries
+/// it looks for the new market straight away: discovery runs every two
+/// minutes otherwise, and the lister was told "live" while the site did not
+/// show the market for that long.
+///
+/// Keyed by the lister. It used to be one timestamp, and for five minutes
+/// after anyone built a listing every transaction anyone sent ran a full
+/// discovery (three program-wide account scans). Under load that was most of
+/// the server's RPC calls: 22,905 in eight minutes with a hundred wallets
+/// trading, against 9,034 for every account read together, and every key
+/// spent its rate limit on it.
+const listingsBuilt = new Map<string, number>();
+
+/// One discovery pass at a time. A request while one runs asks for exactly
+/// one more after it, however many arrive.
+let discovering: Promise<void> | null = null;
+let discoverAgain = false;
+function discoverSoon() {
+  if (discovering) { discoverAgain = true; return; }
+  discovering = rpcWho.run("discover", async () => {
+    await discoverMarkets(); await observer(); await refreshListedDay();
+  })
+    .catch((e: any) => console.warn(`discover after listing: ${e?.message ?? e}`))
+    .finally(() => {
+      discovering = null;
+      if (discoverAgain) { discoverAgain = false; discoverSoon(); }
+    });
+}
 
 app.post("/api/tx/list-market", async (req, res) => {
-  listingBuiltAt = Date.now();
   try {
     const owner = ownerOf(req);
+    listingsBuilt.set(owner.toBase58(), Date.now());
     const source = new PublicKey(req.body.pool);
     const p = await readPool(conn, source, usdcMint);
     // The token's own name, not the request's. See `listingName`.
@@ -3761,11 +3812,14 @@ app.post("/api/tx/send", async (req, res) => {
                       price: px(rt[r.symbol]), kind: r.kind });
       }
     }
-    if (Date.now() - listingBuiltAt < 5 * 60_000) {
-      // Then its first price straight away, not at the next minute's pass:
-      // the page promises it tradeable within seconds of listing.
-      void rpcWho.run("discover", async () => { await discoverMarkets(); await observer(); await refreshListedDay(); })
-        .catch((e: any) => console.warn(`discover after listing: ${e?.message ?? e}`));
+    // The lister's own send: find the new market and give it its first price
+    // straight away, not at the next pass, since the page promises it
+    // tradeable within seconds of listing. Nobody else's send does this.
+    const payer = VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58();
+    const built = listingsBuilt.get(payer);
+    if (built && Date.now() - built < 5 * 60_000) {
+      listingsBuilt.delete(payer);
+      discoverSoon();
     }
     res.json({ ok: true, sig });
   } catch (e: any) { res.status(400).json({ ok: false, error: explain(e) }); }

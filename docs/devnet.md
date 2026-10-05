@@ -32,6 +32,8 @@ list one market and trade about ten. Each wallet can use it once a day.
   test USDC. They are listed through the ordinary permissionless path, but
   on devnet their mark is the real token's price on mainnet (Jupiter), pushed
   every minute by the server's mark keeper, so they trade at the real price.
+  If Jupiter is unavailable or limits the server, the last real price stands
+  for up to five minutes before the mark falls back to the devnet pool.
   A move of more than 10% between pushes is held for one push, so one bad
   reading cannot move the mark. If the next push still sees it, the mark
   walks toward it 10% a push, so positions on the way are liquidated while
