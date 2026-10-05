@@ -73,7 +73,8 @@ export default function PortfolioPage() {
   const [tick, setTick] = useState(0);
   const account = usePoll(() => owner ? getAccount(owner) : Promise.resolve(null), 5000, [owner],
     () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null), tick);
-  const backingsRaw = usePoll(() => getBackings(owner), 10_000, [owner], undefined, tick);
+  const backingsRaw = usePoll(() => getBackings(owner), 10_000, [owner],
+    () => (owner ? peek<Backing[]>(`/api/backings?owner=${owner}`) : null), tick);
   const backings = backingsRaw ?? NO_BACKINGS;
   const rewards = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
   const fillsRaw = usePoll(() => getFills(owner), 5000, [owner], undefined, tick);

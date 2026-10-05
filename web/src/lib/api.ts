@@ -181,7 +181,7 @@ export const apiUrl = (path: string) => API + path;
  * trade depends on: the ticket's figures come from the fresh poll.
  */
 const CACHE = "unwind.c:";
-const CACHEABLE = /^\/api\/(markets|candles\/|account|trades\/|batch\/)/;
+const CACHEABLE = /^\/api\/(markets|candles\/|account|backings|trades\/|batch\/)/;
 export function peek<T>(path: string): T | null {
   try {
     const raw = localStorage.getItem(CACHE + path);

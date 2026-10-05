@@ -40,7 +40,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
 import {
-  getAccount, getApy, getBackings, getMarkets, usePoll,
+  getAccount, getApy, getBackings, getMarkets, peek, usePoll,
   type Account, type Apy, type Backing, type Market,
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
@@ -435,7 +435,10 @@ export default function Earn() {
   const [tick, setTick] = useState(0);
   const account = usePoll(() => getAccount(owner), 3000, [owner], undefined, tick);
   const markets = usePoll(getMarkets, 5000) ?? NONE;
-  const backings = usePoll(() => getBackings(owner), 5000, [owner], undefined, tick) ?? NO_BACKINGS;
+  // Seeded from the last answer, so the section is drawn at once rather than
+  // empty until the first read lands.
+  const backings = usePoll(() => getBackings(owner), 5000, [owner],
+    () => (owner ? peek<Backing[]>(`/api/backings?owner=${owner}`) : null), tick) ?? NO_BACKINGS;
   // The tape is sampled every two minutes, so polling faster than this would
   // only ask the same question again.
   const apy = usePoll(getApy, 30_000);

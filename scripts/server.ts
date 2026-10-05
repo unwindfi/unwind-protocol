@@ -448,7 +448,18 @@ const custodyPairs = (writable: boolean) =>
 /// Refreshed by the crank and after anything that moves it.
 const books: Record<string, { amounts: Record<string, number>; reimbursedUsd: number }> = {};
 
-async function loadBooks() {
+/// Read at most every ten seconds: the backings view asks on every poll, and
+/// this is a `getProgramAccounts`, one of the slowest calls a key serves.
+let booksRead: { at: number; body: Promise<void> } | null = null;
+function loadBooks(): Promise<void> {
+  if (booksRead && Date.now() - booksRead.at < 10_000) return booksRead.body;
+  const body = readBooks();
+  booksRead = { at: Date.now(), body };
+  body.catch(() => { booksRead = null; });
+  return body;
+}
+
+async function readBooks() {
   const all = await program.account.backingBook.all();
   for (const { account: b } of all as any[]) {
     const amounts: Record<string, number> = {};
@@ -3515,12 +3526,25 @@ app.post("/api/tx/withdraw", async (req, res) => {
 app.get("/api/backings", async (req, res) => {
   try {
     const owner = ownerOf(req);
-    await loadBooks();
+    // Every market's backing account in one read, and the markets from the
+    // shared batched read. One fetch per market, in turn, took seven seconds,
+    // longer than the page polls, and the section sat empty while it ran.
+    const list = Object.values(rt);
+    const [, infos, markets] = await Promise.all([
+      loadBooks(),
+      // At most 100 accounts a call.
+      Promise.all(Array.from({ length: Math.ceil(list.length / 100) }, (_, k) =>
+        conn.getMultipleAccountsInfo(list.slice(k * 100, k * 100 + 100).map((m) => backingPda(m.address, owner)))))
+        .then((parts) => parts.flat()),
+      marketsByAddress(),
+    ]);
     const out: any[] = [];
-    for (const m of Object.values(rt)) {
-      const b: any = await program.account.backing.fetchNullable(backingPda(m.address, owner));
-      if (!b || num(b.shares) === 0) continue;
-      const ma: any = await program.account.market.fetch(m.address);
+    for (const [i, m] of list.entries()) {
+      const info = infos[i];
+      if (!info) continue;
+      const b: any = program.coder.accounts.decode("backing", info.data);
+      if (num(b.shares) === 0) continue;
+      const ma: any = markets.get(m.address.toBase58()) ?? await program.account.market.fetch(m.address);
       const total = num(ma.backingShares);
       const part = total > 0 ? num(b.shares) / total : 0;
       // What those shares are a claim on, token by token: the pot's USDC and
