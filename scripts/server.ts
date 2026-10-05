@@ -79,6 +79,8 @@ const AUCTION_MS = Number(process.env.AUCTION_MS ?? 1_000);
 const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
 /// How many markets the auction works at once (see `auction`).
 const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 6);
+/// How many marks the keeper pushes at once (see `observer`).
+const MARK_PARALLEL = Number(process.env.MARK_PARALLEL ?? 8);
 /// Until when the auction runs at full speed: set when a batch is seen
 /// holding orders, and when this server builds an order for someone.
 let auctionHotUntil = 0;
@@ -1802,8 +1804,14 @@ async function observer() {
   }
   const folded: { publicKey: PublicKey; account: any }[] = [];
   const real = await realPricesByPool();
-  for (const { publicKey, account } of all) {
-    if (otherPoolMarkets.has(new PublicKey(account.market).toBase58())) continue;
+  /*
+   * Up to MARK_PARALLEL markets at once. Pushed one after another, each push
+   * waiting to confirm, a pass over two dozen markets on rate-limited RPC took
+   * longer than a mark may be old (90 to 120s): every price went stale, every
+   * clear was refused with "Oracle price is stale", and no batch cleared.
+   */
+  const push = async ({ publicKey, account }: { publicKey: PublicKey; account: any }) => {
+    if (otherPoolMarkets.has(new PublicKey(account.market).toBase58())) return;
     try {
       // A DLMM pair is read bin by bin, and the bins live in their own
       // accounts, which have to be picked fresh each time: which ones the
@@ -1824,10 +1832,15 @@ async function observer() {
       // failure mode permissionless listing was given on purpose. Report it
       // and leave the rest of the set alone.
       console.warn(`push mark ${publicKey.toBase58().slice(0, 8)}: ${e?.message ?? e}`);
-      continue;
+      return;
     }
     folded.push({ publicKey, account });
-  }
+  };
+  let nextObs = 0;
+  const list = all as { publicKey: PublicKey; account: any }[];
+  await Promise.all(Array.from({ length: Math.min(MARK_PARALLEL, list.length) }, async () => {
+    while (nextObs < list.length) await push(list[nextObs++]);
+  }));
   // Re-read: each fold wrote both the mark and the depth, so the copies this
   // pass started from are one reading stale. One call for all of them, not
   // one per market.
