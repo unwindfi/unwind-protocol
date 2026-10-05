@@ -172,11 +172,11 @@ export default function RewardsPage() {
 
             <div className="relative flex h-full flex-col justify-center px-5 py-9
                             sm:max-w-[min(460px,58%)] sm:px-9">
-              <h1 className="font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
+              <h1 className="text-balance font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
                              tracking-[-.025em]">
                 Rewards
               </h1>
-              <p className="mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
+              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
                 Points on every dollar you trade, back or deposit. USDC on every
                 trader you bring.
               </p>
@@ -201,7 +201,7 @@ export default function RewardsPage() {
                 )}
                 {self && owner && r?.canSetReferrer !== false && !r?.referrer && arrived
                   && arrived !== r?.code && (
-                  <p className="mt-4 text-[12.5px] leading-relaxed text-muted-foreground">
+                  <p className="text-pretty mt-4 text-[12.5px] leading-relaxed text-muted-foreground">
                     Joined through <span className="font-medium text-foreground">{arrived}</span>.
                     Your first order locks them in as your referrer and takes 10% off your fees.{" "}
                     <button type="button" disabled={!!busy} className={`${LINK} disabled:opacity-35`}
@@ -312,7 +312,7 @@ export default function RewardsPage() {
                     <div className="mt-1.5 text-[22px] font-semibold leading-tight tracking-[-.01em]">
                       {x.figure}
                     </div>
-                    <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{x.line}</p>
+                    <p className="text-pretty mt-1 text-[13px] leading-relaxed text-muted-foreground">{x.line}</p>
                   </div>
                 </li>
               ))}
@@ -343,7 +343,7 @@ export default function RewardsPage() {
 const Stat = ({ k, children }: { k: string; children: ReactNode }) => (
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
     <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
-    <span className="n truncate text-right text-[13.5px] font-semibold">{children}</span>
+    <span className="n text-right text-[13.5px] font-semibold">{children}</span>
   </div>
 );
 
@@ -351,7 +351,7 @@ function Card({ title, aside, children }: { title: string; aside?: ReactNode; ch
   return (
     <section className="mt-4 overflow-hidden rounded-[24px] border border-line bg-panel">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4 pt-6 sm:px-7">
-        <h2 className="text-[16px] font-medium">{title}</h2>
+        <h2 className="text-balance text-[16px] font-medium">{title}</h2>
         {aside}
       </div>
       {children}
@@ -546,7 +546,7 @@ function ClaimCode({ busy, onClaim }: { busy: boolean; onClaim: (code: string) =
           onChange={(e) => setCode(e.target.value.toLowerCase())}
           placeholder="yourname"
           className="n h-[48px] min-w-0 flex-1 rounded-[12px] border border-line bg-panel2/80 px-4
-                     text-[14px] outline-none backdrop-blur focus:border-foreground/40" />
+                     text-[14px] backdrop-blur focus:border-foreground/40" />
         <button type="submit" disabled={state !== "free" || busy} className={`${BTN} flex-none px-5`}>
           {busy ? "Claiming" : "Claim"}
         </button>

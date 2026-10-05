@@ -55,10 +55,10 @@ export function statusOf(m: Market) {
 
 const Seg = ({ pct, fill }: { pct: number; fill: string }) => (
   <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-panel3">
-    <div className={`h-full rounded-full ${fill}`}
+    <div className={`h-full w-full origin-left rounded-full ${fill}`}
       style={{
-        width: `${pct * 100}%`,
-        transition: "width 700ms var(--ease-out-strong)",
+        transform: `scaleX(${pct})`,
+        transition: "transform 700ms var(--ease-out-strong)",
       }} />
   </div>
 );

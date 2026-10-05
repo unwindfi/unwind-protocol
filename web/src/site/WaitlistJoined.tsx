@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { NumberTicker } from "@/components/motion/number-ticker";
+import { SiX } from "@icons-pack/react-simple-icons";
 import { OUTLINE } from "@/site/Chrome";
 
 export type Me = {
@@ -21,12 +22,6 @@ export type Me = {
   link: string;
   referrals: { ts: string; id: string; handle: string }[];
 };
-
-const XMark = ({ size = 15 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-  </svg>
-);
 
 export function Joined({ me }: { me: Me }) {
   const [copied, setCopied] = useState(false);
@@ -47,9 +42,8 @@ export function Joined({ me }: { me: Me }) {
     <div className="mx-auto w-full max-w-[480px] text-left">
       {/* Opaque, not tinted glass: the device is drawn behind this and a
           translucent card let it through the type. */}
-      <div className="rounded-[24px] border border-line bg-panel2 p-5 sm:p-6
-                      shadow-[0_24px_60px_-28px_rgba(0,0,0,.55)]">
-        <h2 className="text-[17px] font-medium tracking-[-.01em]">@{me.handle} is on the list.</h2>
+      <div className="rounded-[24px] border border-line bg-panel2 p-5 sm:p-6">
+        <h2 className="text-balance text-[17px] font-medium tracking-[-.01em]">@{me.handle} is on the list.</h2>
 
         <label htmlFor="waitlist-link" className="mb-2 mt-5 block text-[13px] text-foreground">
           Your link
@@ -57,7 +51,7 @@ export function Joined({ me }: { me: Me }) {
         <input id="waitlist-link" readOnly value={me.link}
           onFocus={(e) => e.currentTarget.select()}
           className="n h-[44px] w-full truncate rounded-[12px] border border-line bg-panel px-3.5
-                     text-[12.5px] text-muted-foreground outline-none focus:border-foreground/40" />
+                     text-[12.5px] text-muted-foreground focus:border-foreground/40" />
 
         <div className="mt-4 grid grid-cols-2 gap-2.5">
           <button type="button" onClick={copy}
@@ -69,7 +63,7 @@ export function Joined({ me }: { me: Me }) {
           </button>
           <a href={share} target="_blank" rel="noreferrer"
             className={`${OUTLINE} flex h-[48px] items-center justify-center gap-2 whitespace-nowrap !px-3 !py-0 !text-[14px]`}>
-            <XMark /> Share on X
+            <SiX size={15} aria-hidden /> Share on X
           </a>
         </div>
 

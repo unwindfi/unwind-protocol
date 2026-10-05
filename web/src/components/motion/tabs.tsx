@@ -36,12 +36,13 @@ function useTabs() {
 
 // Settle without overshoot: a scrollable tab list would turn even a small
 // overshoot into a transient scrollbar and layout shift.
-// Scale stiffness and damping together for a quicker glide with the same feel.
+// Light and stiff: an underline or filter pill has to land in about 150ms, or
+// it is still sliding when the new content has already drawn.
 const transition: Transition = {
   type: "spring",
-  stiffness: 245,
-  damping: 36,
-  mass: 1.2,
+  stiffness: 600,
+  damping: 50,
+  mass: 0.6,
 };
 
 export function Tabs({
@@ -380,9 +381,9 @@ export function TabsContent({ value, children, className }: { value: string; chi
   return (
     <motion.div
       key={value}
-      initial={{ opacity: 0, y: reduce ? 0 : 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: EASE_OUT }}
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.12, ease: EASE_OUT }}
       className={cn("mt-4", className)}
     >
       {children}

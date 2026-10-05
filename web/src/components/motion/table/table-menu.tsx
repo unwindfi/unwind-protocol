@@ -111,7 +111,7 @@ export function TableMenu({
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors [&_svg]:h-4 [&_svg]:w-4",
                       item.destructive
-                        ? "text-rose-500 hover:bg-rose-500/10"
+                        ? "text-destructive hover:bg-destructive/10"
                         : "text-foreground hover:bg-muted",
                     )}
                   >

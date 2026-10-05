@@ -19,7 +19,7 @@ const formatAddress = (
   chars: [number, number]
 ) => {
   if (!truncate || address.length <= chars[0] + chars[1] + 3) return address;
-  return `${address.slice(0, chars[0])}...${address.slice(-chars[1])}`;
+  return `${address.slice(0, chars[0])}…${address.slice(-chars[1])}`;
 };
 
 const springIcon = {
@@ -60,22 +60,21 @@ export const AddressDisplay = ({
     <span
       data-slot="address-display"
       className={cn(
-        "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/90 dark:bg-zinc-900/90 text-zinc-900 dark:text-zinc-100 select-none shadow-xs font-sans",
+        "inline-flex items-center gap-2 text-foreground",
         className
       )}
       {...props}
     >
-      <span className="font-mono text-xs font-semibold tracking-tight">
+      <span className="font-mono" title={address}>
         {displayed}
       </span>
       {copyable && (
         <motion.button
           type="button"
-          whileHover={shouldReduceMotion ? undefined : { scale: 1.05 }}
-          whileTap={shouldReduceMotion ? undefined : { scale: 0.95 }}
+          whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
           transition={springIcon}
           onClick={handleCopy}
-          className="p-1 rounded-md text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-sky-500/40"
+          className="p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label="Copy address"
         >
           <AnimatePresence mode="wait" initial={false}>
@@ -88,7 +87,7 @@ export const AddressDisplay = ({
                 transition={{ duration: 0.12 }}
                 className="flex items-center"
               >
-                <CheckIcon className="size-3.5 text-emerald-500" />
+                <CheckIcon className="size-3.5 text-up" />
               </motion.span>
             ) : (
               <motion.span
@@ -107,13 +106,12 @@ export const AddressDisplay = ({
       )}
       {fullUrl && (
         <motion.a
-          whileHover={shouldReduceMotion ? undefined : { scale: 1.05 }}
-          whileTap={shouldReduceMotion ? undefined : { scale: 0.95 }}
+          whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
           transition={springIcon}
           href={fullUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="p-1 rounded-md text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-sky-500/40"
+          className="p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label="View in explorer"
         >
           <ExternalLinkIcon className="size-3.5" />
@@ -154,12 +152,11 @@ export const CopyButton = ({
   return (
     <motion.button
       type="button"
-      whileHover={shouldReduceMotion ? undefined : { scale: 1.02 }}
-      whileTap={shouldReduceMotion ? undefined : { scale: 0.97 }}
+      whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
       transition={springIcon}
       onClick={handleCopy}
       className={cn(
-        "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-semibold text-zinc-900 dark:text-zinc-100 shadow-xs cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 font-sans",
+        "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-line bg-panel2 text-xs font-semibold text-foreground cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
       {...props}
@@ -172,7 +169,7 @@ export const CopyButton = ({
             animate={{ opacity: 1, scale: 1 }}
             exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
             transition={{ duration: 0.12 }}
-            className="flex items-center gap-1.5 text-emerald-500"
+            className="flex items-center gap-1.5 text-up"
           >
             <CheckIcon className="size-3.5" />
             <span>{copiedLabel}</span>
@@ -186,7 +183,7 @@ export const CopyButton = ({
             transition={{ duration: 0.12 }}
             className="flex items-center gap-1.5"
           >
-            <CopyIcon className="size-3.5 text-zinc-400" />
+            <CopyIcon className="size-3.5 text-muted-foreground" />
             <span>{label}</span>
           </motion.span>
         )}

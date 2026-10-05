@@ -56,7 +56,7 @@ export function Checkbox({
         aria-describedby={ariaDescribedBy}
         disabled={disabled}
         onClick={() => !disabled && onCheckedChange(!checked)}
-        whileTap={reduce || disabled ? undefined : { scale: 0.92 }}
+        whileTap={reduce || disabled ? undefined : { scale: 0.96 }}
         transition={SPRING_PRESS}
         data-state={
           checked ? "checked" : indeterminate ? "indeterminate" : "unchecked"
@@ -64,7 +64,7 @@ export function Checkbox({
         className={cn(
           "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 outline-none transition-colors duration-200",
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-          "disabled:cursor-not-allowed disabled:opacity-60",
+          "disabled:cursor-not-allowed disabled:opacity-35",
           showMark
             ? "border-primary bg-primary text-primary-foreground"
             : "border-muted-foreground/50 bg-background hover:border-muted-foreground",
@@ -114,7 +114,7 @@ export function Checkbox({
         </AnimatePresence>
       </motion.button>
       {label ? (
-        <span className={cn("select-none text-sm text-foreground", disabled && "opacity-60")}>
+        <span className={cn("select-none text-sm text-foreground", disabled && "opacity-35")}>
           {label}
         </span>
       ) : null}

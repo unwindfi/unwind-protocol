@@ -37,7 +37,7 @@ export function Box({ title, aside, children, className = "", bodyClassName = ""
           {/* A heading even when it is only read by a screen reader: these
               boxes are the page's structure, and structure that exists only
               visually is structure half the visitors do not get. */}
-          <h2 className="text-[13.5px] font-medium text-foreground">
+          <h2 className="text-balance text-[13.5px] font-medium text-foreground">
             {title}
           </h2>
           {aside}
@@ -55,7 +55,7 @@ export function Tile({ label, children, tone = "" }: {
   return (
     <div className="rounded-[14px] border border-line bg-panel px-5 py-5">
       <div className="text-[13px] text-muted-foreground">{label}</div>
-      <div className={`n mt-4 truncate text-[20px] font-medium tracking-[-.01em] ${tone}`}>
+      <div className={`n mt-4 text-[20px] font-medium tracking-[-.01em] ${tone}`}>
         {children}
       </div>
     </div>

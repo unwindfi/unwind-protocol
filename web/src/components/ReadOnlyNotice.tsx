@@ -21,8 +21,8 @@ export function ReadOnlyNotice() {
     <div className="flex flex-none items-start border-b border-line bg-panel2 px-5 py-2.5
                     text-[12.5px] text-muted-foreground md:items-center">
       <span>
-        <span className="font-medium text-foreground">Live prices, read-only.</span>{" "}
-        Trading opens with devnet.
+        <span className="font-medium text-foreground">Read-only.</span>{" "}
+        Devnet is not connected. Prices are live; trading is paused.
       </span>
     </div>
   );

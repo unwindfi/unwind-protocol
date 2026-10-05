@@ -95,8 +95,8 @@ export function MarketHead({ m, onOpen, batch }: {
             <BatchClock m={m} batch={batch} />
           </div>
           {stale && (
-            <span className="rounded-full bg-down/15 px-3 py-1.5 text-[12px]
-                             font-medium text-down">
+            <span className="rounded-full bg-destructive/10 px-3 py-1.5 text-[12px]
+                             font-medium text-destructive">
               Feed {Math.round(m.priceAgeMs! / 1000)}s old
             </span>
           )}

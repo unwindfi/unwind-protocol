@@ -34,7 +34,7 @@ export function TickerLogo({ m, size = 26, bare = false }: {
 
   return (
     <span className="grid flex-none place-items-center overflow-hidden rounded-full font-bold text-white"
-      style={{ width: size, height: size, background: src ? (bare ? "transparent" : "#111826") : m.color,
+      style={{ width: size, height: size, background: src ? (bare ? "transparent" : "var(--color-panel3)") : m.color,
                fontSize: size * 0.45 }}>
       {src ? <img src={src} alt="" style={{ width: bare ? "100%" : "86%", height: bare ? "100%" : "86%" }} />
            : m.mono}

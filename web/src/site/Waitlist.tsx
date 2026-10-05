@@ -7,6 +7,7 @@ import { ArrowUpRight, ChevronDown, Volume2, VolumeX } from "lucide-react";
 import { LightHero } from "@/components/LightHero";
 import { GlassMark } from "@/components/GlassMark";
 import { Wordmark } from "@/components/Wordmark";
+import { SiX } from "@icons-pack/react-simple-icons";
 import { OUTLINE, Shell } from "@/site/Chrome";
 import { PLAYER_NODE, Radio as RadioEngine } from "@/lib/radio";
 import type { Me } from "@/site/WaitlistJoined";
@@ -21,13 +22,6 @@ const X_URL = "https://x.com/unwindfi";
 /// The documentation: a GitBook site synced from `docs/` in this repo,
 /// rather than a route this app serves.
 const DOCS = "https://unwind.gitbook.io/unwind-docs";
-
-/// The X mark, since the icon set carries no brand marks.
-const XMark = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-  </svg>
-);
 
 /*
  * Joining is signing in with X. The button is a plain link to the function
@@ -63,7 +57,7 @@ function Join() {
           className="press flex h-[48px] items-center gap-2.5 rounded-full bg-foreground px-6
                      text-[14px] font-medium text-background transition-opacity
                      hover:opacity-90 max-sm:px-5">
-          <XMark size={15} />
+          <SiX size={15} aria-hidden />
           Connect X
         </a>
         <button type="button" onClick={() => setHelp((h) => !h)}
@@ -75,11 +69,11 @@ function Join() {
       </div>
       {/* What the button does, in the order it happens: connecting an
           account is not obviously the same as joining anything. */}
-      <p className="mt-4 text-[13px] leading-relaxed text-muted-foreground">
+      <p className="text-pretty mt-4 text-[13px] leading-relaxed text-muted-foreground">
         Connect X. Join the waitlist. Get early access.
       </p>
       {error && (
-        <p className="mt-4 text-[13px] leading-relaxed text-down">{error}</p>
+        <p className="text-pretty mt-4 text-[13px] leading-relaxed text-down">{error}</p>
       )}
 
       {/*
@@ -92,7 +86,7 @@ function Join() {
        * you do not know.
        */}
       <div id="what-panel" className="grid transition-[grid-template-rows] duration-300
-                                      ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                      ease-out-strong"
         style={{ gridTemplateRows: help ? "1fr" : "0fr" }}>
         <div className="overflow-hidden">
           {/* Sized to the column, not the viewport: the wrapper above clips
@@ -129,7 +123,7 @@ function Join() {
 const WHAT: [string, string][] = [
   ["What", "Memecoins, majors, tokenised equities."],
   ["How", "Price is set by two-sided flow, not by a pool."],
-  ["Who", "Anyone can open a market."],
+  ["Who", "Anyone can list a market."],
 ];
 
 /*
@@ -275,16 +269,16 @@ export default function Waitlist() {
               row that asks for one and sits up here with the sound. */}
           <a href={X_URL} target="_blank" rel="noreferrer" aria-label="unwind on X"
             className="text-muted-foreground transition-colors hover:text-foreground">
-            <XMark size={15} />
+            <SiX size={15} aria-hidden />
           </a>
           <Radio on={sound} onChange={(playing) => setSound(playing)} />
         </nav>
 
         {/* The copy on top, the violet light in whatever height is left under it. */}
-        <main className="relative isolate flex flex-1 flex-col overflow-hidden pt-[max(9vh,92px)] max-sm:pt-[26%]">
+        <main id="main" className="relative isolate flex flex-1 flex-col overflow-hidden pt-[max(9vh,92px)] max-sm:pt-[26%]">
           <Shell className="relative z-10 flex flex-col items-center text-center">
             {/* Plain type in two tones, nothing tinted and nothing glowing. */}
-            <h1 className="max-w-[34ch] text-[clamp(1.9rem,4.3vw,3.1rem)] leading-[1.08]
+            <h1 className="text-balance max-w-[34ch] text-[clamp(1.9rem,4.3vw,3.1rem)] leading-[1.08]
                            tracking-[-.035em] text-foreground"
               style={{ fontWeight: 500 }}>
               Permissionless perps on{" "}

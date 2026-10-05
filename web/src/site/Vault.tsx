@@ -68,7 +68,7 @@ export default function VaultPage() {
               <div className="flex items-center gap-4">
                 <VaultIcon v={v} />
                 <div className="min-w-0">
-                  <h1 className="font-serif-display text-[clamp(2.2rem,4.5vw,3rem)] leading-none tracking-[-.025em]">
+                  <h1 className="text-balance font-serif-display text-[clamp(2.2rem,4.5vw,3rem)] leading-none tracking-[-.025em]">
                     {v.title}
                   </h1>
                   <p className="mt-1.5 text-[14px] text-muted-foreground">
@@ -91,7 +91,7 @@ export default function VaultPage() {
               <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel">
                 <div className="flex flex-wrap items-baseline justify-between gap-3 px-6 pb-2 pt-5 sm:px-8">
                   <div>
-                    <h2 className="text-[16px] font-medium">Value per share</h2>
+                    <h2 className="text-balance text-[16px] font-medium">Value per share</h2>
                     <p className="mt-0.5 text-[12.5px] text-muted-foreground">
                       What one share of this vault is worth, as the server has watched it. Fees lift it; losses the
                       market's traders took from it lower it.
@@ -109,7 +109,7 @@ export default function VaultPage() {
               {m && <Risk m={m} />}
               {v.kind === "pool" && account && (
                 <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel px-6 py-5 sm:px-8">
-                  <h2 className="text-[16px] font-medium">Where the pool stands</h2>
+                  <h2 className="text-balance text-[16px] font-medium">Where the pool stands</h2>
                   <div className="mt-3 grid gap-x-8 sm:grid-cols-2">
                     <KV k="Liquidity">{money(account.pool.liquidity, 0)}</KV>
                     <KV k="Insurance fund">{money(account.pool.insurance, 0)}</KV>
@@ -149,7 +149,7 @@ export default function VaultPage() {
                     </>
                   )}
                 </div>
-                <p className="mt-4 text-[12.5px] leading-[1.55] text-muted-foreground">
+                <p className="text-pretty mt-4 text-[12.5px] leading-[1.55] text-muted-foreground">
                   {v.kind === "pool"
                     ? "The pool takes the losses backers do not, up to each market's budget, and earns the fees on every market."
                     : "Backing takes this market's losses first, up to what you post, and earns half of the pool's share of its fees. Withdrawing pays the mix it holds."}{" "}
@@ -175,7 +175,7 @@ export default function VaultPage() {
 const KV = ({ k, children, tone = "" }: { k: string; children: React.ReactNode; tone?: string }) => (
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-2.5 first:border-t-0">
     <span className="text-[13px] text-muted-foreground">{k}</span>
-    <span className={`n truncate text-right text-[13.5px] font-semibold ${tone}`}>{children}</span>
+    <span className={`n text-right text-[13.5px] font-semibold ${tone}`}>{children}</span>
   </div>
 );
 
@@ -187,8 +187,8 @@ function Risk({ m }: { m: Market }) {
   const filled = m.lossBudgetUsd > 0 ? Math.min(100, (m.backingUsd / m.lossBudgetUsd) * 100) : 0;
   return (
     <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel px-6 py-5 sm:px-8">
-      <h2 className="text-[16px] font-medium">What this vault stands behind</h2>
-      <p className="mt-1.5 text-[13.5px] leading-[1.55] text-muted-foreground">
+      <h2 className="text-balance text-[16px] font-medium">What this vault stands behind</h2>
+      <p className="text-pretty mt-1.5 text-[13.5px] leading-[1.55] text-muted-foreground">
         Traders open {m.symbol} at up to {L.toFixed(L % 1 ? 1 : 0)}x and are liquidated under {mm.toFixed(1)}% margin.
         Their losses come out of this backing first, up to its budget of {compact(m.lossBudgetUsd)}, then the pool.
         Gains come back to it only up to what was drawn.
@@ -200,9 +200,9 @@ function Risk({ m }: { m: Market }) {
         <KV k="Open fee">{(m.openFeeBps / 100).toFixed(2)}%</KV>
       </div>
       <div className="mt-4 flex h-9 gap-1 text-[11.5px] font-medium">
-        <span className="flex flex-[2] items-center rounded-[7px] bg-up/15 px-3 text-up">Backing pays first</span>
+        <span className="flex flex-[2] items-center rounded-[7px] bg-up/10 px-3 text-up">Backing pays first</span>
         <span className="flex flex-[1.6] items-center rounded-[7px] bg-[#f5b8201f] px-3 text-[#d9a21b]">Then the pool, to budget</span>
-        <span className="flex flex-[1.2] items-center rounded-[7px] bg-down/15 px-3 text-down">Then insurance</span>
+        <span className="flex flex-[1.2] items-center rounded-[7px] bg-down/10 px-3 text-down">Then insurance</span>
       </div>
     </section>
   );

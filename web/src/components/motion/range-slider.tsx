@@ -8,15 +8,15 @@ import {
   useSpring,
   useTransform,
 } from "motion/react";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { SPRING_GLIDE } from "@/lib/ease";
+import { EASE_OUT, SPRING_GLIDE } from "@/lib/ease";
 import { type SliderOptions, useSlider } from "@/lib/hooks/use-slider";
 import { TOUCH_GESTURE_CLASS } from "@/lib/touch";
 import { cn } from "@/lib/utils";
 
-// Bouncy grab feedback for the thumb scale only.
-const SPRING_BOUNCY = { type: "spring", stiffness: 500, damping: 14, mass: 0.7 } as const;
+// Grab feedback: a quick, flat ease. A bounce here wobbles under the finger.
+const GRAB = { duration: 0.12, ease: EASE_OUT } as const;
 
 export interface RangeSliderProps extends SliderOptions {
   /** Render a tick dot at each step. */
@@ -41,12 +41,17 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
     return () => observer.disconnect();
   }, [trackProps.ref]);
 
-  // Spring-smoothed position drives both the thumb and the fill.
+  // Spring-smoothed position drives both the thumb and the fill. The spring is
+  // for jumps (a click on the rail, an arrow key); once a drag is under way the
+  // thumb sits exactly under the pointer, or it trails the finger.
   const target = useMotionValue(percent);
+  const smooth = useSpring(target, SPRING_GLIDE);
+  const wasDragging = useRef(false);
   useEffect(() => {
     target.set(percent);
-  }, [percent, target]);
-  const smooth = useSpring(target, SPRING_GLIDE);
+    if (dragging && wasDragging.current) smooth.jump(percent);
+    wasDragging.current = dragging;
+  }, [percent, dragging, target, smooth]);
   const pos = reduce ? target : smooth;
   const thumbX = useTransform(pos, (p) => 8 + Math.max(0, trackWidth - 20) * p / 100);
   // Match InlineSlider: the 4px handle starts 8px inside the track, and
@@ -73,7 +78,7 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
         "relative flex h-8 w-full touch-none items-center",
         TOUCH_GESTURE_CLASS,
         options.disabled
-          ? "pointer-events-none opacity-50"
+          ? "pointer-events-none opacity-35"
           : "cursor-grab active:cursor-grabbing",
         className,
       )}
@@ -102,7 +107,7 @@ export function RangeSlider({ showTicks = true, className, ...options }: RangeSl
       <motion.div
         {...sliderProps}
         animate={reduce ? undefined : { scale: dragging ? 1.15 : 1 }}
-        transition={SPRING_BOUNCY}
+        transition={GRAB}
         className="absolute left-0 top-1/2 -ml-2 size-4 rounded-full bg-foreground shadow-[0_1px_4px_rgba(0,0,0,.35)]
                    outline-none ring-foreground/25 focus-visible:ring-4"
         style={{ x: thumbX, y: "-50%" }}

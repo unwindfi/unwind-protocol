@@ -11,8 +11,9 @@
  * before you can use it.
  */
 import { Moon, Sun } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useTheme } from "@/lib/theme";
+import { cn } from "@/lib/utils";
 
 // The glyphs cross-fade rather than swap: scale, opacity and blur together,
 // a spring with no bounce.
@@ -22,19 +23,26 @@ const SWAP = {
   exit: { scale: 0.25, opacity: 0, filter: "blur(4px)" },
   transition: { type: "spring" as const, duration: 0.3, bounce: 0 },
 };
+const FADE = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0.15 },
+};
 
 export function ThemeToggle({ className = "" }: { className?: string }) {
   const { theme, toggle } = useTheme();
+  const reduce = useReducedMotion();
   const next = theme === "dark" ? "light" : "dark";
   return (
     <button type="button" onClick={toggle}
       // The label says what the press does. `aria-pressed` would say the
       // button is "on", which is meaningless for a switch between two peers.
       aria-label={`Switch to ${next} theme`} title={`Switch to ${next} theme`}
-      className={`press relative flex flex-none items-center justify-center rounded-[12px]
-                  text-muted-foreground hover:bg-panel2 hover:text-foreground ${className}`}>
+      className={cn("press relative flex flex-none items-center justify-center rounded-[12px] "
+        + "text-muted-foreground hover:bg-panel2 hover:text-foreground", className)}>
       <AnimatePresence initial={false} mode="popLayout">
-        <motion.span key={theme} {...SWAP} className="flex">
+        <motion.span key={theme} {...(reduce ? FADE : SWAP)} className="flex">
           {theme === "dark"
             ? <Sun size={19} strokeWidth={1.75} />
             : <Moon size={19} strokeWidth={1.75} />}

@@ -43,7 +43,7 @@ export function MarketHeader({
             </span>
             <span className="mt-px flex items-center gap-1.5">
               {stale ? (
-                <span className="rounded-full bg-down/15 px-2 py-px text-[11px] font-medium text-down">
+                <span className="rounded-full bg-destructive/10 px-2 py-px text-[11px] font-medium text-destructive">
                   feed {Math.round(m.priceAgeMs! / 1000)}s
                 </span>
               ) : (
@@ -84,8 +84,8 @@ export function MarketHeader({
       <div className="flex flex-none gap-1.5">
         {stale && (
           <Tooltip content={m.feedError ?? "Price source not responding."} side="bottom">
-            <span className="cursor-default rounded-full bg-down/15 px-2 py-px text-[11px]
-                             font-medium text-down">
+            <span className="cursor-default rounded-full bg-destructive/10 px-2 py-px text-[11px]
+                             font-medium text-destructive">
               feed {Math.round(m.priceAgeMs! / 1000)}s
             </span>
           </Tooltip>

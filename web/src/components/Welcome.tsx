@@ -101,7 +101,7 @@ export function Welcome() {
       <div className="pane-scroll max-h-[100dvh] w-full max-w-[560px] overflow-y-auto rounded-t-[24px] border
                       border-line bg-panel sm:max-h-[90vh] sm:rounded-[24px]">
         <div className="flex items-center gap-3 px-6 pt-6">
-          <h2 className="text-[22px] font-semibold tracking-[-.02em]">{titles[step]}</h2>
+          <h2 className="text-balance text-[22px] font-semibold tracking-[-.02em]">{titles[step]}</h2>
           <span className="n rounded-[8px] bg-panel2 px-2 py-1 text-[12.5px] text-muted-foreground">{step + 1} / 3</span>
           <button type="button" onClick={skip} aria-label="Close"
             className="ml-auto grid size-9 place-items-center rounded-full text-muted-foreground
@@ -121,8 +121,8 @@ export function Welcome() {
             <h3 className="mt-1.5 text-[26px] font-semibold leading-tight tracking-[-.02em]">
               Every market clears by auction.
             </h3>
-            <p className="mt-2.5 text-[15px] leading-[1.55] text-muted-foreground">
-              Anyone can open a market. unwind never holds your funds: every order is a
+            <p className="text-pretty mt-2.5 text-[15px] leading-[1.55] text-muted-foreground">
+              Anyone can list a market. unwind never holds your funds: every order is a
               transaction you sign, and every fill clears at one price for everyone in the batch.
             </p>
             <div className="mt-5 flex flex-col">
@@ -167,10 +167,10 @@ export function Welcome() {
             <div className="flex gap-3 rounded-[14px] bg-[#f5b8201a] px-4 py-3.5 text-[14px] leading-[1.5]">
               <TriangleAlert size={18} className="mt-0.5 flex-none text-[#d9a21b]" />
               <p>
-                <span className="font-medium">{devnet ? "Devnet." : "Read-only deploy."}</span>{" "}
+                <span className="font-medium">{devnet ? "Devnet." : "Read-only."}</span>{" "}
                 {devnet
                   ? "Everything here runs on test USDC from the faucet; nothing has value. The program is unaudited and parameters can change. Mainnet opens later, and what you do here counts toward it under rules set before then."
-                  : "Prices are live but there is no chain behind this deploy, so nothing can be traded."}
+                  : "Devnet is not connected. Prices are live; trading is paused."}
               </p>
             </div>
             <div className="mt-3 flex flex-col gap-2.5">
@@ -183,7 +183,7 @@ export function Welcome() {
             </div>
             <Checkbox checked={agreed} onCheckedChange={setAgreed} className="mt-4 items-start gap-3 [&_span]:text-[14px] [&_span]:leading-[1.5]"
               label="I have read the risk notes and the docs. I understand this is devnet, unaudited, and not investment advice." />
-            <p className="mt-3 text-[13px] leading-[1.5] text-muted-foreground">
+            <p className="text-pretty mt-3 text-[13px] leading-[1.5] text-muted-foreground">
               Your wallet will ask you to sign a message recording this. It is not a transaction and costs nothing.{" "}
               <a href={RISKS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
               {" · "}

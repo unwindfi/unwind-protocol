@@ -42,7 +42,7 @@ export function YourBacking({ backings, markets, onWithdraw, onAdd }: {
   return (
     <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel">
       <div className="flex flex-wrap items-end justify-between gap-4 px-5 pb-5 pt-7 sm:px-9">
-        <h2 className="text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
+        <h2 className="text-balance text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
           Your backing
           <span className="n ml-2 text-[14px] font-normal text-dim">{backings.length}</span>
         </h2>

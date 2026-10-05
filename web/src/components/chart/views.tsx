@@ -59,7 +59,7 @@ function DepthRow({ l, max, bid }: { l: Level; max: number; bid: boolean }) {
 export function DepthView({ m, batch, hasBackend }: {
   m: Market; batch: Batch | null | undefined; hasBackend: boolean | null;
 }) {
-  if (hasBackend === false) return <Note>No chain behind this deploy, so there is no batch to show.</Note>;
+  if (hasBackend === false) return <Note>Read-only. Devnet is not connected, so there is no batch to show.</Note>;
   if (!batch) return <Note>Reading the batch.</Note>;
   if (!batch.exists) return <Note>No batch is open for this market yet.</Note>;
 
@@ -145,7 +145,7 @@ export function FundingView({ m, samples }: { m: Market; samples: FundingSample[
           : <span className={tone(-short)}>{signed(short)}/h</span>}
       </Row>
       <Row k="Last accrual seen">{b ? hhmmss(b.t) : <span className="text-dim">Not yet</span>}</Row>
-      <p className="border-t border-line pt-3 text-[12px] leading-relaxed text-muted-foreground">
+      <p className="text-pretty border-t border-line pt-3 text-[12px] leading-relaxed text-muted-foreground">
         Funding accrues on every trade and on each keeper pass. The heavier side
         pays the lighter one, plus a borrow charge on both. History is not
         recorded yet.
@@ -206,16 +206,16 @@ function Band({ m }: { m: Market }) {
   return (
     <div className="mt-3 rounded-[10px] border border-line px-4 py-4">
       <div className="text-[14px] font-medium">What $100 of margin does here</div>
-      <p className="mt-1.5 text-[12.5px] leading-[1.55] text-muted-foreground">
+      <p className="text-pretty mt-1.5 text-[12.5px] leading-[1.55] text-muted-foreground">
         Opens up to {compact(100 * L)} of {m.symbol} at {lev}x. Above {initial.toFixed(1)}% margin you can add
         to it; between {initial.toFixed(1)}% and {mm.toFixed(1)}% you can hold or reduce but not add; under{" "}
         {mm.toFixed(1)}% it can be liquidated, which at {lev}x is a move of about {move.toFixed(1)}% against you.
         The liquidation fee comes out of what is left, never out of the pool.
       </p>
       <div className="mt-3 flex h-9 gap-1 text-[11.5px] font-medium">
-        <span className="flex flex-[3] items-center rounded-[7px] bg-up/15 px-3 text-up">Above {initial.toFixed(1)}% · open</span>
+        <span className="flex flex-[3] items-center rounded-[7px] bg-up/10 px-3 text-up">Above {initial.toFixed(1)}% · open</span>
         <span className="flex flex-[1.2] items-center rounded-[7px] bg-[#f5b8201f] px-3 text-[#d9a21b]">Hold only</span>
-        <span className="flex flex-[1.6] items-center rounded-[7px] bg-down/15 px-3 text-down">Under {mm.toFixed(1)}% · liquidatable</span>
+        <span className="flex flex-[1.6] items-center rounded-[7px] bg-down/10 px-3 text-down">Under {mm.toFixed(1)}% · liquidatable</span>
       </div>
     </div>
   );

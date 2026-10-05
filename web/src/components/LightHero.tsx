@@ -20,7 +20,7 @@ export function LightHero() {
       <img src="/waitlist/field.webp" alt="" fetchPriority="high"
         className="absolute inset-0 h-full w-full object-cover" />
       {/* The tagline column from the posters, quiet in the top corner. */}
-      <p aria-hidden className="absolute left-5 top-5 whitespace-pre font-mono text-[10px] uppercase
+      <p aria-hidden className="absolute left-5 top-5 whitespace-pre font-mono text-[10.5px] uppercase
                                 leading-[2] tracking-[.14em] text-white/55 sm:left-8 sm:top-7 sm:text-[11px]">
         {"Permissionless perps   ·   Solana\n".repeat(3).trim()}
       </p>

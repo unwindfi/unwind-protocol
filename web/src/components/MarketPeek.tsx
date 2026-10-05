@@ -89,7 +89,7 @@ function Card({ m, at }: { m: Market; at: { x: number; y: number } }) {
       style={{ left, top, width: W }}
       className={`pointer-events-none fixed z-[80] rounded-[22px] border border-line bg-panel p-5
                   shadow-[0_24px_60px_-20px_rgba(0,0,0,.35)] transition-[opacity,transform] duration-200
-                  ease-[cubic-bezier(0.23,1,0.32,1)] ${shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-1 scale-[.98] opacity-0"}`}>
+                  ease-out-strong ${shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-1 scale-[.98] opacity-0"}`}>
       <div className="flex items-center gap-3 border-b border-line pb-4">
         <TickerLogo m={m} size={36} />
         <span title={m.name} className="min-w-0 flex-1 truncate text-[15.5px] font-semibold">{m.name}</span>

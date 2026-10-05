@@ -21,8 +21,8 @@ const TrendBadge = ({
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2",
         isUp
-          ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/25"
-          : "bg-red-400/15 text-red-400 border-red-400/25",
+          ? "bg-up/10 text-up border-up/25"
+          : "bg-down/10 text-down border-down/25",
         className,
       )}
       {...props}

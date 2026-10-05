@@ -131,11 +131,11 @@ export default function PortfolioPage() {
 
             <div className="relative flex h-full flex-col justify-center px-5 py-9
                             sm:max-w-[min(460px,58%)] sm:px-9">
-              <h1 className="font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
+              <h1 className="text-balance font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
                              tracking-[-.025em]">
                 Portfolio
               </h1>
-              <p className="mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
+              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
                 Positions, orders, pool and backing for one wallet. Read from the chain.
               </p>
 
@@ -165,7 +165,7 @@ export default function PortfolioPage() {
                 )}
                 {api.readOnly && (
                   <p className="mt-4 text-[12.5px] text-muted-foreground">
-                    This deploy has no chain behind it, so there is nothing to read.
+                    Read-only. Devnet is not connected, so there is nothing to read.
                   </p>
                 )}
                 {note && <p className="mt-3 text-[12.5px] text-down">{note}</p>}
@@ -224,8 +224,8 @@ export default function PortfolioPage() {
           /* Four cards each saying "connect a wallet" said it four times.
              Once, with the two places to go. Connecting signs nothing. */
           <div className="mt-4 rounded-[24px] border border-line bg-panel px-6 py-14 text-center">
-            <h2 className="text-[20px] font-medium tracking-[-.01em]">Connect a wallet to see your portfolio</h2>
-            <p className="mx-auto mt-2 max-w-[46ch] text-[14px] leading-[1.55] text-muted-foreground">
+            <h2 className="text-balance text-[20px] font-medium tracking-[-.01em]">Connect a wallet to see your portfolio</h2>
+            <p className="text-pretty mx-auto mt-2 max-w-[46ch] text-[14px] leading-[1.55] text-muted-foreground">
               What you hold, what rests in a batch, what you back and how close a position is to
               liquidation, read from the chain. Connecting signs nothing and moves nothing.
             </p>
@@ -248,7 +248,7 @@ export default function PortfolioPage() {
 const Stat = ({ k, children }: { k: string; children: ReactNode }) => (
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
     <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
-    <span className="n truncate text-right text-[13.5px] font-semibold">{children}</span>
+    <span className="n text-right text-[13.5px] font-semibold">{children}</span>
   </div>
 );
 
@@ -256,7 +256,7 @@ function Card({ title, aside, children }: { title: string; aside?: ReactNode; ch
   return (
     <section className="mt-4 overflow-hidden rounded-[24px] border border-line bg-panel">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4 pt-6 sm:px-7">
-        <h2 className="text-[16px] font-medium">{title}</h2>
+        <h2 className="text-balance text-[16px] font-medium">{title}</h2>
         {aside}
       </div>
       {children}

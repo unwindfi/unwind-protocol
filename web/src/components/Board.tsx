@@ -22,7 +22,7 @@ function Card({ m }: { m: Market }) {
 
   return (
     <a href={href}
-      className="rise group block rounded-xl border border-line bg-panel p-3.5
+      className="group block rounded-xl border border-line bg-panel p-3.5
                  transition-colors hover:border-dim">
       <div className="flex items-start gap-2.5">
         <TickerLogo m={m} size={28} />

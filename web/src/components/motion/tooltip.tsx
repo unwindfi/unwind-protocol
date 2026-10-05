@@ -88,6 +88,8 @@ export function Tooltip({
     },
     [controlledOpen, onOpenChange],
   );
+  // Opened inside the warm window: show at once, with no entrance to sit through.
+  const [instant, setInstant] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const generatedId = useId();
   const id = providedId ?? generatedId;
@@ -138,6 +140,7 @@ export function Tooltip({
     timer.current = setTimeout(
       () => {
         place();
+        setInstant(warm);
         setOpen(true);
       },
       warm ? 0 : delay,
@@ -169,6 +172,7 @@ export function Tooltip({
     }
     if (timer.current) clearTimeout(timer.current);
     place();
+    setInstant(false);
     setOpen(true);
   }, [hide, place, tap, setOpen]);
 
@@ -258,6 +262,7 @@ export function Tooltip({
                     ref={surfaceRef}
                     id={id}
                     side={side}
+                    instant={instant}
                     style={{ transformOrigin: transformOrigin[side], maxWidth: "calc(100vw - 16px)", whiteSpace: "normal" }}
                     className={className}
                   >

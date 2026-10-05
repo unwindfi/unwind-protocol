@@ -168,7 +168,7 @@ export default function App() {
       const r = await signAndSend(wallet, path.replace(/^\//, ""), body, record);
       showToast(r.ok
         ? { title: ok, description: note, status: "success" }
-        : { title: "Not accepted", description: r.error ?? "Try again.", status: "error" });
+        : { title: "Not accepted", description: r.error ?? "Check your balance and try again.", status: "error" });
     } catch {
       showToast({ title: "Network error",
         description: "Unable to reach the server. Check your connection and try again.",
@@ -244,7 +244,7 @@ export default function App() {
         // telling someone they are long when they are queued is the kind of
         // small lie that costs trust the first time a batch does not cross.
         act("/order", { symbol: market.symbol, isLong, size, collateral },
-          `${isLong ? "Buy" : "Sell"} ${money(size, 0)} ${market.symbol} queued`,
+          `${isLong ? "Long" : "Short"} ${money(size, 0)} ${market.symbol} queued`,
           undefined,
           market.observed && !market.observed.seasoned
             ? "Clears in the opening auction."
@@ -284,7 +284,7 @@ export default function App() {
         {readOnly && <ReadOnlyNotice />}
         <MarketHeader m={market} onOpen={() => setPaletteOpen(true)} mobile batch={batch} />
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <main id="main" className="flex min-h-0 flex-1 flex-col">
           {view === "chart" && (
             <>
               {/* Timeframes on the left, the index they are drawn from on the
@@ -322,14 +322,14 @@ export default function App() {
           {view === "account" && (
             <div className="pane-scroll min-h-0 flex-1">{ticket}</div>
           )}
-        </div>
+        </main>
 
         <MobileBars view={view} onView={setView} m={market} positions={positionCount}
           showTrade={view !== "account" && !readOnly}
           onTrade={(s) => { setSide(s); setTicketOpen(true); }} />
 
         <Sheet open={ticketOpen} onOpenChange={setTicketOpen}
-          title={`${side === "long" ? "Buy / Long" : "Sell / Short"} ${market.symbol}`}>
+          title={`${side === "long" ? "Long" : "Short"} ${market.symbol}`}>
           {ticket}
         </Sheet>
 
@@ -385,7 +385,7 @@ export default function App() {
           {readOnly && <ReadOnlyNotice />}
         </div>
 
-        <main className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
+        <main id="main" className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
           {/* The list needs a column of its own. Under 1280px that column
               comes out of the chart, so the list waits for a wider window
               and the header's switcher and the palette do its job. */}
@@ -443,7 +443,7 @@ export default function App() {
         {header}
         {readOnly && <ReadOnlyNotice />}
       </div>
-      <main className="flex flex-1 flex-col gap-px border-y border-line bg-line">
+      <main id="main" className="flex flex-1 flex-col gap-px border-y border-line bg-line">
         <div className="overflow-hidden bg-panel">
           <MarketHeader m={market} onOpen={() => setPaletteOpen(true)} batch={batch} />
         </div>
@@ -483,7 +483,7 @@ function TradeSkeleton({ wide }: { wide: boolean }) {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background" aria-busy="true">
       <SiteHeader here="/trade" actions={<WalletActions />} />
-      <main className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
+      <main id="main" className="flex min-h-0 flex-1 gap-px border-t border-line bg-line">
         <div className={`${pane} hidden w-[248px] flex-none flex-col gap-3 p-4 lg:flex 2xl:w-[272px]`}>
           {bar("w-full")}{bar("w-2/3")}{bar("w-5/6")}{bar("w-3/4")}
         </div>

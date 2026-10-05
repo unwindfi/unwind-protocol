@@ -82,7 +82,8 @@
   /* Formulas and figures that have to line up read as code, not as prose. */
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
 
-  /* The built-in CSS easings are too weak to read as intentional. */
+  /* The built-in CSS easings are too weak to read as intentional. The same
+     curve is EASE_OUT in lib/ease.ts for motion; change both together. */
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
 }
@@ -131,7 +132,8 @@
  * It is a restatement, not an inversion. A photographic negative of a
  * trading screen gives you mid-grey panels and a green that vanishes on
  * white: the surfaces here climb from page to panel the way the dark ones
- * descend, and up/down are darkened until they clear 4.5:1 on white, because
+ * descend, and up/down are darkened until they clear 4.5:1 on their own 10%
+ * tint over any panel (and so on white), because
  * a price that cannot be read is worse than a price that is not pretty.
  *
  * `data-theme` is written by the boot script in index.html before first
@@ -159,7 +161,7 @@
   --muted-foreground: #52525b;
   --accent: #f1f1f3;
   --accent-foreground: #0b0b0f;
-  --destructive: #d12f2f;
+  --destructive: #c02828;
   --border: #e3e3e8;
   --input: #dcdce2;
   --ring: #0b0b0f;
@@ -170,8 +172,8 @@
   --color-line: #e3e3e8;
   --color-linesoft: #eeeef1;
   --color-dim: #71717a;
-  --color-up: #047a3a;
-  --color-down: #cd2e2e;
+  --color-up: #036b33;
+  --color-down: #c02828;
   --color-brand: #0b0b0f;
 
   /* The road inverts with the page: dark tarmac under a pale sky. */
@@ -257,12 +259,12 @@
    * has nothing to wait for, and a delay is the cheapest possible sequencer.
    */
   @keyframes rise {
-    from { opacity: 0; transform: translateY(14px); }
+    from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: none; }
   }
   .rise {
     opacity: 0;
-    animation: rise 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: rise 0.3s var(--ease-out-strong) forwards;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -444,3 +446,12 @@
 }
 .press:active { transform: scale(0.96); }
 .press:disabled:active { transform: none; }
+
+/*
+ * Loops that never stop are the motion a reduced-motion user most wants gone.
+ * Unlayered for the same reason as `.press`: the utilities layer would
+ * otherwise win.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse, .animate-spin, .animate-ping, .animate-bounce { animation: none; }
+}

@@ -31,7 +31,7 @@ export function FundPrompt({ onFunded }: { onFunded?: () => void }) {
       const r = await post("/faucet", { owner }) as { ok: boolean; error?: string; usdc?: number; sol?: number };
       setNote(r.ok
         ? `Sent ${(r.usdc ?? 0).toLocaleString()} test USDC` + (r.sol ? ` and ${r.sol} SOL` : "") + "."
-        : r.error ?? "The faucet failed.");
+        : r.error ?? "The faucet failed. Try again in a minute.");
       setTick((t) => t + 1);
       if (r.ok) onFunded?.();
     } finally {
@@ -48,7 +48,7 @@ export function FundPrompt({ onFunded }: { onFunded?: () => void }) {
       {short && (
         <button type="button" onClick={claim} disabled={busy}
           className="press h-9 rounded-full bg-foreground px-4 text-[13px] font-medium text-background
-                     transition-opacity hover:opacity-90 disabled:opacity-40">
+                     transition-opacity hover:opacity-90 disabled:opacity-35">
           Get test funds
         </button>
       )}

@@ -157,7 +157,7 @@ const Stat = ({ k, children, tone = "", hint }: {
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-3"
     title={hint}>
     <span className="flex-none text-[12.5px] text-muted-foreground">{k}</span>
-    <span className={`n truncate text-right text-[12.5px] font-semibold ${tone}`}>{children}</span>
+    <span className={`n text-right text-[12.5px] font-semibold ${tone}`}>{children}</span>
   </div>
 );
 
@@ -394,7 +394,7 @@ export default function List() {
         pool: preview.address, maxLeverage: limits.leverage, maxOiUsd: limits.oiUsd,
         backing: seedAmount, payWith,
       });
-      if (!r.ok) { setError(r.error ?? "Transaction failed."); return; }
+      if (!r.ok) { setError(r.error ?? "Transaction failed. Check your balance and try again."); return; }
       setDone(preview.opensAtListing
         ? `${name} is live, backed with ${payLabel(seedAmount)}.`
         : `${name} is listed, backed with ${payLabel(seedAmount)}. `
@@ -414,7 +414,7 @@ export default function List() {
         setDone(`${m.symbol} is backed with ${payLabel(amount)}.`);
         setBacking((b) => ({ ...b, [m.symbol]: "" }));
       } else {
-        setError(r.error ?? "Transaction failed.");
+        setError(r.error ?? "Transaction failed. Check your balance and try again.");
       }
     } finally { setBusy(false); }
   };
@@ -436,7 +436,7 @@ export default function List() {
   const cta = (() => {
     if (offChain) return { label: "Pool not on this chain", onClick: undefined, disabled: true };
     if (signable === false) {
-      return { label: "Opens at devnet launch", onClick: undefined, disabled: true };
+      return { label: "Read-only", onClick: undefined, disabled: true };
     }
     if (!wallet.publicKey) return { label: "Connect wallet", onClick: () => setVisible(true), disabled: false };
     return {
@@ -469,14 +469,14 @@ export default function List() {
         className="pointer-events-none absolute inset-x-0 top-[76px] hidden h-[420px] w-full
                    object-cover opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent)]
                    dark:block" />
-      <Shell main className="relative pb-28 pt-4 sm:pt-8 lg:pb-14">
+      <Shell main className="relative pb-14 pt-4 sm:pt-8">
         <FundPrompt />
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
                         lg:grid-cols-[minmax(0,1fr)_440px]">
           {/* ------------------------------------------------------ form */}
           <div className="min-w-0 px-5 py-7 sm:px-9 sm:py-9">
             <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
-              <h1 className="font-serif-display text-[clamp(2rem,3.4vw,2.6rem)] leading-none
+              <h1 className="text-balance font-serif-display text-[clamp(2rem,3.4vw,2.6rem)] leading-none
                              tracking-[-.02em]">
                 {tab === "list" ? "List a market" : "Back a market"}
               </h1>
@@ -585,7 +585,7 @@ export default function List() {
                                   <span title={t.symbol} className="truncate">{t.symbol}</span>
                                   {t.verified && <BadgeCheck size={14} className="flex-none text-brand" />}
                                 </span>
-                                <span className="block truncate text-[11.5px] text-muted-foreground">
+                                <span title={t.mint} className="block truncate text-[11.5px] text-muted-foreground">
                                   {t.name} · {short(t.mint)}
                                 </span>
                               </span>
@@ -612,7 +612,7 @@ export default function List() {
                         {" · "}
                         <a href={`https://solscan.io/token/${token.mint}${onDevnet ? "?cluster=devnet" : ""}`}
                           target="_blank" rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 hover:text-foreground">
+                          title={token.mint} className="inline-flex items-center gap-0.5 hover:text-foreground">
                           {short(token.mint)} <ArrowUpRight size={11} strokeWidth={1.75} />
                         </a>
                       </>
@@ -670,7 +670,7 @@ export default function List() {
                                 {DEX_NAME[p.dex]}
                                 {i === 0 && pools.length > 1 && (
                                   <span className={`rounded-full px-1.5 py-px text-[12px] font-medium ${on
-                                    ? "bg-background/15" : "bg-up/15 text-up"}`}>Deepest</span>
+                                    ? "bg-background/15" : "bg-panel3 text-foreground"}`}>Deepest</span>
                                 )}
                               </span>
                               <span className={`block truncate text-[11.5px] ${on
@@ -729,7 +729,7 @@ export default function List() {
                       </button>
                     ))}
                   </div>
-                  <p className={`mt-2.5 text-[12px] leading-relaxed ${
+                  <p className={`text-pretty mt-2.5 text-[12px] leading-relaxed ${
                     underMin && seed.trim() !== "" ? "text-down" : "text-muted-foreground"}`}>
                     {underMin && seed.trim() !== ""
                       ? `At least ${money(MIN_LISTING_BACKING_USD, 0)} to list${
@@ -786,21 +786,21 @@ export default function List() {
                     {busy && <Loader2 size={15} className="animate-spin" />}
                     {cta.label}
                   </button>
-                  <p className="mt-3 text-[12px] leading-relaxed text-dim">
+                  <p className="text-pretty mt-3 text-[12px] leading-relaxed text-dim">
                     {offChain
                       ? "Read from mainnet. This pool isn't on this chain."
                       : signable === false
-                      ? "Live from mainnet. Listing opens with devnet."
+                      ? "Read-only. Devnet is not connected, so listing is paused."
                       : "One signature. Listing and backing land together. You pay the rent."}
                   </p>
-                  {done && <p className="mt-3 text-[12.5px] leading-relaxed text-up">{done}</p>}
-                  {error && <p className="mt-3 text-[12.5px] leading-relaxed text-down">{error}</p>}
+                  {done && <p className="text-pretty mt-3 text-[12.5px] leading-relaxed text-up">{done}</p>}
+                  {error && <p className="text-pretty mt-3 text-[12.5px] leading-relaxed text-down">{error}</p>}
                 </div>
               </div>
             ) : (
               /* ---------------------------------------------------- back */
               <div className="flex flex-col gap-3">
-                <p className="text-[13px] leading-relaxed text-muted-foreground">
+                <p className="text-pretty text-[13px] leading-relaxed text-muted-foreground">
                   Anyone can back these. First loss, {backerShare}% of LP fees.
                 </p>
                 <div role="radiogroup" aria-label="Pay with" className="flex flex-wrap gap-2">
@@ -867,8 +867,8 @@ export default function List() {
                     Connect wallet
                   </button>
                 )}
-                {done && <p className="text-[12.5px] leading-relaxed text-up">{done}</p>}
-                {error && <p className="text-[12.5px] leading-relaxed text-down">{error}</p>}
+                {done && <p className="text-pretty text-[12.5px] leading-relaxed text-up">{done}</p>}
+                {error && <p className="text-pretty text-[12.5px] leading-relaxed text-down">{error}</p>}
               </div>
             )}
           </div>
@@ -878,7 +878,7 @@ export default function List() {
                             sm:px-9 sm:py-9 lg:border-l lg:border-t-0">
             <div className="lg:sticky lg:top-24 lg:flex lg:flex-col lg:gap-5">
               <div className="flex items-start gap-3 rounded-[16px] border border-line bg-panel
-                              px-4 py-3.5 shadow-[0_8px_24px_-12px_rgba(0,0,0,.5)]">
+                              px-4 py-3.5">
                 {token
                   ? <TokenIcon src={preview?.icon ?? token.icon} label={token.symbol} size={36} />
                   : <span className="grid size-9 flex-none place-items-center rounded-full bg-panel3">
@@ -958,7 +958,7 @@ export default function List() {
                 </div>
               </div>
 
-              <p className="mt-5 text-[12px] leading-relaxed text-dim lg:mt-0">
+              <p className="text-pretty mt-5 text-[12px] leading-relaxed text-dim lg:mt-0">
                 The program enforces every figure here. Listing gives you no control over
                 the market.
               </p>
@@ -982,13 +982,16 @@ export default function List() {
             <button type="button" onClick={cta.onClick} disabled={cta.disabled}
               className="press h-[44px] flex-none rounded-full bg-foreground px-5 text-[13.5px]
                          font-medium text-background disabled:opacity-35">
-              {offChain ? "Not on this chain" : signable === false ? "Devnet soon" : cta.label}
+              {offChain ? "Not on this chain" : signable === false ? "Read-only" : cta.label}
             </button>
           </div>
         </div>
       )}
 
       <SiteFooter />
+      {/* Room under the footer for the phone's action bar, so its last line
+          can scroll clear of it. */}
+      {tab === "list" && <div aria-hidden className="h-[calc(80px+env(safe-area-inset-bottom))] lg:hidden" />}
     </div>
   );
 }

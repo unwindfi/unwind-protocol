@@ -43,14 +43,14 @@ export function MobileBars({
         <button onClick={() => onTrade("long")}
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
                      rounded-full bg-foreground text-background transition-opacity hover:opacity-90">
-          <span className="text-[14px] font-medium leading-none">Buy / Long</span>
+          <span className="text-[14px] font-medium leading-none">Long</span>
           <span className="n text-[11px] leading-none opacity-60">{pnum(m.ask)}</span>
         </button>
         <button onClick={() => onTrade("short")}
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
                      rounded-full border border-line text-foreground transition-colors
                      hover:border-foreground/40">
-          <span className="text-[14px] font-medium leading-none">Sell / Short</span>
+          <span className="text-[14px] font-medium leading-none">Short</span>
           <span className="n text-[11px] leading-none text-muted-foreground">{pnum(m.bid)}</span>
         </button>
       </div>

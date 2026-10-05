@@ -35,16 +35,19 @@ export function WalletActions() {
       <button onClick={() => setVisible(true)} disabled={connecting}
         className="press flex h-11 flex-none items-center gap-2.5 whitespace-nowrap rounded-[14px]
                    bg-panel3 px-4 text-[15px] text-foreground
-                   hover:bg-line disabled:opacity-50">
+                   hover:bg-line disabled:opacity-35">
         <NavIcon name="wallet" size={18} />
-        {connecting ? "Connecting…" : "Wallet"}
+        {/* Spelled out where the header has room; a phone header fits one word. */}
+        {connecting ? "Connecting…" : (
+          <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect wallet</span></>
+        )}
       </button>
     </>
   );
 }
 
 /*
- * Connected: the same grey tile the Wallet button is, with the address in the
+ * Connected: the same grey tile the connect button is, with the address in the
  * page's own type and a chevron. Copy, Solscan and Disconnect live in a short
  * menu under it rather than as three icons crammed inside the tile.
  */

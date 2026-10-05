@@ -1,7 +1,7 @@
 "use client";
 // beui.dev/components/blocks/command-palette
 
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { Search, type LucideIcon } from "lucide-react";
 import {
   type ReactNode,
@@ -42,14 +42,9 @@ export interface CommandPaletteProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// Opened via a keyboard shortcut many times a day — entrance must read as
-// instant. Tight spring, even faster exit.
-const PANEL_SPRING = {
-  type: "spring",
-  stiffness: 560,
-  damping: 40,
-  mass: 0.5,
-} as const;
+// Opened via a keyboard shortcut many times a day, so the entrance has to read
+// as instant: a short fade, nothing that moves.
+const PANEL_FADE = { duration: 0.12, ease: EASE_OUT } as const;
 
 export function CommandPalette({
   items,
@@ -75,7 +70,6 @@ export function CommandPalette({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const uid = useId();
-  const reduce = useReducedMotion();
   const canTouch = useTouchCapable();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -199,10 +193,12 @@ export function CommandPalette({
                 opacity: 0,
                 transition: { duration: 0.12, ease: EASE_OUT },
               }}
-              transition={{ duration: 0.18, ease: EASE_OUT }}
+              transition={PANEL_FADE}
               {...gate}
               onClick={() => setOpen(false)}
-              className="pointer-events-auto fixed inset-0 z-[100] bg-background/5 [backdrop-filter:blur(12px)_saturate(140%)] [-webkit-backdrop-filter:blur(12px)_saturate(140%)]"
+              // A flat scrim: a backdrop blur over the live chart re-rasterises
+              // the whole viewport on every tick behind it.
+              className="pointer-events-auto fixed inset-0 z-[100] bg-background/60"
             />
           )}
         </PresenceGate>
@@ -221,22 +217,13 @@ export function CommandPalette({
                 role="dialog"
                 aria-modal="true"
                 aria-label="Command palette"
-                initial={{
-                  opacity: 0,
-                  y: reduce ? 0 : -8,
-                  scale: reduce ? 1 : 0.97,
-                }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{
-                  opacity: 0,
-                  y: reduce ? 0 : -8,
-                  scale: reduce ? 1 : 0.97,
-                  transition: { duration: 0.12, ease: EASE_OUT },
-                }}
-                transition={reduce ? { duration: 0.1 } : PANEL_SPRING}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0, transition: { duration: 0.1, ease: EASE_OUT } }}
+                transition={PANEL_FADE}
                 {...gate}
                 onKeyDown={onKeyDown}
-                className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl will-change-transform"
+                className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
               >
                 <div className="flex items-center gap-3 border-b border-border px-4">
                   <Search className="h-4 w-4 text-muted-foreground" />
@@ -245,6 +232,7 @@ export function CommandPalette({
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={placeholder}
+                    aria-label={placeholder}
                     role="combobox"
                     // The field only exists while the palette is open.
                     aria-expanded="true"
@@ -263,7 +251,7 @@ export function CommandPalette({
                       canTouch && "text-base",
                     )}
                   />
-                  <kbd className="hidden rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline-block">
+                  <kbd className="hidden rounded border border-border bg-background px-1.5 py-0.5 text-[10.5px] text-muted-foreground sm:inline-block">
                     ESC
                   </kbd>
                 </div>
@@ -283,7 +271,7 @@ export function CommandPalette({
                       <div key={group} className="mb-1 last:mb-0">
                         <div
                           aria-hidden
-                          className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                          className="px-2 py-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground"
                         >
                           {group}
                         </div>
@@ -307,28 +295,13 @@ export function CommandPalette({
                               }}
                               className={cn(
                                 "relative isolate flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                                // A static highlight: a sliding one springs on
+                                // every arrow key and trails fast navigation.
                                 isActive
-                                  ? "text-foreground"
+                                  ? "bg-primary/[0.05] text-foreground"
                                   : "text-muted-foreground",
                               )}
                             >
-                              {isActive ? (
-                                <motion.span
-                                  layoutId={`${uid}-active`}
-                                  className="absolute inset-0 z-0 rounded-md bg-primary/[0.05]"
-                                  transition={
-                                    reduce
-                                      ? { duration: 0 }
-                                      : // Tracks rapid arrow-key navigation — keep it tighter
-                                        // than SPRING_LAYOUT so it never lags the active row.
-                                        {
-                                          type: "spring",
-                                          stiffness: 480,
-                                          damping: 38,
-                                        }
-                                  }
-                                />
-                              ) : null}
                               {Icon ? (
                                 <Icon className="relative z-10 h-4 w-4" />
                               ) : hasIcons ? (
@@ -343,7 +316,7 @@ export function CommandPalette({
                                 </span>
                               ) : null}
                               {it.hint ? (
-                                <kbd className="relative z-10 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                <kbd className="relative z-10 rounded border border-border bg-background px-1.5 py-0.5 text-[10.5px] text-muted-foreground">
                                   {it.hint}
                                 </kbd>
                               ) : null}

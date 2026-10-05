@@ -21,7 +21,7 @@ import { Track } from "@/components/Track";
 import { TickerLogo } from "@/components/TickerLogo";
 import { MarketPeek } from "@/components/MarketPeek";
 import { NavIcon } from "@/components/NavIcon";
-import { getMarkets, usePoll, type Market } from "@/lib/api";
+import { getMarkets, usePollState, type Market } from "@/lib/api";
 import { compact, pct, price, tone } from "@/lib/format";
 
 const NONE: Market[] = [];
@@ -179,12 +179,12 @@ function SourceMenu({ value, onChange }: { value: SourceKey; onChange: (v: Sourc
       </button>
       {/* The choices slide out to the side: a grid column going from 0fr
           to 1fr, so nothing below moves. */}
-      <div className="grid transition-[grid-template-columns] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+      <div className="grid transition-[grid-template-columns] duration-300 ease-out-strong"
         style={{ gridTemplateColumns: open ? "1fr" : "0fr" }}>
-        <div className="overflow-hidden">
+        <div className="overflow-hidden" inert={!open}>
           <div className={`flex w-max items-center gap-1.5 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}>
             {(Object.keys(SOURCE_LABEL) as SourceKey[]).filter((k) => k !== value).map((k) => (
-              <button key={k} type="button" tabIndex={open ? 0 : -1}
+              <button key={k} type="button"
                 aria-label={`Show ${SOURCE_LABEL[k].toLowerCase()}`}
                 onClick={() => { onChange(k); setOpen(false); }}
                 className="press h-11 whitespace-nowrap rounded-full bg-panel2 px-5 text-[15px] text-muted-foreground
@@ -263,7 +263,8 @@ function useWatchlist() {
 }
 
 export default function Markets() {
-  const markets = usePoll(getMarkets, 4000) ?? NONE;
+  const poll = usePollState(getMarkets, 4000);
+  const markets = poll.data ?? NONE;
   const { saved, toggle } = useWatchlist();
   const [group, setGroup] = useState("all");
   const [query, setQuery] = useState("");
@@ -329,7 +330,7 @@ export default function Markets() {
        * scenery, and is marked as such.
        */}
       {/* The hero and the table are the page's content, past the header. */}
-      <main>
+      <main id="main">
       <div className="relative overflow-hidden border-b border-line">
 
         {/* The front page's violet light (waitlist/field.webp) behind the search,
@@ -342,7 +343,7 @@ export default function Markets() {
               field below, and the link beside the table under it. The second
               sentence is the whole claim -- the listing is not ours to grant
               -- put as something you can go and do rather than argued. */}
-          <h1 className="font-serif-display mx-auto max-w-[13ch] text-[clamp(2.6rem,10vw,3.4rem)]
+          <h1 className="text-balance font-serif-display mx-auto max-w-[13ch] text-[clamp(2.6rem,10vw,3.4rem)]
                          leading-[1] tracking-[-.025em] md:text-[80px]">
             Find a market. Or open one.
           </h1>
@@ -365,9 +366,9 @@ export default function Markets() {
                 <Find />
               </span>
               <input value={query} onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search markets" aria-label="Search markets"
+                placeholder="Search ticker or name" aria-label="Search markets"
                 className="relative z-10 h-[56px] w-full rounded-full border border-line
-                           bg-panel pl-[46px] pr-5 text-[15px] transition-colors dark:bg-[#121028]
+                           bg-panel pl-[46px] pr-5 text-[15px] transition-colors
                            placeholder:text-muted-foreground focus:border-foreground/40
                            sm:h-[62px] sm:pl-[52px] sm:pr-6" />
             </div>
@@ -397,7 +398,7 @@ export default function Markets() {
          * brand's Blender scene, brand/x/3d/coins.py). Then one row: where
          * prices come from on the left, Filters on the right.
          */}
-        <div className="strip-scroll -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1 sm:mx-0 sm:px-0">
+        <div className="strip-scroll -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1 max-sm:pr-10 max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-40px),transparent)] sm:mx-0 sm:px-0">
           {/* Six: "Opened" is the Pool source below, so it is not a card too.
               An empty group drops out only once the list has arrived: before
               that every count is zero, and the two cards left stretched
@@ -414,7 +415,7 @@ export default function Markets() {
                 <img src={`/groups/${g.key}.webp`} alt="" aria-hidden
                   width={118} height={118} draggable={false}
                   className="pointer-events-none absolute -right-5 -top-6 h-[118px] w-[118px] select-none
-                             transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]
+                             transition-transform duration-300 ease-out-strong
                              group-hover/card:-translate-y-0.5 group-hover/card:rotate-[-4deg]" />
                 <span className={`absolute bottom-4 left-4 text-[16px] leading-none ${on ? "font-medium text-foreground" : "text-muted-foreground"}`}>
                   {g.key === "all" ? "All markets" : g.label}
@@ -439,9 +440,9 @@ export default function Markets() {
 
         <div id="market-filters"
           className="grid transition-[grid-template-rows] duration-300
-                     ease-[cubic-bezier(0.16,1,0.3,1)]"
+                     ease-out-strong"
           style={{ gridTemplateRows: filtersOpen ? "1fr" : "0fr" }}>
-          <div className="overflow-hidden">
+          <div className="overflow-hidden" inert={!filtersOpen}>
             <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-4 rounded-[20px] border
                             border-line px-5 py-4">
               <div className="flex min-w-0 flex-wrap items-center gap-4">
@@ -479,11 +480,12 @@ export default function Markets() {
          * between them. Everything past the first two numbers is dropped on a
          * phone rather than crushed: five figures at 375 is a wall.
          */}
-        <div className="mt-4 overflow-hidden rounded-[20px] border border-line bg-panel [&>div:last-child>a]:border-0">
+        <div aria-busy={!poll.data && !poll.error}
+          className="mt-4 overflow-hidden rounded-[20px] border border-line bg-panel [&>div:last-child>div]:border-0">
           <div className={`grid ${GRID} items-center gap-2 border-b border-line bg-panel2
                            px-3 py-4 text-[14px] text-muted-foreground sm:gap-3 sm:px-5`}>
             <span>Market</span>
-            <span className="w-[17px]" />
+            <span className="w-5" />
             {COLUMNS.map((c) => (
               <button key={c.key} type="button" onClick={() => hit(c.key)}
                 aria-sort={sort === c.key ? (desc ? "descending" : "ascending") : "none"}
@@ -515,13 +517,29 @@ export default function Markets() {
             </div>
           )}
 
-          {(markets.length ? rows : (Array.from({ length: 10 }) as (Market | undefined)[]))
+          {/* Polling swallows a failed read, so without this a dead API left
+              the skeleton up forever. */}
+          {!poll.data && poll.error && (
+            <div role="alert" className="flex items-center justify-between gap-4 px-3 py-5 text-[14px] sm:px-5">
+              <span className="text-muted-foreground">Couldn't load markets</span>
+              <button type="button" onClick={poll.retry}
+                className="press text-muted-foreground hover:text-foreground">
+                Retry
+              </button>
+            </div>
+          )}
+
+          {(markets.length ? rows
+            : poll.error ? [] : (Array.from({ length: 10 }) as (Market | undefined)[]))
             .map((m, i) => m ? (
               <MarketPeek key={m.symbol} m={m}>
-              <a href={`/trade?symbol=${m.symbol}`}
-                className={`group grid ${GRID} items-center gap-2 border-b border-line px-3
+              {/* The row is one link by way of the name's ::after, which
+                  covers it, so the star can sit beside the link rather than
+                  inside it. */}
+              <div className={`group relative grid ${GRID} items-center gap-2 border-b border-line px-3
                             py-3.5 last:border-0 hover:bg-panel2/60 sm:gap-3 sm:px-5`}>
-                <span className="flex min-w-0 items-center gap-3">
+                <a href={`/trade?symbol=${m.symbol}`}
+                  className="flex min-w-0 items-center gap-3 after:absolute after:inset-0">
                   <TickerLogo m={m} size={36} />
                   <span className="min-w-0">
                     <span title={m.name} className="block truncate text-[15.5px] font-medium">{m.name}</span>
@@ -530,16 +548,13 @@ export default function Markets() {
                       <span className="hidden sm:inline">{m.observed ? " · opened by anyone" : " · Pyth"}</span>
                     </span>
                   </span>
-                </span>
-                {/*
-                 * Inside the row's link, so it has to stop the press from
-                 * following it -- starring a market is the one thing here that
-                 * is not a request to go and look at it.
-                 */}
+                </a>
+                {/* Above the link's cover, so a press stars the market rather
+                    than opening it. */}
                 <button type="button" aria-pressed={saved.includes(m.symbol)}
                   aria-label={`${saved.includes(m.symbol) ? "Unstar" : "Star"} ${m.symbol}`}
-                  onClick={(e) => { e.preventDefault(); toggle(m.symbol); }}
-                  className={`press -my-3 grid place-items-center py-3
+                  onClick={() => toggle(m.symbol)}
+                  className={`press relative z-10 -mx-1.5 -my-2 grid size-8 place-items-center
                     transition-colors ${saved.includes(m.symbol)
                     ? "text-brand" : "text-dim hover:text-foreground"}`}>
                   <Star on={saved.includes(m.symbol)} />
@@ -564,7 +579,7 @@ export default function Markets() {
                     {compact(roomOf(m))}
                   </span>
                 </span>
-              </a>
+              </div>
               </MarketPeek>
             ) : (
               <div key={i} className="h-[69px] border-b border-line last:border-0" />

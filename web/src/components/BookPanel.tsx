@@ -42,7 +42,7 @@ const Order = ({ price, size, bid, isMaker, widest }: {
     />
     <span className={`relative n ${bid ? "text-up" : "text-down"}`}>
       {pnum(price)}
-      {isMaker && <span className="ml-1 text-[9.5px] text-dim" title="Maker">M</span>}
+      {isMaker && <span className="ml-1 text-[10.5px] text-dim" title="Maker">M</span>}
     </span>
     <span className="relative n text-right">{compact(size)}</span>
   </div>
@@ -75,8 +75,8 @@ function OpeningClock({ opening, indicative }: {
       {/* Fills rather than drains: what is running here is the mark being
           earned, reading by reading, not a window closing on anyone. */}
       <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-panel3">
-        <i className="block h-full bg-foreground"
-          style={{ width: `${frac * 100}%`, transition: "width 700ms var(--ease-out-strong)" }} />
+        <i className="block h-full w-full origin-left bg-foreground"
+          style={{ transform: `scaleX(${frac})`, transition: "transform 700ms var(--ease-out-strong)" }} />
       </div>
       <div className="mt-1.5 flex justify-between text-[10.5px] text-dim">
         <span className="n">{compact(indicative.bidUsd)} bid · {compact(indicative.askUsd)} ask</span>
@@ -132,7 +132,7 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
     // come back yet (devnet's RPC rate-limits at busy times), not a missing chain.
     return (
       <div className="px-5 py-8 text-center text-[12.5px] leading-relaxed text-dim">
-        {backend === false ? "No chain connected." : backend === null ? "Loading the batch." : (
+        {backend === false ? "Read-only. Devnet is not connected." : backend === null ? "Loading the batch." : (
           <>Reading this batch from devnet.<br />The page keeps trying; it fills in when the read lands.</>
         )}
       </div>
@@ -326,7 +326,7 @@ export function BookPanel({
             {m.observed && !m.observed.tradeable ? (
               <div className="pb-3">
                 <Ripeness o={m.observed} />
-                <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
+                <p className="text-pretty mt-3 text-[12px] leading-relaxed text-muted-foreground">
                   {statusOf(m).detail}. {m.observed.budgetUsd > 0
                     ? "Orders clear together at open, at one price."
                     : "Opens after 15 minutes of readings and once it is backed."}

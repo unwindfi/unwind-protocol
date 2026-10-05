@@ -2,7 +2,7 @@ import { Wordmark } from "@/components/Wordmark";
 import { GlassMark } from "@/components/GlassMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletActions } from "@/components/WalletActions";
-import { PageMenu } from "@/site/Chrome";
+import { PageMenu, SkipLink } from "@/site/Chrome";
 
 export function Nav() {
   // Where a section has a real page, the nav item goes there; one without
@@ -19,6 +19,7 @@ export function Nav() {
     // home screen and runs without browser chrome.
     <nav className="relative flex h-[46px] flex-none items-center gap-1 border-b border-line
                     bg-panel px-3 safe-t md:h-[42px]">
+      <SkipLink />
       <a href="/" className="flex items-center gap-2 md:mr-5" aria-label="unwind home">
         <GlassMark className="h-[25px] w-[25px]" />
         <Wordmark height={17} />
@@ -30,7 +31,7 @@ export function Nav() {
         const cls = `hidden rounded-md px-3 py-[7px] text-[12.5px] font-medium transition-colors
           md:block ${i === 0 ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`;
         return l.href
-          ? <a key={l.label} href={l.href} className={cls}
+          ? <a key={l.label} href={l.href} className={cls} aria-current={i === 0 ? "page" : undefined}
               {...(l.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}>{l.label}</a>
           : <button key={l.label} className={cls}>{l.label}</button>;
       })}

@@ -412,7 +412,7 @@ export const getCandles = async (symbol: string, tf: number) => {
 
 export async function post(path: string, body: unknown) {
   if (!(await hasBackend())) {
-    return { ok: false, error: "Read-only: no chain is connected to this site." };
+    return { ok: false, error: "Read-only. Devnet is not connected." };
   }
   const r = await fetch(apiUrl("/api" + path), {
     method: "POST",
@@ -429,6 +429,15 @@ export async function post(path: string, body: unknown) {
 /// UI to empty for one tick is worse than showing a value a second old.
 export function usePoll<T>(
   fn: () => Promise<T>, ms: number, deps: unknown[] = [],
+  seed?: () => T | null, refresh?: unknown,
+) {
+  return usePollState(fn, ms, deps, seed, refresh).data;
+}
+
+/// `usePoll`, plus whether the last read failed and a way to read again at
+/// once, for a page that would otherwise wait on a skeleton forever.
+export function usePollState<T>(
+  fn: () => Promise<T>, ms: number, deps: unknown[] = [],
   /// What to show before the first answer, usually `peek` of the same read.
   seed?: () => T | null,
   /// Bumped after a transaction to read again at once. Unlike `deps`, it
@@ -437,6 +446,8 @@ export function usePoll<T>(
   refresh?: unknown,
 ) {
   const [data, setData] = useState<T | null>(() => seed?.() ?? null);
+  const [error, setError] = useState(false);
+  const [again, setAgain] = useState(0);
   const first = useRef(true);
   const lastDeps = useRef(deps);
   useEffect(() => {
@@ -456,15 +467,15 @@ export function usePoll<T>(
     const run = async () => {
       try {
         const v = await fn();
-        if (alive) setData(v);
-      } catch { /* keep the previous value */ }
+        if (alive) { setData(v); setError(false); }
+      } catch { if (alive) setError(true); /* and keep the previous value */ }
       if (alive) timer = window.setTimeout(run, ms);
     };
     run();
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, refresh]);
-  return data;
+  }, [...deps, refresh, again]);
+  return { data, error, retry: () => setAgain((n) => n + 1) };
 }
 
 /// One wallet's fills, newest first. Only what the server has settled since

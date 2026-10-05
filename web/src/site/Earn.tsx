@@ -28,7 +28,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 import "@/site/serif.css";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
@@ -39,6 +39,7 @@ import { TickerLogo } from "@/components/TickerLogo";
 import { WalletActions } from "@/components/WalletActions";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
+import { EASE_OUT } from "@/lib/ease";
 import * as api from "@/lib/api";
 import {
   getAccount, getApy, getBackings, getMarkets, peek, usePoll,
@@ -63,7 +64,7 @@ export function Tile({ k, v, sub, tone = "" }: { k: string; v: ReactNode; sub?: 
   return (
     <div className="min-w-0 rounded-[16px] border border-line bg-panel px-3.5 py-3.5 sm:rounded-[20px] sm:px-6 sm:py-5">
       <div className="truncate text-[12px] text-muted-foreground sm:text-[13px]">{k}</div>
-      <div className={`n mt-2 truncate text-[18px] font-semibold leading-none tracking-[-.02em] sm:mt-2.5 sm:text-[28px] ${tone}`}>{v}</div>
+      <div className={`n mt-2 text-[18px] font-semibold leading-none tracking-[-.02em] sm:mt-2.5 sm:text-[28px] ${tone}`}>{v}</div>
       <div className="n mt-2 hidden min-h-[16px] truncate text-[12.5px] text-muted-foreground sm:block">{sub}</div>
     </div>
   );
@@ -80,7 +81,7 @@ const NO_BACKINGS: Backing[] = [];
 const Stat = ({ k, children, tone = "" }: { k: string; children: ReactNode; tone?: string }) => (
   <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
     <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
-    <span className={`n truncate text-right text-[13.5px] font-semibold ${tone}`}>{children}</span>
+    <span className={`n text-right text-[13.5px] font-semibold ${tone}`}>{children}</span>
   </div>
 );
 
@@ -191,6 +192,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   const { setVisible } = useWalletModal();
   const owner = wallet.publicKey?.toBase58();
   const input = useRef<HTMLInputElement>(null);
+  const reduce = useReducedMotion();
   const [side, setSide] = useState<"in" | "out">(start);
   const [amount, setAmount] = useState("");
   /// MAX on the way out sends "all of it", so a position closes to zero
@@ -236,7 +238,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
       setNote(r.ok
         ? { ok: true, text: `${side === "out" ? "Withdrew" : v.kind === "pool" ? "Deposited" : "Backed with"} ${
           paying === "USDC" ? money(usd) : `${usd} ${paying}`}.` }
-        : { ok: false, text: r.error ?? "Not accepted." });
+        : { ok: false, text: r.error ?? "Not accepted. Check your balance and try again." });
       if (r.ok) { setAmount(""); setAll(false); onDone(); }
     } finally { setBusy(false); }
   };
@@ -248,9 +250,10 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
         transition={{ duration: 0.18 }}
         className="absolute inset-0 cursor-default bg-black/60" />
       <motion.div ref={dialog} role="dialog" aria-modal="true" aria-label={v.title}
-        initial={{ opacity: 0, y: 24, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.98 }}
+        transition={{ duration: 0.22, ease: EASE_OUT }}
         className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[24px] border border-line
                    bg-panel safe-b sm:max-w-[460px] sm:rounded-[24px]">
         <div className="px-5 pb-5 pt-5 sm:px-6">
@@ -348,14 +351,15 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
             )}
             {api.readOnly && (
               <p className="mt-2.5 text-[12px] text-muted-foreground">
-                Read-only. Deposits open with devnet.
+                Read-only. Devnet is not connected, so deposits are paused.
               </p>
             )}
-            {note && (
-              <p className={`mt-2.5 text-[12.5px] ${note.ok ? "text-up" : "text-down"}`}>
-                {note.text}
-              </p>
-            )}
+            {/* Always in the tree, so a screen reader hears the result when
+                the text lands in it. */}
+            <p role="status" aria-live="polite"
+              className={note ? `mt-2.5 text-[12.5px] ${note.ok ? "text-up" : "text-down"}` : undefined}>
+              {note?.text}
+            </p>
           </div>
         </div>
 
@@ -376,7 +380,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           </Stat>
 
           {/* The risk, where the money is committed rather than on another page. */}
-          <p className="border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
+          <p className="text-pretty border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
             {v.kind === "pool"
               ? "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
               : `First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
@@ -499,11 +503,11 @@ export default function Earn() {
                                         from-panel via-panel/70 via-40% to-transparent to-58%" />
             <div className="relative flex h-full flex-col justify-center px-5 py-9
                             sm:max-w-[min(460px,58%)] sm:px-9">
-              <h1 className="font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
+              <h1 className="text-balance font-serif-display text-[clamp(3rem,6vw,4.5rem)] leading-none
                              tracking-[-.025em]">
                 Earn
               </h1>
-              <p className="mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
+              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
                 Back a market you believe in with{" "}
                 <span className="whitespace-nowrap">
                   <PayToken k="SOL" size={17} className="font-medium text-foreground" />,
@@ -531,8 +535,8 @@ export default function Earn() {
           {/* What the visitor holds, beside the way in. */}
           <aside className="flex min-w-0 flex-col border-t border-line bg-panel2 px-5 py-7
                             sm:px-9 sm:py-9 lg:border-l lg:border-t-0">
-            <h2 className="text-[16px] font-medium">The pool</h2>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
+            <h2 className="text-balance text-[16px] font-medium">The pool</h2>
+            <p className="text-pretty mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
               One deposit across every market.
             </p>
 
@@ -592,9 +596,9 @@ export default function Earn() {
         {/* Three figures under the hero, Kurate's row: what is backed across
             every vault, what the pool can still lend, the best rate on offer. */}
         <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <Tile k="Total backed" v={<AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} />}
+          <Tile k="Total backed" v={<AnimatedNumber value={deposited} duration={0.9} format={compact} />}
             sub={`${vaults.length} vaults`} />
-          <Tile k="Free liquidity" v={pool ? money(pool.free, 0) : "–"}
+          <Tile k="Free liquidity" v={pool ? compact(pool.free) : "–"}
             sub={pool ? `${pool.utilization.toFixed(1)}% of the pool in use` : devnet ? "Reading the chain" : "Connect to devnet"} />
           <Tile k="Best APY" tone={best?.apy.tone}
             v={best?.apy.value != null ? `${best.apy.value.toFixed(2)}%` : "–"}
@@ -611,7 +615,7 @@ export default function Earn() {
           className="mt-5 scroll-mt-24 overflow-hidden rounded-[24px] border border-line bg-panel">
           <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5 pt-7 sm:px-9">
             <div>
-              <h2 className="text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
+              <h2 className="text-balance text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
                 Back a market
                 <span className="n ml-2 text-[14px] font-normal text-dim">{shown.length}</span>
               </h2>
@@ -664,14 +668,16 @@ export default function Earn() {
                 </span>
               </a>
               <span className="min-w-0">
-                <span className="n block truncate text-[14px] font-semibold">
+                <span className="n block text-[14px] font-semibold">
                   <AnimatedNumber value={v.tvl} duration={0.9} format={compact} className="md:hidden" />
                   <AnimatedNumber value={v.tvl} duration={0.9} format={(n) => money(n, 0)} className="hidden md:inline" />
                 </span>
                 <span className="n block truncate text-[12px] text-muted-foreground">{v.tvlNote}</span>
+                {/* The APY column is gone below md, so the rate rides here. */}
+                <span className={`n block truncate text-[12px] md:hidden ${v.apy.tone}`}>{v.apy.text} APY</span>
               </span>
               <span className="hidden min-w-0 md:block">
-                <span className={`n block truncate text-[14px] font-semibold ${v.apy.tone}`}>
+                <span className={`n block text-[14px] font-semibold ${v.apy.tone}`}>
                   {v.apy.value != null
                     ? <AnimatedNumber value={v.apy.value} duration={0.9}
                         format={(n) => `${n < 0 ? "-" : ""}${Math.abs(n).toFixed(2)}%`} />
@@ -687,7 +693,7 @@ export default function Earn() {
                   <i className="block h-full rounded-full bg-foreground" style={{ width: `${v.util.pct ?? 0}%` }} />
                 </span>
               </span>
-              <span className="n hidden truncate text-[13.5px] md:block">
+              <span className="n hidden text-[13.5px] md:block">
                 {v.yours > 0 ? money(v.yours) : <span className="text-dim">–</span>}
               </span>
               {/* In and out from the row: a thumb on a phone gets the way in, a
@@ -716,7 +722,7 @@ export default function Earn() {
               className="press flex h-9 flex-none items-center rounded-full bg-panel2 px-4
                          text-[13px] font-medium text-foreground transition-colors
                          hover:bg-panel3">
-              Open a market
+              List a market
             </a>
           </div>
         </section>

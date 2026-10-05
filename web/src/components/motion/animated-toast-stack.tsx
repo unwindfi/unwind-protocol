@@ -117,7 +117,7 @@ const STATUS_CLASS: Record<ToastStatus, string> = {
   neutral: "text-muted-foreground bg-primary/[0.05]",
   info: "text-primary bg-primary/10",
   loading: "text-primary bg-primary/10",
-  success: "text-emerald-600 bg-emerald-500/10 dark:text-emerald-400",
+  success: "text-up bg-up/10",
   error: "text-destructive bg-destructive/10",
 };
 
@@ -344,37 +344,33 @@ const ToastItem = memo(function ToastItem({
   const canDismiss = toast.dismissible !== false && Boolean(onDismiss);
   const hasDetails = Boolean(toast.description || toast.action);
 
+  // The side a swipe flung the toast toward, so it leaves the way it was thrown.
+  const [swipe, setSwipe] = useState<1 | -1>(1);
+
   return (
     <motion.li
-      layout
-      initial={
-        reduce
-          ? { opacity: 0 }
-          : { opacity: 0, y: 22, scale: 0.96, filter: "blur(10px)" }
-      }
-      animate={
-        reduce
-          ? { opacity: 1 }
-          : { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }
-      }
+      layout={!reduce}
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }}
+      animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0 }}
       exit={
         reduce
           ? { opacity: 0 }
           : {
               opacity: 0,
-              x: 32,
-              scale: 0.96,
-              filter: "blur(8px)",
+              x: 32 * swipe,
               transition: { duration: 0.18, ease: EASE_OUT },
             }
       }
-      transition={STACK_SPRING}
-      drag={canDismiss && !reduce ? "x" : false}
+      transition={{ ...STACK_SPRING, opacity: { duration: 0.2, ease: EASE_OUT }, y: { duration: 0.2, ease: EASE_OUT } }}
+      // Swiping is how a toast is dismissed by hand, so it stays under reduced
+      // motion: the toast moves only as far as the finger moves it.
+      drag={canDismiss ? "x" : false}
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.18}
       onDragEnd={(_, info) => {
         if (!canDismiss || !onDismiss) return;
         if (Math.abs(info.offset.x) > 72 || Math.abs(info.velocity.x) > 520) {
+          setSwipe((info.offset.x || info.velocity.x) < 0 ? -1 : 1);
           onDismiss(toast.id);
         }
       }}
@@ -392,7 +388,7 @@ const ToastItem = memo(function ToastItem({
         ) : (
           <div className={cn("flex gap-3", hasDetails ? "items-start" : "items-center")}>
             <motion.span
-              layout
+              layout={!reduce}
               className={cn(
                 "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
                 hasDetails && "mt-0.5",

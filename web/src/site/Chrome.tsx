@@ -32,8 +32,18 @@ export const Shell = ({ children, className = "", main = false }: {
   children: ReactNode; className?: string; main?: boolean;
 }) => {
   const Tag = main ? "main" : "div";
-  return <Tag className={`mx-auto w-full max-w-[1180px] px-5 sm:px-6 ${className}`}>{children}</Tag>;
+  return <Tag id={main ? "main" : undefined} className={`mx-auto w-full max-w-[1180px] px-5 sm:px-6 ${className}`}>{children}</Tag>;
 };
+
+/// The first stop for a keyboard: hidden until focused, then past the bar.
+export const SkipLink = () => (
+  <a href="#main"
+    className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[60]
+               focus:rounded-full focus:bg-foreground focus:px-4 focus:py-2 focus:text-[14px]
+               focus:font-medium focus:text-background">
+    Skip to content
+  </a>
+);
 
 export const DOCS = "https://unwind.gitbook.io/unwind-docs";
 
@@ -116,10 +126,13 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
      * ink. No panels, no rules: the page's pale ground is the frame.
      */
     <header className="relative z-50 bg-background safe-t">
+      <SkipLink />
       <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
           <GlassMark className="h-8 w-8" />
-          <Wordmark height={18} />
+          {/* At 320px the bar cannot fit the word, the wallet, the theme and
+              the menu; the mark alone still says whose page this is. */}
+          <Wordmark height={18} className="max-[359px]:hidden" />
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
@@ -266,7 +279,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
               <GlassMark className="h-7 w-7" />
               <Wordmark height={21} />
             </a>
-            <p className="mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">
+            <p className="text-pretty mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">
               Every market clears by auction. Anyone can open one.
             </p>
           </div>
@@ -303,10 +316,10 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
 
         <div className="mt-9 flex flex-col gap-5 border-t border-line pt-5 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="max-w-[90ch] text-[12px] leading-relaxed text-muted-foreground">
+            <p className="text-pretty max-w-[90ch] text-[12px] leading-relaxed text-muted-foreground">
               &copy; {new Date().getFullYear()} unwind.
             </p>
-            <p className="mt-2 max-w-[110ch] text-[12px] leading-relaxed text-muted-foreground">
+            <p className="text-pretty mt-2 max-w-[110ch] text-[12px] leading-relaxed text-muted-foreground">
               unwind runs perpetual futures markets on Solana that anyone can open, each cleared by batch
               auction. Every action is a transaction you sign, settled by the unwind program; the program is
               unaudited. Nothing here is investment advice. Perpetuals are leveraged, and a position can be
@@ -333,17 +346,16 @@ export function PageHead({ label, title, lede }: {
   return (
     <section className="border-b border-line">
       <Shell className="py-11 md:py-14">
-        <p className="rise text-[12px] font-medium uppercase tracking-[.16em] text-dim"
-          style={{ animationDelay: "60ms" }}>
+        <p className="rise text-[12px] font-medium uppercase tracking-[.16em] text-dim">
           {label}
         </p>
         <h1 className="rise mt-3.5 max-w-[22ch] text-balance text-[clamp(1.6rem,3vw,2.2rem)]
                        font-semibold leading-[1.12] tracking-[-.02em]"
-          style={{ animationDelay: "140ms" }}>
+          style={{ animationDelay: "40ms" }}>
           {title}
         </h1>
-        <p className="rise mt-4 max-w-[64ch] text-[14.5px] leading-[1.6] text-muted-foreground"
-          style={{ animationDelay: "220ms" }}>
+        <p className="text-pretty rise mt-4 max-w-[64ch] text-[14.5px] leading-[1.6] text-muted-foreground"
+          style={{ animationDelay: "80ms" }}>
           {lede}
         </p>
       </Shell>

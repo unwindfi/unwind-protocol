@@ -97,7 +97,7 @@ function PositionCard({
       <div className="flex items-center gap-2">
         <b className="text-[14px] font-medium">{r.symbol}</b>
         <span className={`rounded-full px-2 py-px text-[11px] font-medium ${
-          r.isLong ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
+          r.isLong ? "bg-up/10 text-up" : "bg-down/10 text-down"}`}>
           {r.isLong ? "Long" : "Short"} {r.leverage.toFixed(1)}x
         </span>
         <span className={`n ml-auto text-[13px] font-semibold ${tone(r.pnl)}`}>
@@ -122,7 +122,7 @@ function PositionCard({
         <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
           className="press ml-auto min-h-[36px] rounded-full border border-line px-4 text-[12.5px]
                      font-medium transition-colors hover:border-foreground/40 active:bg-panel3
-                     disabled:opacity-40" />
+                     disabled:opacity-35" />
       </div>
     </div>
   );
@@ -200,7 +200,7 @@ export function BottomPanel({
       cell: (r) => (
         <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
           className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
-                     transition-colors hover:border-foreground/40 disabled:opacity-40" />) },
+                     transition-colors hover:border-foreground/40 disabled:opacity-35" />) },
   ];
 
 
@@ -242,7 +242,7 @@ export function BottomPanel({
       cell: (r) => onCancelOrder && (
         <button disabled={busy} onClick={() => onCancelOrder(r)}
           className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
-                     transition-colors hover:border-foreground/40 disabled:opacity-40">
+                     transition-colors hover:border-foreground/40 disabled:opacity-35">
           Cancel
         </button>) },
   ];
@@ -325,12 +325,12 @@ export function BottomPanel({
           <TabsTrigger soft={!mobile} value="positions">
             Positions{!mobile && count(positions.length)}
           </TabsTrigger>
-          {!mobile && <TabsTrigger soft value="orders">Open Orders{count(orders.length)}</TabsTrigger>}
+          {!mobile && <TabsTrigger soft value="orders">Open orders{count(orders.length)}</TabsTrigger>}
           {!mobile && <TabsTrigger soft value="funding">Funding</TabsTrigger>}
           {/* One history, the wallet's own fills. The market's tape, every
               trader's fills and the maker's other side of them, is the book's
               Trades tab; shown here it listed each buy twice, once as a sell. */}
-          <TabsTrigger soft={!mobile} value="history">Trade History</TabsTrigger>
+          <TabsTrigger soft={!mobile} value="history">Trade history</TabsTrigger>
           <TabsTrigger soft={!mobile} value="liqs">Liquidations</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -367,14 +367,14 @@ export function BottomPanel({
          * read while sizing an order rather than found by opening a tab.
          */}
         {tab === "history" && (
-          <div className={mobile ? "strip-scroll [&>*]:min-w-[560px]" : ""}>
+          <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[560px]" : ""}>
             <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(fills.length)}
               emptyState={empty(owner ? "No fills yet" : "Connect a wallet to see its fills")} />
           </div>
         )}
         {tab === "liqs" && (
-          <div className={mobile ? "strip-scroll [&>*]:min-w-[620px]" : ""}>
+          <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[620px]" : ""}>
             <Table data={liqs} columns={liqCols} getRowId={(_, i) => String(i)}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(liqs.length)}
               emptyState={empty("No liquidations")} />

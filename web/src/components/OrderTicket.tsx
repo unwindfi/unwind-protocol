@@ -17,7 +17,7 @@ function KV({ k, children }: { k: string; children: ReactNode }) {
     <div className="flex items-baseline justify-between gap-4 border-t border-line py-2.5
                     first:border-t-0">
       <span className="flex-none text-[12.5px] text-muted-foreground">{k}</span>
-      <span className="n truncate text-right text-[12.5px] font-semibold">{children}</span>
+      <span className="n min-w-0 text-right text-[12.5px] font-semibold break-words">{children}</span>
     </div>
   );
 }
@@ -274,8 +274,8 @@ export function OrderTicket({
           : ""
     : size <= 0 ? ""
     : size < MIN_ORDER_USD ? `Minimum order ${money(MIN_ORDER_USD, 0)}.`
-    : account && calc.debit > avail ? `Not enough margin. ${money(calc.debit)} needed, ${money(avail)} free.`
-    : calc.capped ? `Over this market's ${side} capacity.`
+    : account && calc.debit > avail ? `Needs ${money(calc.debit)} margin, ${money(avail)} free. Lower size or raise leverage.`
+    : calc.capped ? `Over this market's ${side} capacity. Lower size.`
     : "";
 
   /*
@@ -318,8 +318,8 @@ export function OrderTicket({
     }
   };
 
-  // "Buy / Long" describes a fill. This places an order into the next batch,
-  // and the button should not promise more than that.
+  // "Place long", not "Buy / Long": buying describes a fill. This places an
+  // order into the next batch, and the button should not promise more.
   // A limit far through the market is legal, and fills at the batch price,
   // but a slipped digit looks the same; say how far it is.
   const mid = (m.bid + m.ask) / 2;
@@ -333,10 +333,10 @@ export function OrderTicket({
   const cta = onConnect ? "Connect wallet"
     : submitLabel
     ? submitLabel
-    : reduceOnly ? `Reduce ${pos?.isLong ? "Long" : "Short"}`
-    : maker ? (side === "long" ? "Post Buy Order" : "Post Sell Order")
-    : mode === "limit" ? (side === "long" ? "Place Buy Order" : "Place Sell Order")
-    : side === "long" ? "Buy / Long" : "Sell / Short";
+    : reduceOnly ? `Reduce ${pos?.isLong ? "long" : "short"}`
+    : maker ? `Post ${side}`
+    : mode === "limit" ? `Place ${side} limit`
+    : `Place ${side}`;
 
   return (
     <aside className={mobile
@@ -432,7 +432,7 @@ export function OrderTicket({
           <button type="button" onClick={onFund} disabled={busy}
             className="press mt-4 h-10 w-full rounded-full bg-foreground text-[13.5px]
                        font-medium text-background transition-opacity hover:opacity-90
-                       disabled:opacity-40">
+                       disabled:opacity-35">
             Get test funds
           </button>
         )}
@@ -440,7 +440,7 @@ export function OrderTicket({
         {(account?.address || pos) && (
           <div className="mt-3">
             {account?.address && <KV k="Available to trade">{money(avail)}</KV>}
-            {/* Only when there is one. "Current Position 0 SPYx" is a row that
+            {/* Only when there is one. "Current position 0 SPYx" is a row that
                 exists to say nothing is there, which the rest of the ticket
                 already says. */}
             {pos && (
@@ -454,12 +454,12 @@ export function OrderTicket({
         <div className="mt-4 space-y-4">
           {mode === "limit" && (
             <Field
-              label="Limit Price" unit="USD" value={limitPrice} onChange={setLimitPrice}
+              label="Limit price" unit="USD" value={limitPrice} onChange={setLimitPrice}
               placeholder={pnum((m.bid + m.ask) / 2)}
               trailing={
                 <button type="button" onClick={() => setLimitPrice(pnum((m.bid + m.ask) / 2))}
                   className="inline-flex h-6 flex-none items-center rounded-full border border-line px-2.5 text-[11px]
-                             font-medium text-muted-foreground transition-colors
+                             font-medium text-muted-foreground transition-colors pointer-coarse:h-9 pointer-coarse:px-3.5
                              hover:border-foreground/40 hover:text-foreground">
                   Mid
                 </button>
@@ -602,7 +602,7 @@ export function OrderTicket({
                             onClick={() => onCancelTrigger?.(standing.slot)}
                             className="press h-8 rounded-full border border-line px-3 text-[12px]
                                        font-medium text-down transition-colors
-                                       hover:border-foreground/40 disabled:opacity-40">
+                                       hover:border-foreground/40 disabled:opacity-35">
                             Cancel
                           </button>
                         </>
@@ -617,7 +617,7 @@ export function OrderTicket({
                             value={triggers[kind]}
                             onChange={(e) => setTriggers({ ...triggers, [kind]: e.target.value })}
                             className="n h-9 min-w-0 flex-1 rounded-[10px] border border-line
-                                       bg-panel2 px-3 text-[12.5px] outline-none transition-colors
+                                       bg-panel2 px-3 text-[12.5px] transition-colors
                                        placeholder:text-dim focus:border-foreground/40" />
                           <button
                             type="button"
@@ -651,12 +651,12 @@ export function OrderTicket({
           onClick={onConnect ?? submit}
           className={`press mt-5 flex min-h-[48px] w-full items-center justify-center rounded-full
                       px-4 text-center text-[14px] font-medium text-background transition-opacity
-                      hover:opacity-90 disabled:pointer-events-none disabled:opacity-40
+                      hover:opacity-90 disabled:pointer-events-none disabled:opacity-35
                       ${onConnect ? "bg-foreground" : side === "long" ? "bg-up" : "bg-down"}`}>
           {cta}
         </button>
         {!onConnect && (warn || limitNote) && (
-          <p className="mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
+          <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
         )}
       </div>
 
@@ -704,7 +704,7 @@ export function PoolPanel({ onPool, busy, mobile = false, bordered = false }: {
     <div className={`flex flex-col gap-4 px-5 py-5 ${
       bordered ? "border-t border-line" : ""}`}>
       <Field
-        label="Pool Amount" unit="USD" value={String(poolAmt)} min={1} step={1000} grouped
+        label="Pool amount" unit="USD" value={String(poolAmt)} min={1} step={1000} grouped
         onChange={(v) => setPoolAmt(Number(v) || 0)}
         trailing={
           <Stepper value={poolAmt} min={1} step={1000} onChange={setPoolAmt}
@@ -763,7 +763,7 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
   return (
     <div className={`px-5 py-2 ${bordered ? "border-t border-line pt-4" : ""}`}>
       {bordered && (
-        <div className="mb-1 text-[13.5px] font-medium">Unified Account Summary</div>
+        <div className="mb-1 text-[13.5px] font-medium">Unified account summary</div>
       )}
       <KV k="Account ratio">
         {account.equity > 0 ? ((account.margin / account.equity) * 100).toFixed(2) : "0.00"}%
@@ -775,8 +775,8 @@ export function AccountPanel({ account, bordered = false, compact = false }: {
       <KV k="Unrealized PnL">
         <span className={tone(account.unrealized)}>{money(account.unrealized)}</span>
       </KV>
-      <KV k="LP Position">{money(account.lp.value)}</KV>
-      <KV k="Insurance Fund">{money(account.pool.insurance)}</KV>
+      <KV k="LP position">{money(account.lp.value)}</KV>
+      <KV k="Insurance fund">{money(account.pool.insurance)}</KV>
     </div>
   );
 }
