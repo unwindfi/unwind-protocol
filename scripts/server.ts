@@ -1182,7 +1182,9 @@ function describePosition(pos: any, ma: any, m: MarketRt) {
   const liqPrice = pos.isLong ? entry * (1 + move) : entry * (1 - move);
 
   return {
-    isLong: pos.isLong, size, collateral, entry, mark: exit,
+    // The mark is the pool mid, the figure the market header shows. PnL is
+    // taken at the exit, the side of the spread a close would fill on.
+    isLong: pos.isLong, size, collateral, entry, mark: (q.bid + q.ask) / 2, exit,
     leverage: collateral > 0 ? size / collateral : 0,
     pnl, funding, equity, maintenance,
     pnlPct: collateral > 0 ? (pnl / collateral) * 100 : 0,
@@ -1439,29 +1441,59 @@ function recordTrade({ owner, ...t }: any) {
 /// The keeper used to check the demo account's twelve PDAs. That was fine while
 /// one keypair traded; with wallets connecting it would leave every other
 /// trader's position unliquidated, which is the one job a keeper has.
-async function keeper() {
-  let accounts: { pubkey: PublicKey; account: { data: Buffer } }[];
+/*
+ * Every open position, kept in memory and checked against the live price
+ * every few seconds, the way the trigger orders are. The scan behind it is a
+ * `getProgramAccounts`, so it used to run every minute and a half and a
+ * position could sit through its maintenance margin for that long before
+ * anyone closed it, eating into the pool. The list is read again every minute
+ * and right after any transaction this server relays; the checks between
+ * reads use the batched market read and cost nothing more.
+ */
+let positionCache: { at: number; all: any[] } | null = null;
+const POSITION_CACHE_MS = 60_000;
+const LIQ_CHECK_MS = Number(process.env.LIQ_CHECK_MS ?? 3_000);
+const invalidatePositions = () => { positionCache = null; };
+/// A liquidation that failed is not tried again on every check.
+const liqRetryAt = new Map<string, number>();
+
+async function openPositions(): Promise<any[]> {
+  if (!positionCache || Date.now() - positionCache.at > POSITION_CACHE_MS) {
+    const all = (await program.account.position.all()) as any[];
+    positionCache = { at: Date.now(), all: all.filter((e) => num(e.account.sizeUsd) !== 0) };
+  }
+  return positionCache.all;
+}
+
+async function liquidationCheck() {
+  let all: any[];
+  let markets: Map<string, any>;
   try {
-    accounts = (await program.account.position.all()) as never;
+    all = await openPositions();
+    if (!all.length) return;
+    markets = await marketsByAddress();
   } catch (e: any) {
-    console.warn(`keeper scan: ${e.message}`);
+    console.warn(`liquidation scan: ${e.message}`);
     return;
   }
+  let closed = false;
 
   const byMarket = new Map<string, MarketRt>();
   for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
 
-  for (const entry of accounts as any[]) {
+  for (const entry of all) {
     const pos = entry.account;
-    if (num(pos.sizeUsd) === 0) continue;
     const m = byMarket.get(String(pos.market));
-    if (!m) continue;
+    const ma = m && markets.get(m.address.toBase58());
+    if (!m || !m.quote || !ma) continue;
+    const key = entry.publicKey.toBase58();
+    if ((liqRetryAt.get(key) ?? 0) > Date.now()) continue;
 
+    const d = describePosition(pos, ma, m);
+    if (!d?.liquidatable) continue;
+
+    const owner = new PublicKey(String(pos.owner));
     try {
-      const d = describePosition(pos, await marketAccount(m), m);
-      if (!d?.liquidatable) continue;
-
-      const owner = new PublicKey(String(pos.owner));
       await program.methods.liquidate().accounts({
         liquidator: authority.publicKey,
         pool, market: m.address, position: entry.publicKey,
@@ -1471,27 +1503,53 @@ async function keeper() {
         liquidatorUsdc: new PublicKey(st.liquidatorUsdc),
         tokenProgram: TOKEN_PROGRAM_ID,
       }).rpc();
-
-      liquidations.unshift({
-        t: Date.now(), symbol: m.symbol, isLong: d.isLong,
-        size: d.size, price: px(m), returned: d.equity,
-        owner: owner.toBase58(),
-      });
-      liquidations.splice(20);
-      recordTrade({
-        symbol: m.symbol, side: d.isLong ? "sell" : "buy",
-        size: d.size, price: px(m), kind: "liquidation", owner: owner.toBase58(),
-      });
-      console.log(`liquidated ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
+    } catch (e: any) {
+      // Raced to close, or the chain's view of its health differs from ours.
+      console.warn(`liquidate ${m.symbol} (${owner.toBase58().slice(0, 4)}…): ${explain(e)}`);
+      liqRetryAt.set(key, Date.now() + 30_000);
       continue;
-    } catch {
-      /* raced to close, or already gone */
     }
 
-    // A position can be healthy and still be a problem: profit past the
-    // liquidity reserved against it is exposure the pool never set aside for.
-    // Closing it at the mark while the pool can pay is the point of ADL, so the
-    // keeper has to look for it on the same pass.
+    closed = true;
+    liquidations.unshift({
+      t: Date.now(), symbol: m.symbol, isLong: d.isLong,
+      size: d.size, price: px(m), returned: d.equity,
+      owner: owner.toBase58(),
+    });
+    liquidations.splice(20);
+    recordTrade({
+      symbol: m.symbol, side: d.isLong ? "sell" : "buy",
+      size: d.size, price: px(m), kind: "liquidation", owner: owner.toBase58(),
+    });
+    console.log(`liquidated ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
+  }
+  // What closed is gone from the chain; read it again rather than retry it.
+  if (closed) { invalidatePositions(); accountMemo.clear(); }
+}
+
+/*
+ * A position can be healthy and still be a problem: profit past the
+ * liquidity reserved against it is exposure the pool never set aside for.
+ * Closing it at the mark while the pool can pay is the point of ADL. There is
+ * no cheap way to tell from here which positions qualify, so each one is
+ * tried; that costs a call per position and stays on the slower keeper pass.
+ */
+async function keeper() {
+  let all: any[];
+  try {
+    all = await openPositions();
+  } catch (e: any) {
+    console.warn(`keeper scan: ${e.message}`);
+    return;
+  }
+
+  const byMarket = new Map<string, MarketRt>();
+  for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
+
+  for (const entry of all) {
+    const pos = entry.account;
+    const m = byMarket.get(String(pos.market));
+    if (!m) continue;
     try {
       const owner = new PublicKey(String(pos.owner));
       await program.methods.autoDeleverage().accounts({
@@ -1507,6 +1565,7 @@ async function keeper() {
         size: num(pos.sizeUsd) / 1e6, price: px(m),
       });
       deleverages.splice(20);
+      invalidatePositions();
       console.log(`deleveraged ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
     } catch {
       /* still covered by its reserve, which is the normal case */
@@ -2701,6 +2760,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       }
       const settled = (o: any) => {
         if (Number(o.filledUsd) > 0) {
+          // A fill opened or resized a position the liquidation check holds.
+          invalidatePositions();
           recordTrade({
             symbol: m.symbol,
             side: o.isBid ? "buy" : "sell",
@@ -2758,6 +2819,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   }
   loop("sessions", syncSessions, SESSION_MS);
   loop("keeper", keeper, KEEPER_MS);
+  // Every few seconds against the cached positions (see positionCache).
+  setTimeout(() => loop("liquidations", liquidationCheck, LIQ_CHECK_MS), 3_000);
   loop("balance", watchBalance, 10 * 60_000);
   if (MAKER_ON) {
     await fundMaker().catch((e: any) => console.warn(`maker funds: ${explain(e)}`));
@@ -3701,6 +3764,8 @@ app.post("/api/tx/send", async (req, res) => {
     }, "confirmed");
     // A new, cancelled or changed order is in the next trigger check.
     invalidateOrders();
+    // An opened, resized or closed position is in the next liquidation check.
+    invalidatePositions();
     // Whatever it changed, no page should be shown the balance from before it.
     accountMemo.clear();
     if (req.body.record?.symbol) {

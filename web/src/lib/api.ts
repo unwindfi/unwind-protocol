@@ -78,6 +78,9 @@ export interface PoolPreview {
 
 export interface Position {
   isLong: boolean; size: number; collateral: number; entry: number; mark: number;
+  /// What a close would fill at: the bid for a long, the ask for a short.
+  /// PnL is taken here, so it can differ from the mark by half the spread.
+  exit: number;
   leverage: number; pnl: number; pnlPct: number; funding: number;
   equity: number; maintenance: number; liqPrice: number; liquidatable: boolean;
 }

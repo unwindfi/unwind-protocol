@@ -330,7 +330,7 @@ function Positions({ rows, owner, loaded }: {
               <span className="hidden text-muted-foreground md:block">{r.isLong ? "Long" : "Short"}</span>
               <span className="n">{money(r.size, 0)}</span>
               <span className="n hidden md:block">{price(r.entry)}</span>
-              <span className="n hidden md:block">{price(r.mark)}</span>
+              <span className="n hidden md:block" title={`Closes at ${price(r.exit)}`}>{price(r.mark)}</span>
               <span className={`n text-right md:text-left ${tone(r.pnl)}`}>
                 {signed(r.pnl)}
                 <span className="block text-[12px] md:inline md:pl-1.5">

@@ -81,7 +81,7 @@ function PositionCard({
       <div className="mt-3 grid grid-cols-4 gap-2">
         <KV k="Size">{money(r.size, 0)}</KV>
         <KV k="Entry">{pnum(r.entry)}</KV>
-        <KV k="Mark">{pnum(r.mark)}</KV>
+        <KV k="Mark"><span title={`Closes at ${pnum(r.exit)}`}>{pnum(r.mark)}</span></KV>
         <KV k="Liq."><span className="text-down">{r.liqPrice ? pnum(r.liqPrice) : "–"}</span></KV>
       </div>
 
@@ -149,7 +149,8 @@ export function BottomPanel({
     { key: "size", header: "Value", align: "right", sortable: true,
       cell: (r) => money(r.size, 0) },
     { key: "entry", header: "Entry", align: "right", cell: (r) => pnum(r.entry) },
-    { key: "mark", header: "Mark", align: "right", cell: (r) => pnum(r.mark) },
+    { key: "mark", header: "Mark", align: "right",
+      cell: (r) => <span title={`Closes at ${pnum(r.exit)}`}>{pnum(r.mark)}</span> },
     { key: "pnl", header: "PnL (ROE)", align: "right", sortable: true,
       cell: (r) => (<span className={tone(r.pnl)}>{money(r.pnl)}{" "}
         <span className="text-muted-foreground">({pct(r.pnlPct)})</span></span>) },

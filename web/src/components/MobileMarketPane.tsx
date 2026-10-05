@@ -57,7 +57,7 @@ export function MobileMarketPane({
             <Row k="Oracle" hint="index">{pnum(m.price)}</Row>
             <Row k="Bid"><span className="text-down">{pnum(m.bid)}</span></Row>
             <Row k="Ask"><span className="text-up">{pnum(m.ask)}</span></Row>
-            <Row k="Spread">{(m.ask - m.bid).toFixed(priceDecimals(m.price))} · {(m.spreadBps / 100).toFixed(2)}%</Row>
+            <Row k="Spread">{(m.ask - m.bid).toFixed(priceDecimals(m.price))} · {(m.spreadBps / 50).toFixed(3)}%</Row>
             <Row k="24h change">
               <span className={tone(m.changePct)}>
                 {pmove(m.change, m.price)} · {pct(m.changePct)}

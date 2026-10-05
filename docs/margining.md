@@ -57,3 +57,8 @@ Open positions are valued against the market's reference mark rather than
 against the last clearing price. The mark is the market's price source, which
 is a Pyth feed or an observed spot pool depending on how the market was
 opened.
+
+The trade screen shows one mark, the pool mid, in the market header and in
+each position row. PnL is taken at the price a close would fill at: the bid
+for a long, the ask for a short. The two differ by half the spread, which the
+header shows as its own figure.

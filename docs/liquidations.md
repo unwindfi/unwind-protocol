@@ -26,6 +26,16 @@ entirely. Clearing and settlement are permissionless on the same grounds.
 The consequence is that a stalled crank cannot produce an incorrect outcome.
 The worst it can do is leave orders resting where their owners placed them.
 
+## The venue's own keeper
+
+Anyone may liquidate, but the venue runs a keeper so nobody has to. It keeps
+every open position in memory and checks each against the live price every
+3 seconds. The list is read from the chain again every minute, after every
+batch that fills, and after every transaction the venue relays. A
+liquidation that fails is retried after 30 seconds.
+
+Auto-deleveraging is tried on a slower pass, every few minutes.
+
 ## When liquidation is insufficient
 
 A liquidation can complete at a price past zero equity, leaving the

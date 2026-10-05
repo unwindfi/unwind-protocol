@@ -184,6 +184,9 @@ export function StatTiles({ m, dense = false }: {
           {price(m.price)}
         </Stat>
       )}
+      <Stat label="Spread" help="Bid to ask. A long closes at the bid, a short at the ask; PnL is taken there.">
+        {(m.spreadBps / 50).toFixed(3)}%
+      </Stat>
       <Stat label="24h change" help="Since the session opened.">
         <span className={tone(m.changePct)}>
           {pmove(m.change, m.price)} / {pct(m.changePct)}

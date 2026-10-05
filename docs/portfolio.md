@@ -15,7 +15,8 @@ together. It is what the wallet would hold if it closed every position and
 withdrew everything at current prices, before fees.
 
 **Positions** lists each open position with its size, entry, mark, PnL,
-liquidation price and margin. A row opens that market on the trade screen.
+liquidation price and margin. PnL is taken at the price a close would fill
+at, which is half the spread from the mark; hover the mark to see it. A row opens that market on the trade screen.
 
 **Orders** lists take profits, stops and limit orders still waiting to fire.
 The owner can cancel any of them from the page. A limit order's escrowed
