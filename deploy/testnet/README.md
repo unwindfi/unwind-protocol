@@ -26,7 +26,10 @@ header, rather than an error. The crank is slower on the fallback, so a pool
 that keeps resting needs more keys. The startup log names the hosts and the
 number of keys, never the keys themselves. Transaction confirmations go over
 a websocket, which free Helius keys refuse; on devnet it goes to the public
-endpoint unless `RPC_WS_URL` says otherwise.
+endpoint unless `RPC_WS_URL` says otherwise. A key whose plan refuses a method
+outright (Alchemy's free tier and `getProgramAccounts`) is remembered, and
+that method goes only to keys that serve it; the log says
+`rpc: <host> does not serve <method>`.
 
 Every ten minutes the log prints how many RPC calls the server made, with a
 daily projection and the busiest methods (`rpc: 4210 calls in 10m (~606k/day):

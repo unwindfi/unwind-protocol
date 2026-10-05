@@ -166,10 +166,28 @@ const RPC_FALLBACK_URL = process.env.RPC_FALLBACK_URL
 const restingUntil = new Map<string, number>();
 let rpcTurn = 0;
 /// The next key in turn that is not resting, or null with all of them resting.
-function nextEndpoint(): string | null {
+/*
+ * Methods a key's plan does not serve at all. Alchemy's free tier answers
+ * getProgramAccounts with a 400 rather than a 429; a refusal like that is
+ * remembered for the life of the process and the method goes only to keys
+ * that serve it.
+ */
+const refusedBy = new Map<string, Set<string>>();
+const REFUSAL = /not available|not supported|not allowed|upgrade|disabled|method not found/i;
+const methodsIn = (body: unknown): string[] => {
+  if (typeof body !== "string") return [];
+  try {
+    const j = JSON.parse(body);
+    return (Array.isArray(j) ? j : [j]).map((c) => String(c?.method ?? ""));
+  } catch { return []; }
+};
+
+function nextEndpoint(methods: string[] = []): string | null {
   const now = Date.now();
   for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
     const at = (rpcTurn + i) % RPC_ENDPOINTS.length;
+    const refused = refusedBy.get(RPC_ENDPOINTS[at]);
+    if (refused && methods.some((m) => refused.has(m))) continue;
     if ((restingUntil.get(RPC_ENDPOINTS[at]) ?? 0) <= now) {
       rpcTurn = (at + 1) % RPC_ENDPOINTS.length;
       return RPC_ENDPOINTS[at];
@@ -244,11 +262,23 @@ const rpcFetch: typeof fetch = async (input, init) => {
   // web3.js always calls the first key's URL; anything else is not ours to route.
   if (!url.startsWith(RPC_URL)) return metered(url, init);
   const tail = url.slice(RPC_URL.length);
+  const methods = methodsIn(init?.body);
   let last: Response | null = null;
   for (let tries = 0; tries < RPC_ENDPOINTS.length; tries++) {
-    const ep = nextEndpoint();
+    const ep = nextEndpoint(methods);
     if (!ep) break;
     const r = await metered(ep + tail, init);
+    if (r.status >= 400 && r.status < 500 && r.status !== 429) {
+      const text = await r.clone().text().catch(() => "");
+      if (methods.length && REFUSAL.test(text)) {
+        const set = refusedBy.get(ep) ?? new Set<string>();
+        methods.forEach((m) => set.add(m));
+        refusedBy.set(ep, set);
+        console.warn(`rpc: ${rpcHost(ep)} does not serve ${methods.join(", ")} on its plan; sending it elsewhere`);
+        last = r;
+        continue;
+      }
+    }
     if (r.status !== 429) return r;
     last = r;
     restingUntil.set(ep, Date.now() + 60_000);
