@@ -155,7 +155,8 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
       subtitle: m.name === m.symbol ? "Listed by anyone" : m.symbol,
       tvl: m.backingUsd,
       tvlNote: o ? `of ${compact(o.depthUsd)} depth` : `${compact(m.lossBudgetUsd)} budget`,
-      apy: apyCell(apy?.markets[m.symbol], "not backed yet"),
+      // Backed but not yet measured is a new vault, not an unbacked one.
+      apy: apyCell(apy?.markets[m.symbol], m.backingUsd > 0 ? "new, measuring" : "not backed yet"),
       strategy: "First loss",
       yours: owned ? backings.find((b) => b.symbol === m.symbol)?.value ?? 0 : 0,
       group: o ? "opened" : /x$/.test(m.symbol) ? "equities" : "crypto",
@@ -214,7 +215,12 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   const fee = v.kind === "pool"
     ? (side === "in" ? pool?.addFeePct ?? 0 : pool?.removeFeePct ?? 0) : 0;
   const paying = v.kind === "market" && side === "in" ? payWith : "USDC";
-  const ceiling = side === "in" ? (account?.usdc ?? 0) : v.yours;
+  // Backing that open positions hold cannot come out, so the way out of a
+  // market's vault is capped at what its pot can spare as well as at yours.
+  const lockedFree = v.kind === "market" && v.market && v.market.backingLockedUsd != null
+    ? Math.max(0, v.market.backingUsd - v.market.backingLockedUsd) : Infinity;
+  const ceiling = side === "in" ? (account?.usdc ?? 0) : Math.min(v.yours, lockedFree);
+  const heldBack = side === "out" && lockedFree < v.yours;
   // Only USDC has a balance this page knows; a SOL or USDT amount is checked
   // by the wallet instead.
   const over = paying === "USDC" && usd > ceiling + 1e-9;
@@ -305,9 +311,11 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
               <label htmlFor="vault-amount" className="text-[13px] text-foreground">Amount</label>
               {owner && paying === "USDC" && (
                 <button type="button"
-                  onClick={() => { setAmount(ceiling.toFixed(2)); setAll(side === "out"); }}
+                  // Down to the cent, never up: rounded up, MAX asked for a
+                  // fraction of a cent more than there was and was refused.
+                  onClick={() => { setAmount((Math.floor(ceiling * 100) / 100).toFixed(2)); setAll(side === "out" && !heldBack); }}
                   className="n text-[12px] text-dim transition-colors hover:text-foreground">
-                  {side === "in" ? "Wallet" : "Yours"} {money(ceiling)}
+                  {side === "in" ? "Wallet" : heldBack ? "Withdrawable now" : "Yours"} {money(Math.floor(ceiling * 100) / 100)}
                   <span className="ml-1.5 font-medium text-foreground">MAX</span>
                 </button>
               )}
@@ -340,7 +348,8 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                            text-background transition-opacity hover:opacity-90
                            disabled:pointer-events-none disabled:opacity-35">
                 {busy ? "Confirm in wallet"
-                  : over ? `Over ${side === "in" ? "your balance" : "your deposit"}` : verb}
+                  : over ? (side === "in" ? "Over your balance"
+                    : heldBack ? "Held for open positions" : "Over your deposit") : verb}
               </button>
             )}
             {api.readOnly && (
@@ -423,9 +432,9 @@ export default function Earn() {
   const { setVisible } = useWalletModal();
   const owner = wallet.publicKey?.toBase58();
   const [tick, setTick] = useState(0);
-  const account = usePoll(() => getAccount(owner), 3000, [owner, tick]);
+  const account = usePoll(() => getAccount(owner), 3000, [owner], undefined, tick);
   const markets = usePoll(getMarkets, 5000) ?? NONE;
-  const backings = usePoll(() => getBackings(owner), 5000, [owner, tick]) ?? NO_BACKINGS;
+  const backings = usePoll(() => getBackings(owner), 5000, [owner], undefined, tick) ?? NO_BACKINGS;
   // The tape is sampled every two minutes, so polling faster than this would
   // only ask the same question again.
   const apy = usePoll(getApy, 30_000);

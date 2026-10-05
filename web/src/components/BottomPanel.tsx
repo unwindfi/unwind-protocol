@@ -104,7 +104,7 @@ function PositionCard({
 }
 
 export function BottomPanel({
-  account, trades, busy, onClose, mobile = false, docked = false,
+  account, busy, onClose, mobile = false, docked = false,
   markets = [], market, owner, onCancelOrder,
 }: {
   account: Account | null;
@@ -130,7 +130,7 @@ export function BottomPanel({
   const orders = account?.orders ?? [];
   // Read only while the tab is open: a wallet's fills change once a batch, and
   // nobody is reading them from any other tab.
-  const fillsOpen = tab === "fills" && !!owner;
+  const fillsOpen = tab === "history" && !!owner;
   const fills = usePoll(() => (fillsOpen ? getFills(owner) : Promise.resolve(NO_FILLS)),
     5000, [owner, fillsOpen]) ?? NO_FILLS;
 
@@ -169,17 +169,6 @@ export function BottomPanel({
         </button>) },
   ];
 
-  const tradeCols: TableColumn<Trade>[] = [
-    { key: "t", header: "Time", width: "110px",
-      cell: (r) => <span className="text-muted-foreground">{hhmmss(r.t)}</span> },
-    { key: "symbol", header: "Market", width: "110px", cell: (r) => <b>{r.symbol}</b> },
-    { key: "kind", header: "Action", width: "110px" },
-    { key: "side", header: "Side", width: "90px",
-      cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
-        {r.side === "buy" ? "Buy" : "Sell"}</span>) },
-    { key: "size", header: "Size", align: "right", sortable: true, cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
-  ];
 
   const liqs = account?.liquidations ?? [];
   const liqCols: TableColumn<(typeof liqs)[number]>[] = [
@@ -203,9 +192,13 @@ export function BottomPanel({
     { key: "triggerPrice", header: "Trigger", align: "right",
       cell: (r) => `${r.triggerAbove ? "≥" : "≤"} ${price(r.triggerPrice)}` },
     // A take profit or stop with no size closes the whole position.
+    // "All" of a position that is gone (liquidated, say) is nothing; said
+    // so, since it would otherwise fire against the next one opened here.
     { key: "sizeUsd", header: "Size", align: "right",
       cell: (r) => (r.sizeUsd > 0 ? money(r.sizeUsd, 0)
-        : <span className="text-muted-foreground">All</span>) },
+        : r.kind === 0 && !positions.some((p) => p.symbol === r.symbol)
+          ? <span className="text-down">No position</span>
+          : <span className="text-muted-foreground">All</span>) },
     { key: "collateralUsd", header: "Margin", align: "right",
       cell: (r) => (r.collateralUsd > 0 ? money(r.collateralUsd) : "–") },
     { key: "expiryTs", header: "Expires", align: "right",
@@ -300,8 +293,10 @@ export function BottomPanel({
           </TabsTrigger>
           {!mobile && <TabsTrigger soft value="orders">Open Orders{count(orders.length)}</TabsTrigger>}
           {!mobile && <TabsTrigger soft value="funding">Funding</TabsTrigger>}
+          {/* One history, the wallet's own fills. The market's tape, every
+              trader's fills and the maker's other side of them, is the book's
+              Trades tab; shown here it listed each buy twice, once as a sell. */}
           <TabsTrigger soft={!mobile} value="history">Trade History</TabsTrigger>
-          {!mobile && <TabsTrigger soft value="fills">Order History</TabsTrigger>}
           <TabsTrigger soft={!mobile} value="liqs">Liquidations</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -319,11 +314,7 @@ export function BottomPanel({
                 className={flat} height={tableH(positions.length)}
                 emptyState={empty(owner ? "No open positions" : "Connect a wallet to see its positions")} />
         )}
-        {tab === "fills" && (
-          <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
-            className={flat} height={tableH(fills.length)}
-            emptyState={empty(owner ? "No fills since the server last started" : "Connect a wallet to see its fills")} />
-        )}
+
         {tab === "positions" && (
           mobile
             ? positions.length === 0
@@ -343,9 +334,9 @@ export function BottomPanel({
          */}
         {tab === "history" && (
           <div className={mobile ? "strip-scroll [&>*]:min-w-[560px]" : ""}>
-            <Table data={trades} columns={tradeCols} getRowId={(_, i) => String(i)}
-              className={mobile ? undefined : flat} height={mobile ? undefined : tableH(trades.length)}
-              emptyState={empty("No trades yet")} />
+            <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
+              className={mobile ? undefined : flat} height={mobile ? undefined : tableH(fills.length)}
+              emptyState={empty(owner ? "No fills yet" : "Connect a wallet to see its fills")} />
           </div>
         )}
         {tab === "liqs" && (

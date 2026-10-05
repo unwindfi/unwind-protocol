@@ -74,6 +74,12 @@ operations accepts a price or a discretionary input from its caller.
 A trader may hold several orders against a single market simultaneously. A
 take profit and a stop loss on the same position is the ordinary case.
 
+Closing a whole position from the site cancels its take profit and stop loss
+in the same transaction. A trigger order whose position is already gone, for
+example after a liquidation, is marked "No position" under Open Orders and
+should be cancelled: left standing, it would act on the next position opened
+on that market.
+
 ## Limits
 
 A batch holds 64 orders for everyone, so it carries two limits that keep one

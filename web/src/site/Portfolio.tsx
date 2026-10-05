@@ -71,12 +71,12 @@ export default function PortfolioPage() {
   // Nothing is read without a wallet. The server answers an ownerless
   // account request with its own demo account, which is not the visitor's.
   const [tick, setTick] = useState(0);
-  const account = usePoll(() => owner ? getAccount(owner) : Promise.resolve(null), 5000, [owner, tick],
-    () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null));
-  const backingsRaw = usePoll(() => getBackings(owner), 10_000, [owner, tick]);
+  const account = usePoll(() => owner ? getAccount(owner) : Promise.resolve(null), 5000, [owner],
+    () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null), tick);
+  const backingsRaw = usePoll(() => getBackings(owner), 10_000, [owner], undefined, tick);
   const backings = backingsRaw ?? NO_BACKINGS;
-  const rewards = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner, tick]);
-  const fillsRaw = usePoll(() => getFills(owner), 5000, [owner, tick]);
+  const rewards = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
+  const fillsRaw = usePoll(() => getFills(owner), 5000, [owner], undefined, tick);
   const fills = fillsRaw ?? NO_FILLS;
 
   const [busy, setBusy] = useState<string | null>(null);

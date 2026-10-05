@@ -113,9 +113,9 @@ export default function RewardsPage() {
   };
 
   const [tick, setTick] = useState(0);
-  const r = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner, tick]);
-  const all = usePoll<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner, tick]);
-  const week = usePoll<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner, tick]);
+  const r = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
+  const all = usePoll<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner], undefined, tick);
+  const week = usePoll<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner], undefined, tick);
   const refresh = () => setTick((t) => t + 1);
 
   // Backing and the pool earn by the second, so those points are carried

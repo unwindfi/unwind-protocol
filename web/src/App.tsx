@@ -72,8 +72,15 @@ export default function App() {
   // Each read starts from the browser's last copy of it (see `peek`), so the
   // terminal draws real prices the instant it opens and the network only
   // freshens them.
-  const polled = usePoll(getMarkets, 900, [], () => peek<Market[]>("/api/markets"));
+  const seedList = useRef<Market[] | null | undefined>(undefined);
+  const polled = usePoll(getMarkets, 900, [], () => {
+    seedList.current = peek<Market[]>("/api/markets");
+    return seedList.current;
+  });
   const markets = polled ?? [];
+  /// Whether the list on screen came from the server rather than this
+  /// browser's cached copy, which can predate a market listed since.
+  const fresh = !!polled && polled !== seedList.current;
   // Each answer is a fresh array, so a change of reference is a poll that
   // came back: the status bar's liveness, without a request of its own.
   const [lastOk, setLastOk] = useState(0);
@@ -84,8 +91,8 @@ export default function App() {
   // back to the server's demo account, so every visitor without a wallet saw
   // one shared balance and its positions as their own, and traded them.
   const account = usePoll(
-    () => (owner ? getAccount(owner) : Promise.resolve(null)), 1800, [accountTick, owner],
-    () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null));
+    () => (owner ? getAccount(owner) : Promise.resolve(null)), 1800, [owner],
+    () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null), accountTick);
   const { setVisible: openWallet } = useWalletModal();
 
   // Twice a second against a one-second window: fast enough that the book is
@@ -94,15 +101,20 @@ export default function App() {
   const batch = usePoll(() => (symbol ? getBatch(symbol) : Promise.resolve(null)), 500, [symbol],
     () => (symbol ? peek<Batch>(`/api/batch/${symbol}`) : null));
 
+  // A linked market missing from a cached list is not yet known to be
+  // missing: it may have been listed since the cache was written. Falling
+  // back to the first market there put a WIND link on SPYx, and its orders
+  // with it. Until the server's own list says, the terminal waits.
   const market = useMemo(
-    () => markets.find((m) => m.symbol === symbol) ?? markets[0],
-    [markets, symbol]
+    () => markets.find((m) => m.symbol === symbol) ?? (symbol && !fresh ? undefined : markets[0]),
+    [markets, symbol, fresh]
   );
 
-  // Also corrects a symbol that came in off a link and does not exist.
+  // Also corrects a symbol that came in off a link and does not exist, by
+  // the server's list only (see `fresh`).
   useEffect(() => {
-    if (markets.length && !markets.some((m) => m.symbol === symbol)) setSymbol(markets[0].symbol);
-  }, [markets, symbol]);
+    if (fresh && markets.length && !markets.some((m) => m.symbol === symbol)) setSymbol(markets[0].symbol);
+  }, [markets, symbol, fresh]);
 
   useEffect(() => {
     if (!market) return;
@@ -158,7 +170,10 @@ export default function App() {
       showToast({ title: "Network error", description: String(e), status: "error" });
     } finally {
       setBusy(false);
+      // An order lands in the next batch, a few seconds on, so read again
+      // through that window rather than once now and then at the usual pace.
       setAccountTick((t) => t + 1);
+      for (const ms of [2000, 4000, 6500, 9000]) setTimeout(() => setAccountTick((t) => t + 1), ms);
     }
   }, [showToast, wallet, openWallet]);
 
@@ -225,7 +240,7 @@ export default function App() {
           undefined,
           market.observed && !market.observed.seasoned
             ? "Clears in the opening auction."
-            : "Fills in the next batch, within a second.");
+            : "Fills when the next batch clears, in a few seconds.");
       }}
       /* The pool is Earn's job on a wide screen, where the rail links to it.
          The phone's account pane keeps its deposit as it was. */

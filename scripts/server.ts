@@ -698,9 +698,10 @@ async function shadowNameMap(): Promise<Map<string, string>> {
   if (CLUSTER !== "devnet") return new Map();
   if (!shadowNames) {
     const { SHADOWS } = await import("./testnet-flow");
-    shadowNames = new Map(seeded
-      .filter((p) => SHADOWS[p.symbol]?.symbol === p.symbol && SHADOWS[p.symbol].name)
-      .map((p) => [p.pair, SHADOWS[p.symbol].name!]));
+    // The real token's name for a copy of one, and the seeding script's own
+    // for an invented token ("Wind"), which otherwise listed as its ticker.
+    shadowNames = new Map(seeded.map((p) => [p.pair,
+      SHADOWS[p.symbol]?.symbol === p.symbol && SHADOWS[p.symbol].name ? SHADOWS[p.symbol].name! : p.name]));
   }
   return shadowNames;
 }
@@ -1953,6 +1954,8 @@ async function marketsView() {
         // `observed`, which only exists for markets opened on a pool.
         // The whole pot at the last prices, and what of it is held in kind.
         backingUsd: potUsd(m.address, ma.backingUsd),
+        // What of the pot open positions hold: backing above it can leave.
+        backingLockedUsd: num(ma.lockedUsd) / 1e6,
         backingInKind: books[m.address.toBase58()]?.amounts ?? {},
         lossBudgetUsd: num(ma.lossBudgetUsd) / 1e6,
         // Null for a market with a feed behind it. For one listed against a
@@ -2704,6 +2707,9 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   {
     const pass = async () => {
       await rpcWho.run("auction", auction).catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
+      // A clear moves positions; while orders are arriving, the next account
+      // read should see them rather than a view cached before the clear.
+      if (Date.now() < auctionHotUntil) accountMemo.clear();
       const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
       const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
         ? void pass() : void setTimeout(wait, 100);
@@ -2850,7 +2856,13 @@ app.get("/api/pool/:address", async (req, res) => {
 // seconds: run the auction at full speed for a while.
 app.use("/api/tx", (_req, _res, next) => { heatAuction(); next(); });
 
+/// When a listing was last built. The send that follows it looks for the new
+/// market straight away: discovery runs every ten minutes otherwise, and the
+/// lister was told "live" while the site did not show the market for that long.
+let listingBuiltAt = 0;
+
 app.post("/api/tx/list-market", async (req, res) => {
+  listingBuiltAt = Date.now();
   try {
     const owner = ownerOf(req);
     const source = new PublicKey(req.body.pool);
@@ -3114,9 +3126,12 @@ app.get("/api/rewards", async (req, res) => {
     const listed: {
       symbol: string; volume: number; earned: number; pending: number; pendingPoints: number;
     }[] = [];
+    // Every market from the batched read, not a request each: nineteen in a
+    // row kept the page's points blank for seconds after the leaderboard.
+    const byAddress = await marketsByAddress();
     for (const m of Object.values(rt)) {
-      const acc: any = await program.account.market.fetch(m.address);
-      if (!acc.deployer.equals(owner)) continue;
+      const acc: any = byAddress.get(m.address.toBase58());
+      if (!acc || !acc.deployer.equals(owner)) continue;
       listed.push({
         symbol: m.symbol,
         volume: num(acc.volumeUsd) / 1e6,
@@ -3451,6 +3466,22 @@ app.post("/api/tx/unback-market", async (req, res) => {
     const want = all || pot === 0n ? held
       : (BigInt(Math.floor(usd * 1e6)) * totalShares) / pot;
     const shares = want > held ? held : want;
+    // The program keeps what open positions have reserved in the pot, and
+    // refused with "insufficient free liquidity", which read as the pool
+    // running dry. Said here in this market's own terms, with the most that
+    // can come out now.
+    const locked = BigInt(Math.floor(num(ma.lockedUsd)));
+    const value = totalShares > 0n ? (shares * pot) / totalShares : 0n;
+    if (pot - value < locked) {
+      const free = pot > locked ? pot - locked : 0n;
+      const mine = totalShares > 0n ? (held * pot) / totalShares : 0n;
+      const can = free < mine ? free : mine;
+      const usdOf = (v: bigint) => `$${(Number(v) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+      return res.status(400).json({
+        error: `${usdOf(locked)} of ${m.symbol}'s backing is held for its open positions. ` +
+          (can > 0n ? `You can withdraw up to ${usdOf(can)} now.` : "Nothing can come out until they close."),
+      });
+    }
 
     // Paid back in the mix it is held in, so every token needs somewhere to
     // land; wrapped SOL is unwrapped straight after.
@@ -3583,8 +3614,20 @@ app.post("/api/tx/close", async (req, res) => {
     const owner = ownerOf(req);
     const m = rt[req.body.symbol];
     if (!m) return res.status(404).json({ error: "unknown market" });
-    const { builder } = await closeOrder(m, owner, Number(req.body.size || 0));
-    res.json(await buildTx(owner, [await builder.instruction()]));
+    const { builder, size } = await closeOrder(m, owner, Number(req.body.size || 0));
+    // A full close takes the position's take profit and stop with it, in the
+    // same signature. Left standing they outlived the position, sized "All",
+    // and would fire against the next position opened on this market. Only
+    // the owner can cancel an order, so it cannot be left to the keeper.
+    const open = await closableUsd(m, owner);
+    const full = !!open && size >= open.usd - 1e-6;
+    const triggers = full
+      ? (await program.account.order.all([{ memcmp: { offset: 8 + 1, bytes: owner.toBase58() } }]))
+          .filter((o: any) => String(o.account.market) === m.address.toBase58() && o.account.kind === 0)
+      : [];
+    const cancels = await Promise.all(triggers.map((o: any) =>
+      cancelOrderIx(owner, { symbol: m.symbol, slot: o.account.slot })));
+    res.json(await buildTx(owner, [await builder.instruction(), ...cancels]));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
@@ -3624,6 +3667,10 @@ app.post("/api/tx/send", async (req, res) => {
         recordTrade({ symbol: r.symbol, side: r.side, size: Number(r.size),
                       price: px(rt[r.symbol]), kind: r.kind });
       }
+    }
+    if (Date.now() - listingBuiltAt < 5 * 60_000) {
+      void rpcWho.run("discover", async () => { await discoverMarkets(); await refreshListedDay(); })
+        .catch((e: any) => console.warn(`discover after listing: ${e?.message ?? e}`));
     }
     res.json({ ok: true, sig });
   } catch (e: any) { res.status(400).json({ ok: false, error: explain(e) }); }

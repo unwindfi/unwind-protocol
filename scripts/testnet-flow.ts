@@ -12,10 +12,10 @@
 /// mark, its velocity clamp, depth, budgets) sees exactly what it would see if
 /// the flow were organic. The authority mints both sides of every pool, so
 /// whatever a swap needs it mints first; nothing here can run out.
-import DLMM, { StrategyType } from "@meteora-ag/dlmm";
+import DLMM, { StrategyType, deriveBinArrayBitmapExtension } from "@meteora-ag/dlmm";
 import { BN } from "@coral-xyz/anchor";
 import {
-  Connection, Keypair, PublicKey, sendAndConfirmTransaction, Transaction,
+  Connection, Keypair, PublicKey, SYSVAR_RENT_PUBKEY, SystemProgram, sendAndConfirmTransaction, Transaction,
 } from "@solana/web3.js";
 import { getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
 
@@ -116,13 +116,36 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
       const realPrice = real[SHADOWS[s.symbol].mint]?.usdPrice;
       if (!realPrice) continue;
       try {
-        await follow(s, realPrice);
+        try {
+          await follow(s, realPrice);
+        } catch (e: any) {
+          // A pool whose price has walked past the range its own account
+          // tracks needs a bitmap extension before it can be swapped in; the
+          // ORCA copy got there and every pass failed. Made once, then retried.
+          if (!/BitmapExtensionAccountIsNotProvided/.test(String(e?.message ?? e) + JSON.stringify(e?.logs ?? ""))) throw e;
+          await addBitmapExtension(new PublicKey(s.pair));
+          console.log(`flow ${s.symbol}: added its bin array bitmap extension`);
+          await follow(s, realPrice);
+        }
       } catch (e: any) {
         // One pool that cannot move must not hold the others still.
         console.warn(`flow ${s.symbol}: ${e?.message ?? e}`);
       }
     }
   };
+
+  async function addBitmapExtension(pair: PublicKey) {
+    const dlmm = await DLMM.create(conn, pair);
+    const [ext] = deriveBinArrayBitmapExtension(pair, dlmm.program.programId);
+    if (await conn.getAccountInfo(ext)) return;
+    const ix = await (dlmm.program.methods as any).initializeBinArrayBitmapExtension()
+      .accounts({
+        lbPair: pair, binArrayBitmapExtension: ext, funder: authority.publicKey,
+        systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
+      })
+      .instruction();
+    await sendAndConfirmTransaction(conn, new Transaction().add(ix), [authority]);
+  }
 
   async function follow(s: Seeded, realPrice: number) {
     const dlmm = await DLMM.create(conn, new PublicKey(s.pair));

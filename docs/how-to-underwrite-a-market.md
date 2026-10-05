@@ -99,6 +99,9 @@ never underwrote the market. A market with no open positions needs no price to
 withdraw from, so backing is never stuck behind a market whose price source
 has stopped.
 
+The withdraw dialog shows how much can come out now, and a request for more is
+answered with the amount held for open positions and the most you can take.
+
 ## Why anyone would do it
 
 Underwriting is the mechanism by which somebody who wants a market to exist

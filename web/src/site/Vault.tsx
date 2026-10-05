@@ -33,9 +33,9 @@ export default function VaultPage() {
   const { setVisible } = useWalletModal();
   const owner = wallet.publicKey?.toBase58();
   const [tick, setTick] = useState(0);
-  const account = usePoll(() => getAccount(owner), 3000, [owner, tick]);
+  const account = usePoll(() => getAccount(owner), 3000, [owner], undefined, tick);
   const markets = usePoll(getMarkets, 5000) ?? NONE;
-  const backings = usePoll(() => getBackings(owner), 5000, [owner, tick]) ?? NO_BACKINGS;
+  const backings = usePoll(() => getBackings(owner), 5000, [owner], undefined, tick) ?? NO_BACKINGS;
   const apy = usePoll(getApy, 30_000);
   const series = usePoll(getApySeries, 60_000);
   const devnet = useHasBackend() === true;

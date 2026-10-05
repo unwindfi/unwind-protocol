@@ -20,6 +20,8 @@ export interface Market {
   /// First-loss capital behind this market, and the budget it is held to.
   /// Any market can be backed, whatever prices it.
   backingUsd: number; lossBudgetUsd: number;
+  /// What of the backing open positions hold; absent from an older server.
+  backingLockedUsd?: number;
   sparkline: number[];
   /// Age of the price this market last posted on chain, and the age at which
   /// the program starts rejecting orders against it.
@@ -420,9 +422,14 @@ export function usePoll<T>(
   fn: () => Promise<T>, ms: number, deps: unknown[] = [],
   /// What to show before the first answer, usually `peek` of the same read.
   seed?: () => T | null,
+  /// Bumped after a transaction to read again at once. Unlike `deps`, it
+  /// keeps what is on screen until the new answer lands: clearing it made a
+  /// backer's "Yours now" read $0.00 for a few seconds after every deposit.
+  refresh?: unknown,
 ) {
   const [data, setData] = useState<T | null>(() => seed?.() ?? null);
   const first = useRef(true);
+  const lastDeps = useRef(deps);
   useEffect(() => {
     // Each run of the effect gets its own flag. A shared one was set back to
     // true by the next run before the previous run's fetch had landed, so
@@ -430,8 +437,12 @@ export function usePoll<T>(
     // writing its answers over the new one's.
     let alive = true;
     let timer: number | undefined;
-    // What was fetched for the old inputs is not an answer for the new ones.
-    if (!first.current) setData(seed?.() ?? null);
+    // What was fetched for the old inputs is not an answer for the new ones;
+    // a refresh of the same inputs keeps it.
+    const changed = deps.length !== lastDeps.current.length
+      || deps.some((d, i) => !Object.is(d, lastDeps.current[i]));
+    lastDeps.current = deps;
+    if (!first.current && changed) setData(seed?.() ?? null);
     first.current = false;
     const run = async () => {
       try {
@@ -443,7 +454,7 @@ export function usePoll<T>(
     run();
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, refresh]);
   return data;
 }
 

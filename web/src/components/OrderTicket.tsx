@@ -669,7 +669,7 @@ export function OrderTicket({
         {/* A listed market still seasoning holds every order for its opening
             batch, so "within a second" would be the wrong promise. */}
         <KV k="Fill">{maker ? "This batch, if a taker crosses"
-          : m.observed && !m.observed.seasoned ? "Opening auction" : "Next batch, within a second"}</KV>
+          : m.observed && !m.observed.seasoned ? "Opening auction" : "Next batch, in a few seconds"}</KV>
         <KV k="Fees">{(m.openFeeBps / 100).toFixed(4)}% / {money(calc.fee)}</KV>
       </div>
 
