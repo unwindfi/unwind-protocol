@@ -3864,7 +3864,21 @@ for (const [route, method] of [["deposit", "addLiquidity"], ["withdraw", "remove
 app.post("/api/tx/send", async (req, res) => {
   try {
     const raw = Buffer.from(String(req.body.tx), "base64");
-    const sig = await conn.sendRawTransaction(raw, { skipPreflight: false });
+    // An order that arrives while its market's batch is sealed (cleared, its
+    // orders still settling) is refused by the program. The trader has
+    // already signed, and the batch reopens within seconds, so hold the same
+    // transaction and send it again rather than hand back "Rejected": under
+    // load that refusal met one order in fifty.
+    let sig = "";
+    for (let tries = 0; ; tries++) {
+      try { sig = await conn.sendRawTransaction(raw, { skipPreflight: false }); break; }
+      catch (e: any) {
+        const sealed = /BatchSealed|sealed and awaiting settlement/.test(
+          `${e?.message ?? e} ${(e?.logs ?? e?.transactionLogs ?? []).join(" ")}`);
+        if (!sealed || tries >= 8) throw e;
+        await new Promise((r) => setTimeout(r, 1_500));
+      }
+    }
     await conn.confirmTransaction({
       signature: sig,
       blockhash: req.body.blockhash,

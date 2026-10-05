@@ -61,6 +61,12 @@ the marginal price. Allocation is deliberately not first come, because time
 priority at the clearing price would restore a reason to submit earlier and
 reintroduce the race the batch exists to remove.
 
+Between clearing and the last of its orders settling, a batch is sealed and
+the program refuses new orders into it. On devnet the venue's server holds an
+order that meets a sealed batch and sends it again every second and a half,
+up to eight times, so the trader's signed order lands in the next batch
+instead of coming back rejected.
+
 Nothing clears outside a band around the oracle mark, in either flow. The
 band is the narrower of the market's widest spread and half its maintenance
 margin. Without it, two accounts belonging to one person could cross each other
