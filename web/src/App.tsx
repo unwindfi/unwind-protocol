@@ -72,15 +72,18 @@ export default function App() {
   // Each read starts from the browser's last copy of it (see `peek`), so the
   // terminal draws real prices the instant it opens and the network only
   // freshens them.
-  const seedList = useRef<Market[] | null | undefined>(undefined);
-  const polled = usePoll(getMarkets, 900, [], () => {
-    seedList.current = peek<Market[]>("/api/markets");
-    return seedList.current;
-  });
+  // Lists that came back from the server, as against this browser's cached
+  // copy, which can predate a market listed since. Marked as they arrive:
+  // comparing against the cached copy failed in development, where React
+  // builds initial state twice and the two copies are different objects.
+  const fetched = useRef(new WeakSet<Market[]>());
+  const polled = usePoll(async () => {
+    const l = await getMarkets();
+    fetched.current.add(l);
+    return l;
+  }, 900, [], () => peek<Market[]>("/api/markets"));
   const markets = polled ?? [];
-  /// Whether the list on screen came from the server rather than this
-  /// browser's cached copy, which can predate a market listed since.
-  const fresh = !!polled && polled !== seedList.current;
+  const fresh = !!polled && fetched.current.has(polled);
   // Each answer is a fresh array, so a change of reference is a poll that
   // came back: the status bar's liveness, without a request of its own.
   const [lastOk, setLastOk] = useState(0);
