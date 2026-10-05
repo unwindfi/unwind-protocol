@@ -2804,6 +2804,10 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         const sig = await program.methods
           .clearBatch()
           .accounts({ pool, market: m.address, batch, priceUpdate: oracleOf(m) })
+          // A full batch (64 orders) takes about 202k compute units to clear,
+          // just past the 200k default: KITE's sat full and uncleared, every
+          // order in it stuck, until it was given room.
+          .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
           .rpc();
         // Best effort: the clear has already landed, and failing to read its
         // logs back must not stop the settlements that follow it.
