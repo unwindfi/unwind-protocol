@@ -82,6 +82,8 @@ const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
 const auctionWorking = new Set<string>();
 /// How many markets the auction works at once (see `auction`).
 const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 6);
+/// How many settlement transactions one market sends at once.
+const SETTLE_PARALLEL = Number(process.env.SETTLE_PARALLEL ?? 4);
 /// How many marks the keeper pushes at once (see `observer`).
 const MARK_PARALLEL = Number(process.env.MARK_PARALLEL ?? 8);
 /// Until when the auction runs at full speed: set when a batch is seen
@@ -2870,26 +2872,37 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       };
       const send = (ixs: TransactionInstruction[]) =>
         provider.sendAndConfirm(new Transaction().add(...withComputeLimit(ixs)));
+      // The groups go out together, up to SETTLE_PARALLEL at a time, rather
+      // than each waiting for the one before it to confirm. A batch is sealed
+      // until its last order settles and refuses new orders meanwhile, so
+      // settling fifty orders a group at a time held a busy market shut for
+      // about a minute, and that is most of why opens took 40s and more.
+      const groups: { group: TransactionInstruction[]; members: typeof pending }[] = [];
       let at = 0;
       for (const group of packInstructions(pending.map((d) => d.ix), authority.publicKey)) {
-        const members = pending.slice(at, at + group.length);
+        groups.push({ group, members: pending.slice(at, at + group.length) });
         at += group.length;
-        try {
-          await send(group);
-          members.forEach((d) => settled(d.o));
-        } catch {
-          // One order that cannot settle fails its whole transaction, so
-          // retry that group one at a time rather than strand the others.
-          // But a group that timed out has often landed: read the batch
-          // again and retry only what is still active. Retrying all of them
-          // sent a transaction per settled order that could only fail
-          // (`InvalidParameter`, 65 in ten minutes under load).
-          const now: any = await program.account.batch.fetch(batch).catch(() => null);
-          for (const d of members) {
-            if (now && !now.orders[d.i]?.active) { settled(d.o); continue; }
-            try { await send([d.ix]); settled(d.o); }
-            catch (e: any) { console.warn(`settle ${m.symbol}#${d.i}: ${e?.message ?? e}`); }
-          }
+      }
+      const failed: typeof pending = [];
+      let nextGroup = 0;
+      await Promise.all(Array.from({ length: Math.min(SETTLE_PARALLEL, groups.length) }, async () => {
+        while (nextGroup < groups.length) {
+          const { group, members } = groups[nextGroup++];
+          try { await send(group); members.forEach((d) => settled(d.o)); }
+          catch { failed.push(...members); }
+        }
+      }));
+      if (failed.length) {
+        // One order that cannot settle fails its whole transaction, so retry
+        // those one at a time rather than strand the others. But a group that
+        // timed out has often landed: read the batch again and retry only
+        // what is still active. Retrying all of them sent a transaction per
+        // settled order that could only fail (`InvalidParameter`).
+        const now: any = await program.account.batch.fetch(batch).catch(() => null);
+        for (const d of failed) {
+          if (now && !now.orders[d.i]?.active) { settled(d.o); continue; }
+          try { await send([d.ix]); settled(d.o); }
+          catch (e: any) { console.warn(`settle ${m.symbol}#${d.i}: ${e?.message ?? e}`); }
         }
       }
     }
