@@ -5,7 +5,7 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "build": "anchor build",
+    "build": "anchor build -- --features devnet",
     "test:unit": "cargo test -p unwind --lib",
     "test:integration": "ts-node scripts/gen-oracle-accounts.ts && anchor test --skip-build",
     "gen:oracles": "ts-node scripts/gen-oracle-accounts.ts",

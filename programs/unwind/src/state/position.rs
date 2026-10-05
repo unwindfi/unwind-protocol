@@ -50,6 +50,21 @@ impl Position {
         self.size_usd.saturating_sub(self.closing_usd)
     }
 
+    /// The size a fired close trigger puts into the batch: `requested`, or
+    /// all that is still closable when it asks for zero or for more. The same
+    /// floor as a hand-submitted reduce-only order: no smaller than an open
+    /// may be, unless it is everything left.
+    pub fn trigger_close_size(&self, requested: u64, min_position_usd: u64) -> Result<u64> {
+        let closable = self.closable_usd();
+        let size = if requested == 0 || requested > closable { closable } else { requested };
+        require!(size > 0, PerpError::PositionEmpty);
+        require!(
+            size >= min_position_usd || size == closable,
+            PerpError::PositionTooSmall
+        );
+        Ok(size)
+    }
+
     pub fn reserve_close(&mut self, size_usd: u64) -> Result<()> {
         require!(size_usd <= self.closable_usd(), PerpError::PositionTooSmall);
         self.closing_usd = self
@@ -103,6 +118,23 @@ mod tests {
             last_update_ts: 0,
             _reserved: [0; 24],
         }
+    }
+
+    #[test]
+    fn a_triggered_close_keeps_the_reduce_only_floor() {
+        let p = position(true, 1_000);
+        assert_eq!(p.trigger_close_size(0, 100).unwrap(), 1_000, "zero means all of it");
+        assert_eq!(p.trigger_close_size(5_000, 100).unwrap(), 1_000);
+        assert_eq!(p.trigger_close_size(100, 100).unwrap(), 100);
+        assert!(p.trigger_close_size(1, 100).is_err(), "dust under the floor is refused");
+        // What is left may always go, however small.
+        let mut small = position(true, 1_000);
+        small.closing_usd = 950;
+        assert_eq!(small.trigger_close_size(0, 100).unwrap(), 50);
+        assert_eq!(small.trigger_close_size(50, 100).unwrap(), 50);
+        assert!(small.trigger_close_size(10, 100).is_err());
+        small.closing_usd = 1_000;
+        assert!(small.trigger_close_size(0, 100).is_err(), "all of it already promised");
     }
 
     #[test]

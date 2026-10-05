@@ -209,9 +209,10 @@ npx ts-node scripts/server.ts               # http://localhost:3000
 The server runs the price poller, the batch keeper, the observation crank, the
 liquidation keeper and the funding crank, and serves the API and the app.
 
-Only the program's upgrade authority can create a pool. A build without the
-`devnet` feature creates pools that trust Pyth's receiver and nothing else, so
-localnet and devnet builds need `--features devnet` for `mock-pyth`.
+A build without the `devnet` feature lets only the program's upgrade authority
+create a pool, and that pool trusts Pyth's receiver and nothing else. Localnet
+and devnet builds need `--features devnet` (`npm run build` passes it) for
+`mock-pyth` and for bootstrap's own pool keys.
 Bootstrap and the server need network access: they refuse to start without a
 live price for every market.
 

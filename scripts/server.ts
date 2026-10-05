@@ -1915,7 +1915,9 @@ async function trimBudget(market: PublicKey, o: any) {
   const span = num(o.lastUpdateTs) - num(o.firstUpdateTs);
   if (o.observations < MIN_OBSERVATIONS || span < MIN_OBSERVATION_WINDOW_SEC) return;
 
-  const depth = num(o.depthUsd);
+  // The depth that has held (`budget_depth_usd`), which is what the program
+  // cuts to; the last reading alone can be thinned for one crank.
+  const depth = num(o.budgetDepthUsd ?? o.depthUsd);
   if (depth === 0) return;
   const ma: any = await program.account.market.fetch(market);
   if (depth >= num(ma.lossBudgetUsd)) return;
@@ -3998,7 +4000,7 @@ async function cancelOrderIx(owner: PublicKey, body: any) {
   return program.methods
     .cancelOrder()
     .accounts({
-      owner, pool, order: orderPda(m.address, owner, Number(body.slot)),
+      owner, pool, market: m.address, order: orderPda(m.address, owner, Number(body.slot)),
       usdcMint, usdcVault, ownerUsdc: ata(owner, usdcMint),
       tokenProgram: TOKEN_PROGRAM_ID,
     })

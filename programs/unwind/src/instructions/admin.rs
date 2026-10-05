@@ -180,9 +180,14 @@ pub struct InitializePool<'info> {
 }
 
 /// Who may create a pool: the program's upgrade authority, and nobody once
-/// the program is immutable.
-pub fn check_pool_creator(upgrade_authority: Option<Pubkey>, signer: &Pubkey) -> Result<()> {
-    require!(upgrade_authority == Some(*signer), PerpError::Unauthorized);
+/// the program is immutable. Open on a `devnet` build, whose test clusters
+/// load the program without an upgrade authority and bootstrap pools from
+/// fresh keys; there the instructions that pay out are bound to their own
+/// pool instead.
+pub fn check_pool_creator(upgrade_authority: Option<Pubkey>, signer: &Pubkey, pinned: bool) -> Result<()> {
+    if pinned {
+        require!(upgrade_authority == Some(*signer), PerpError::Unauthorized);
+    }
     Ok(())
 }
 
@@ -216,11 +221,13 @@ impl PoolParams {
 
 pub fn initialize_pool(ctx: Context<InitializePool>, params: PoolParams) -> Result<()> {
     params.validate()?;
+    let pinned = !cfg!(feature = "devnet");
     check_pool_creator(
         ctx.accounts.program_data.upgrade_authority_address,
         &ctx.accounts.authority.key(),
+        pinned,
     )?;
-    check_pyth_receiver(&params.pyth_receiver, !cfg!(feature = "devnet"))?;
+    check_pyth_receiver(&params.pyth_receiver, pinned)?;
 
     let pool = &mut ctx.accounts.pool;
     pool.bump = ctx.bumps.pool;
@@ -841,10 +848,11 @@ mod tests {
     #[test]
     fn only_the_upgrade_authority_creates_a_pool() {
         let admin = Pubkey::new_unique();
-        assert!(check_pool_creator(Some(admin), &admin).is_ok());
-        assert!(check_pool_creator(Some(admin), &Pubkey::new_unique()).is_err());
+        assert!(check_pool_creator(Some(admin), &admin, true).is_ok());
+        assert!(check_pool_creator(Some(admin), &Pubkey::new_unique(), true).is_err());
         // An immutable program creates no more pools.
-        assert!(check_pool_creator(None, &admin).is_err());
+        assert!(check_pool_creator(None, &admin, true).is_err());
+        assert!(check_pool_creator(None, &admin, false).is_ok());
     }
 
     #[test]

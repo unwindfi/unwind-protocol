@@ -101,7 +101,21 @@ market, and two permissionless instructions move it across:
 Neither can pay anyone but the account the program says is owed. The devnet
 server runs both every minute, and claiming from the Rewards page syncs the
 wallet's own markets first. Backing and pool points are brought up to date
-whenever the stake changes, or by anyone calling `accrue_points`.
+whenever the stake changes, or by the wallet itself calling `accrue_points`.
+A wallet with pool tokens it minted must show its pool token account when it
+does, since the stake is cut to what that account holds.
+
+## One pool per wallet
+
+USDC rewards sit in one pool's vault, so each wallet's rewards are tied to
+one pool, the first one that credits it USDC. After that:
+
+1. `claim_rewards` pays only from that pool.
+2. `sync_deployer` moves a market's USDC only to a deployer tied to the
+   market's pool, and `sync_referral` only to a referrer tied to the same pool
+   as the referee. Anything else stays owed where it is.
+3. A referred wallet is tied to the first pool it trades in. A fill in any
+   other pool keeps its discount but carves nothing for its referrer.
 
 ## Numerical example
 

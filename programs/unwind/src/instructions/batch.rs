@@ -899,8 +899,9 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
 
     let trader_info = ctx.accounts.trader.to_account_info();
     let mut trader = load_trader(&trader_info)?;
-    let route = match &trader {
-        Some(t) => FeeRoute::for_trade(t, &order.owner, &ctx.accounts.market.deployer),
+    let pool_key = ctx.accounts.pool.key();
+    let route = match trader.as_mut() {
+        Some(t) => FeeRoute::for_trade_in(t, &order.owner, &ctx.accounts.market.deployer, pool_key),
         None => FeeRoute {
             deployer: order.owner != ctx.accounts.market.deployer
                 && ctx.accounts.market.deployer != Pubkey::default(),

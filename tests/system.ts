@@ -25,6 +25,8 @@ import { createHash } from "crypto";
 import { createLookupTable, loadLookupTable, sendV0 } from "../scripts/alt";
 import { MAX_COMPUTE_UNITS, packInstructions, withComputeLimit } from "../scripts/pack";
 
+const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+
 const USD = (n: number) => new BN(Math.round(n * 1e6));
 const EXP = -8;
 const priceArgs = (price: number, over: Partial<any> = {}) => ({
@@ -270,6 +272,7 @@ describe("system", () => {
       .accounts({
         authority: authority.publicKey, pool, usdcMint, usdcVault, lpMint,
         tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        programData: PublicKey.findProgramAddressSync([perps.programId.toBuffer()], BPF_LOADER_UPGRADEABLE)[0],
       })
       .rpc();
 
@@ -718,8 +721,8 @@ describe("system", () => {
       tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
     });
 
-    const cancelAccounts = (kp: Keypair, order: PublicKey) => ({
-      owner: kp.publicKey, pool, order,
+    const cancelAccounts = (kp: Keypair, order: PublicKey, sym = "JJJ") => ({
+      owner: kp.publicKey, pool, market: markets.get(sym)!, order,
       usdcMint, usdcVault, ownerUsdc: usdcOf.get(kp.publicKey.toBase58())!,
       tokenProgram: TOKEN_PROGRAM_ID,
     });
@@ -817,6 +820,17 @@ describe("system", () => {
         assert.fail("another trader must not cancel this order");
       } catch (e: any) {
         assert.match(e.toString(), /Unauthorized|ConstraintSeeds|ConstraintHasOne/);
+      }
+
+      // The refund is drawn from the order's own market's pool, so naming any
+      // other market is refused.
+      try {
+        await perps.methods.cancelOrder()
+          .accounts(cancelAccounts(alice, orderPda(markets.get("JJJ")!, alice.publicKey, 2), "GGG"))
+          .signers([alice]).rpc();
+        assert.fail("an order must be cancelled against its own market");
+      } catch (e: any) {
+        assert.match(e.toString(), /MarketPoolMismatch|ConstraintSeeds|ConstraintHasOne/);
       }
 
       await perps.methods.cancelOrder()

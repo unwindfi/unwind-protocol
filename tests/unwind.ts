@@ -15,6 +15,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { Unwind } from "../target/types/unwind";
 
+const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+
 const USD = (n: number) => new BN(Math.round(n * 1e6));
 /// These fixtures are written as accounts of the real receiver's address, so
 /// this pool is told to trust that program.
@@ -155,6 +157,7 @@ describe("unwind", () => {
         lpMint,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
+        programData: PublicKey.findProgramAddressSync([program.programId.toBuffer()], BPF_LOADER_UPGRADEABLE)[0],
       })
       .rpc();
 

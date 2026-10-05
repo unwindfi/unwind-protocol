@@ -166,6 +166,11 @@ pub struct SyncReferral<'info> {
 
 /// Moves what a referee's trading has earned their referrer across to them.
 /// Permissionless: it can only pay the referrer the referee named.
+///
+/// The USDC part moves only between wallets tied to the same pool, the one
+/// whose vault holds it (`Trader::rewards_pool`). A referee not yet tied to a
+/// pool, or tied to a different one from its referrer, keeps it owed: it is
+/// not lost, and it is never credited against a vault it is not in.
 pub fn sync_referral(ctx: Context<SyncReferral>) -> Result<()> {
     let referee = &mut ctx.accounts.referee;
     let referrer = &mut ctx.accounts.referrer;
@@ -173,19 +178,21 @@ pub fn sync_referral(ctx: Context<SyncReferral>) -> Result<()> {
         .points
         .checked_add(referee.referrer_points_owed)
         .ok_or(PerpError::MathOverflow)?;
-    referrer.rewards_usd = referrer
-        .rewards_usd
-        .checked_add(referee.referrer_rewards_owed)
-        .ok_or(PerpError::MathOverflow)?;
-    referrer.referral_earned_usd = referrer
-        .referral_earned_usd
-        .saturating_add(referee.referrer_rewards_owed);
     referrer.referred_volume_usd = referrer
         .referred_volume_usd
         .saturating_add(referee.referrer_volume_owed);
     referee.referrer_points_owed = 0;
-    referee.referrer_rewards_owed = 0;
     referee.referrer_volume_owed = 0;
+
+    let owed = referee.referrer_rewards_owed;
+    if owed > 0 && referrer.bind_rewards_pool(referee.rewards_pool) {
+        referrer.rewards_usd = referrer
+            .rewards_usd
+            .checked_add(owed)
+            .ok_or(PerpError::MathOverflow)?;
+        referrer.referral_earned_usd = referrer.referral_earned_usd.saturating_add(owed);
+        referee.referrer_rewards_owed = 0;
+    }
     Ok(())
 }
 
@@ -205,21 +212,27 @@ pub struct SyncDeployer<'info> {
 /// Moves a market's listing rewards to whoever listed it: their share of its
 /// fees and points on its volume since the last sync. Permissionless: it can
 /// only pay the market's own deployer.
+///
+/// The USDC sits in the market's pool's vault, so it moves only to a deployer
+/// tied to that pool (`Trader::rewards_pool`); otherwise it stays on the
+/// market.
 pub fn sync_deployer(ctx: Context<SyncDeployer>) -> Result<()> {
     let market = &mut ctx.accounts.market;
     let deployer = &mut ctx.accounts.deployer;
     let new_volume = market.volume_usd.saturating_sub(market.deployer_synced_volume_usd);
     let points = crate::math::bps_of(volume_points(new_volume), DEPLOYER_POINTS_BPS)?;
     deployer.points = deployer.points.checked_add(points).ok_or(PerpError::MathOverflow)?;
-    deployer.rewards_usd = deployer
-        .rewards_usd
-        .checked_add(market.deployer_rewards_usd)
-        .ok_or(PerpError::MathOverflow)?;
-    deployer.listing_earned_usd = deployer
-        .listing_earned_usd
-        .saturating_add(market.deployer_rewards_usd);
     market.deployer_synced_volume_usd = market.volume_usd;
-    market.deployer_rewards_usd = 0;
+
+    let owed = market.deployer_rewards_usd;
+    if owed > 0 && deployer.bind_rewards_pool(market.pool) {
+        deployer.rewards_usd = deployer
+            .rewards_usd
+            .checked_add(owed)
+            .ok_or(PerpError::MathOverflow)?;
+        deployer.listing_earned_usd = deployer.listing_earned_usd.saturating_add(owed);
+        market.deployer_rewards_usd = 0;
+    }
     Ok(())
 }
 
@@ -255,6 +268,9 @@ pub struct ClaimRewards<'info> {
 pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
     let amount = ctx.accounts.trader.rewards_usd;
     require!(amount > 0, PerpError::NothingToClaim);
+    // Paid only from the vault the rewards were carved into.
+    let pool_key = ctx.accounts.pool.key();
+    ctx.accounts.trader.check_claim_pool(&pool_key)?;
     // Always true while the books reconcile; checked so a bug elsewhere
     // cannot turn this into a way to take LP money.
     require!(amount <= ctx.accounts.pool.rewards_usd, PerpError::InsufficientLiquidity);
@@ -288,31 +304,32 @@ pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct AccruePoints<'info> {
-    #[account(mut, seeds = [TRADER_SEED, trader.owner.as_ref()], bump = trader.bump)]
+    /// The wallet itself. The LP stake shrinks to whatever balance is shown,
+    /// for good, so only the owner may choose what is shown.
+    pub owner: Signer<'info>,
+
+    #[account(mut, seeds = [TRADER_SEED, owner.key().as_ref()], bump = trader.bump)]
     pub trader: Box<Account<'info, Trader>>,
 
     #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
     pub pool: Box<Account<'info, Pool>>,
 
     /// The trader's LP token account, so LP points are paid only on what is
-    /// still held. Omit it for a wallet with none; its LP stake then counts
-    /// as zero from here on, which only ever errs against it.
+    /// still held. Required while the wallet has an LP stake; a wallet with
+    /// none may leave it out.
     #[account(
         constraint = owner_lp.mint == pool.lp_mint,
-        constraint = owner_lp.owner == trader.owner,
+        constraint = owner_lp.owner == owner.key(),
     )]
     pub owner_lp: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 }
 
-/// Brings a wallet's backing and LP points up to now. Permissionless, since
-/// all it does is count time that has already passed.
+/// Brings a wallet's backing and LP points up to now. Signed by the owner:
+/// only they can shrink their own LP stake.
 pub fn accrue_points(ctx: Context<AccruePoints>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-    let balance = ctx.accounts.owner_lp.as_ref().map(|a| a.amount).unwrap_or(0);
-    let trader = &mut ctx.accounts.trader;
-    trader.accrue_backing(now)?;
-    trader.accrue_lp(balance, now)?;
-    Ok(())
+    let balance = ctx.accounts.owner_lp.as_ref().map(|a| a.amount);
+    ctx.accounts.trader.accrue_points(balance, now)
 }
 
 #[event]

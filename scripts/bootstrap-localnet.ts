@@ -21,6 +21,8 @@ import { backingBookPda, ensureCustodies } from "./custodies";
 import { fetchQuotes, fetchSessions, Session } from "./prices";
 import { MOCK_PYTH_ID, mockPythProgram, postQuotes, priceAccountFor, relayKeypair } from "./mock-pyth";
 
+const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+
 const ROOT = path.join(__dirname, "..");
 /// Defaults to the local validator; `RPC_URL` points it at another cluster.
 /// Devnet is slower and charges for every account, so the market list is
@@ -188,6 +190,8 @@ async function main() {
     .accounts({
       authority: authority.publicKey, pool, usdcMint, usdcVault, lpMint,
       tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      // Only the program's upgrade authority may create a pool.
+      programData: PublicKey.findProgramAddressSync([program.programId.toBuffer()], BPF_LOADER_UPGRADEABLE)[0],
     })
     .rpc();
 

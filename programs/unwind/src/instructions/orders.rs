@@ -1,7 +1,8 @@
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::math::*;
-use crate::instructions::batch::market_price;
+use crate::instructions::batch::{admit_open, market_price};
+use crate::instructions::trade::check_open;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
@@ -79,6 +80,13 @@ pub struct PlaceOrder<'info> {
 pub fn place_order(ctx: Context<PlaceOrder>, params: OrderParams) -> Result<()> {
     let kind = OrderKind::from_u8(params.kind)?;
     require!(params.trigger_price > 0, PerpError::InvalidParameter);
+    // As for an order submitted by hand: a paused pool takes nothing, and a
+    // paused market still lets people set a way out.
+    require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
+    require!(
+        !ctx.accounts.market.paused || kind == OrderKind::Close,
+        PerpError::MarketPaused
+    );
 
     let clock = Clock::get()?;
     require!(
@@ -97,6 +105,18 @@ pub fn place_order(ctx: Context<PlaceOrder>, params: OrderParams) -> Result<()> 
         );
         let fee = bps_of(params.size_usd, ctx.accounts.market.open_fee_bps)?;
         require!(params.collateral_usd > fee, PerpError::ZeroAmount);
+        // The open's own caps, asked now so the trader is told now: side,
+        // leverage and open interest as they stand. They are asked again when
+        // it fires, since the position and the market can change in between.
+        check_open(
+            &ctx.accounts.pool,
+            &ctx.accounts.market,
+            &ctx.accounts.position,
+            params.is_long,
+            params.collateral_usd - fee,
+            params.size_usd,
+            params.trigger_price,
+        )?;
 
         transfer_checked(
             CpiContext::new(
@@ -167,11 +187,21 @@ pub struct CancelOrder<'info> {
     #[account(mut, seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
     pub pool: Box<Account<'info, Pool>>,
 
+    /// The order's market, and through it the pool whose vault took its
+    /// escrow. Without this the refund could be drawn from any pool's vault.
+    #[account(
+        has_one = pool @ PerpError::MarketPoolMismatch,
+        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
+        bump = market.bump,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
     #[account(
         mut,
         close = owner,
         has_one = owner @ PerpError::Unauthorized,
-        seeds = [ORDER_SEED, order.market.as_ref(), owner.key().as_ref(), &[order.slot]],
+        has_one = market @ PerpError::MarketPoolMismatch,
+        seeds = [ORDER_SEED, market.key().as_ref(), owner.key().as_ref(), &[order.slot]],
         bump = order.bump,
     )]
     pub order: Box<Account<'info, Order>>,
@@ -213,7 +243,13 @@ pub fn cancel_order(ctx: Context<CancelOrder>) -> Result<()> {
             refund,
             ctx.accounts.usdc_mint.decimals,
         )?;
-        ctx.accounts.pool.escrow_usd = ctx.accounts.pool.escrow_usd.saturating_sub(refund);
+        // Checked: escrow this pool never counted is not this pool's to pay.
+        ctx.accounts.pool.escrow_usd = ctx
+            .accounts
+            .pool
+            .escrow_usd
+            .checked_sub(refund)
+            .ok_or(PerpError::MathOverflow)?;
     }
 
     emit!(OrderCancelled {
@@ -319,9 +355,12 @@ pub struct ExecuteOrder<'info> {
 /// Fires a triggered order. Permissionless, because an order nobody can execute
 /// is not an order — it is a promise the trader has to keep watching.
 ///
-/// The account is closed either way: a trigger that has been reached is spent,
-/// and an expired one is dead. Leaving either behind would have the keeper
-/// re-reading it forever.
+/// The account closes when the order fires and when it has expired: a trigger
+/// that has been reached is spent, and an expired one is dead. A trigger that
+/// cannot become an order (a close whose position is empty, or already fully
+/// promised to other closing orders, or an open that no longer passes its
+/// caps) reverts instead, so the account stays until it fires, expires or the
+/// owner cancels it.
 pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
     let clock = Clock::get()?;
 
@@ -336,8 +375,12 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
                 &ctx.accounts.token_program,
                 refund,
             )?;
-            ctx.accounts.pool.escrow_usd =
-                ctx.accounts.pool.escrow_usd.saturating_sub(refund);
+            ctx.accounts.pool.escrow_usd = ctx
+                .accounts
+                .pool
+                .escrow_usd
+                .checked_sub(refund)
+                .ok_or(PerpError::MathOverflow)?;
         }
         emit!(OrderExpired {
             order: ctx.accounts.order.key(),
@@ -394,6 +437,21 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
         );
         let open_fee = bps_of(size_usd, ctx.accounts.market.open_fee_bps)?;
         require!(order.collateral_usd > open_fee, PerpError::ZeroAmount);
+        // The same caps as an order submitted by hand (side, leverage, open
+        // interest with this batch's resting opens), asked again because the
+        // position and the market may have moved since `place_order`. Clearing
+        // counts every order in the batch, and settlement books what it fills,
+        // so an open that could not stand must not get in at all.
+        admit_open(
+            &ctx.accounts.pool,
+            &ctx.accounts.market,
+            &ctx.accounts.position,
+            &*ctx.accounts.batch.load()?,
+            is_long,
+            order.collateral_usd - open_fee,
+            size_usd,
+            order.trigger_price,
+        )?;
 
         // The trigger price is the limit. For an open that is what a limit
         // order already meant, so nothing has to be invented here.
@@ -416,17 +474,14 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
     } else {
         require!(ctx.accounts.position.is_open(), PerpError::PositionEmpty);
         let is_long = ctx.accounts.position.is_long;
-        let requested = ctx.accounts.order.size_usd;
-        let closable = ctx.accounts.position.closable_usd();
-        let close_size = if requested == 0 || requested > closable {
-            closable
-        } else {
-            requested
-        };
-        // Zero here means the position is already promised to other closing
-        // orders. Nothing is wrong and nothing is owed -- the trigger is spent
-        // and the account closes -- but there is no order to make of it.
-        require!(close_size > 0, PerpError::PositionEmpty);
+        // Zero closable means the position is already promised to other
+        // closing orders: there is no order to make of it, so this reverts and
+        // the trigger waits. The reduce-only floor applies as it does to an
+        // order submitted by hand, so tiny triggers cannot fill the batch.
+        let close_size = ctx
+            .accounts
+            .position
+            .trigger_close_size(ctx.accounts.order.size_usd, ctx.accounts.market.min_position_usd)?;
 
         // A close needs a limit the trigger never carried, so it is taken from
         // the index that fired it. See `TRIGGER_SLIPPAGE_BPS`.

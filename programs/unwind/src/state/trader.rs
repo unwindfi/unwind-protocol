@@ -64,7 +64,13 @@ pub struct Trader {
     /// What this wallet's trading has earned its referrer, synced or not.
     pub given_to_referrer_usd: u64,
     pub given_to_referrer_points: u64,
-    pub _reserved: [u8; 32],
+    /// The pool whose vault holds this wallet's USDC rewards, and the pool its
+    /// referrer's cut is owed from. A wallet is a global account but rewards
+    /// sit in one pool's vault, so the two are tied here: a credit from any
+    /// other pool is left where it is, and `claim_rewards` pays only from this
+    /// one. `Pubkey::default()` until the first credit. Took the space that
+    /// was `_reserved`, so the account layout is unchanged.
+    pub rewards_pool: Pubkey,
 }
 
 /// The on-chain name behind a referral link: `unwindfi.xyz/?ref=<code>`.
@@ -123,6 +129,17 @@ impl FeeRoute {
             deployer: !is_deployer && *deployer != Pubkey::default(),
             discount_bps,
         }
+    }
+
+    /// `for_trade`, for a fill in `pool`. The referrer's cut is owed from the
+    /// pool the trader's wallet is tied to (`Trader::rewards_pool`), so a fill
+    /// in any other pool pays the referrer nothing: the cut stays with the
+    /// protocol. The referee's discount is kept either way. Ties an untied
+    /// wallet to `pool` when it has a referrer.
+    pub fn for_trade_in(trader: &mut Trader, owner: &Pubkey, deployer: &Pubkey, pool: Pubkey) -> Self {
+        let mut route = Self::for_trade(trader, owner, deployer);
+        route.referrer = route.referrer && trader.bind_rewards_pool(pool);
+        route
     }
 
     /// `fee` after this route's discount.
@@ -197,6 +214,42 @@ impl Trader {
             self.lp_usd = ((self.lp_usd as u128) * (held as u128) / (self.lp_shares as u128)) as u64;
             self.lp_shares = held;
         }
+        Ok(())
+    }
+
+    /// Brings backing and LP points up to `now`. `lp_balance` is what the
+    /// wallet's LP token account holds, or `None` if none was shown. A wallet
+    /// with an LP stake must show it: treating a missing account as an empty
+    /// one would let anybody erase the stake for good (see `accrue_lp`).
+    pub fn accrue_points(&mut self, lp_balance: Option<u64>, now: i64) -> Result<()> {
+        let balance = match lp_balance {
+            Some(b) => b,
+            None => {
+                require!(self.lp_shares == 0, PerpError::LpAccountRequired);
+                0
+            }
+        };
+        self.accrue_backing(now)?;
+        self.accrue_lp(balance, now)
+    }
+
+    /// Ties this wallet's rewards to `pool` if they are tied to nothing yet,
+    /// and says whether a credit from `pool` may land here.
+    pub fn bind_rewards_pool(&mut self, pool: Pubkey) -> bool {
+        if pool == Pubkey::default() {
+            return false;
+        }
+        if self.rewards_pool == Pubkey::default() {
+            self.rewards_pool = pool;
+        }
+        self.rewards_pool == pool
+    }
+
+    /// Refuses a claim from any pool but the one the rewards were earned in.
+    /// A balance from before pools were recorded is bound where it is first
+    /// claimed: every credit since has bound the wallet as it landed.
+    pub fn check_claim_pool(&mut self, pool: &Pubkey) -> Result<()> {
+        require!(self.bind_rewards_pool(*pool), PerpError::RewardsPoolMismatch);
         Ok(())
     }
 
@@ -297,7 +350,7 @@ mod tests {
             listing_earned_usd: 0,
             given_to_referrer_usd: 0,
             given_to_referrer_points: 0,
-            _reserved: [0; 32],
+            rewards_pool: Pubkey::default(),
         }
     }
 
@@ -419,6 +472,70 @@ mod tests {
         assert_eq!((t.lp_shares, t.lp_usd), (0, 0));
         t.remove_lp(5);
         assert_eq!((t.lp_shares, t.lp_usd), (0, 0));
+    }
+
+    #[test]
+    fn rewards_are_bound_to_the_first_pool_that_pays_them() {
+        let mut t = trader();
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        assert!(t.bind_rewards_pool(a), "an unbound wallet takes the first pool");
+        assert_eq!(t.rewards_pool, a);
+        assert!(t.bind_rewards_pool(a));
+        assert!(!t.bind_rewards_pool(b), "another pool's rewards are refused");
+        assert_eq!(t.rewards_pool, a, "and do not move the binding");
+        assert!(!t.bind_rewards_pool(Pubkey::default()));
+    }
+
+    #[test]
+    fn a_referee_owes_its_referrer_only_from_the_pool_it_is_tied_to() {
+        let mut t = trader();
+        t.referrer = Pubkey::new_unique();
+        let owner = t.owner;
+        let deployer = Pubkey::new_unique();
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, a);
+        assert!(r.referrer);
+        assert_eq!(t.rewards_pool, a);
+        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, b);
+        assert!(!r.referrer, "a fill in another pool carves nothing for the referrer");
+        assert_eq!(r.discount_bps, REFEREE_DISCOUNT_BPS, "the discount stays");
+        // A wallet with no referrer is not tied by trading.
+        let mut n = trader();
+        let o = n.owner;
+        FeeRoute::for_trade_in(&mut n, &o, &deployer, a);
+        assert_eq!(n.rewards_pool, Pubkey::default());
+    }
+
+    #[test]
+    fn rewards_are_claimed_only_from_their_own_pool() {
+        let mut t = trader();
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        t.rewards_usd = 100;
+        t.rewards_pool = a;
+        assert!(t.check_claim_pool(&b).is_err(), "earned in a, not payable from b");
+        assert!(t.check_claim_pool(&a).is_ok());
+        // A balance from before pools were recorded binds to where it is claimed.
+        let mut legacy = trader();
+        legacy.rewards_usd = 100;
+        assert!(legacy.check_claim_pool(&b).is_ok());
+        assert_eq!(legacy.rewards_pool, b);
+    }
+
+    #[test]
+    fn an_lp_stake_is_not_erased_by_leaving_out_the_token_account() {
+        let mut t = trader();
+        t.lp_ts = 1;
+        t.add_lp(1_000, 1_000_000_000).unwrap();
+        assert!(t.accrue_points(None, 1 + 86_400).is_err(), "a stake needs its balance shown");
+        assert_eq!((t.lp_shares, t.lp_usd, t.points), (1_000, 1_000_000_000, 0));
+        t.accrue_points(Some(1_000), 1 + 86_400).unwrap();
+        assert_eq!(t.points, 1_000_000_000);
+        // A wallet with no stake may still bring its backing up to date.
+        let mut b = trader();
+        b.backing_ts = 1;
+        b.backing_usd = 500_000_000;
+        b.accrue_points(None, 1 + 86_400).unwrap();
+        assert_eq!(b.points, 1_000_000_000);
     }
 
     #[test]

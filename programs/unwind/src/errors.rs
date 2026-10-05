@@ -104,4 +104,8 @@ pub enum PerpError {
     NotMarkKeeper,
     #[msg("The authority can only lower a market's budget; backing raises it")]
     BudgetOnlyLowers,
+    #[msg("These rewards were earned in another pool and are paid only from it")]
+    RewardsPoolMismatch,
+    #[msg("This wallet holds an LP stake; show its LP token account")]
+    LpAccountRequired,
 }
