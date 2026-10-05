@@ -3,7 +3,7 @@ import "@/site/serif.css";
 import {
   ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
-import { SiGitbook, SiGithub, SiX } from "@icons-pack/react-simple-icons";
+import { SiGithub, SiX } from "@icons-pack/react-simple-icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavIcon } from "@/components/NavIcon";
 
@@ -224,7 +224,7 @@ export function PageMenu({ here, tradeHref = "/trade", className = "" }: {
 }
 
 export function SiteFooter(_: { tradeHref?: string } = {}) {
-  type L = { label: string; href: string; out?: boolean };
+  type L = { label: string; href: string; out?: boolean; Icon?: typeof SiX; logo?: boolean };
   const cols: { title: string; links: L[] }[] = [
     { title: "Product", links: [
       { label: "Markets", href: "/markets" },
@@ -237,23 +237,19 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
       { label: "Risks", href: RISKS, out: true },
       { label: "Source", href: REPO, out: true },
     ] },
+    // Brand marks come from simple-icons; lucide carries none.
     { title: "Community", links: [
-      { label: "X", href: X_URL, out: true },
-      { label: "GitHub", href: REPO, out: true },
+      { label: "X", href: X_URL, out: true, Icon: SiX },
+      { label: "GitHub", href: REPO, out: true, Icon: SiGithub },
+      { label: "Superteam Nepal", href: SUPERTEAM_NP, out: true, logo: true },
     ] },
-  ];
-  // Brand marks come from simple-icons; lucide carries none.
-  const socials = [
-    { label: "X", href: X_URL, Icon: SiX },
-    { label: "GitHub", href: REPO, Icon: SiGithub },
-    { label: "Documentation", href: DOCS, Icon: SiGitbook },
   ];
   const out = { target: "_blank", rel: "noreferrer" };
   return (
     /*
      * One card at the foot of the page: the lockup and the line on the left,
      * three labelled columns on the right, then a rule over the
-     * fine print with the brand marks at the far end.
+     * fine print. The brand marks sit beside their links under Community.
      */
     <footer className="mt-auto px-3 pb-3 safe-b sm:px-5 sm:pb-5">
       <div className="relative isolate overflow-hidden rounded-[20px] border border-line bg-panel px-6 pt-8 pb-16 sm:px-10 sm:pt-10 sm:pb-20">
@@ -280,9 +276,21 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
                 <ul className="mt-3 flex flex-col gap-2">
                   {c.links.map((l) => (
                     <li key={l.label}>
-                      <a href={l.href} {...(l.out ? out : {})}
-                        className="text-[13.5px] text-muted-foreground transition-colors hover:text-foreground">
-                        {l.label}
+                      <a href={l.href} {...(l.out ? out : {})} aria-label={l.logo ? l.label : undefined}
+                        className="inline-flex items-center gap-2 text-[13.5px] text-muted-foreground
+                                   transition-colors hover:text-foreground">
+                        {l.Icon && <l.Icon size={13} aria-hidden />}
+                        {l.logo ? (
+                          /* Superteam's own lockup, from np.superteam.fun: white
+                             for dark, the wordmark in black for light. Set at
+                             the links' height so it sits in the list. */
+                          <span className="opacity-75 transition-opacity hover:opacity-100">
+                            <img src="/footer/superteam-np-light.webp" alt="" width={568} height={72}
+                              className="mt-0.5 h-[15px] w-auto dark:hidden" />
+                            <img src="/footer/superteam-np-dark.webp" alt="" width={568} height={72}
+                              className="mt-0.5 hidden h-[15px] w-auto dark:block" />
+                          </span>
+                        ) : l.label}
                       </a>
                     </li>
                   ))}
@@ -309,25 +317,6 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
               available to US persons. unwind is not affiliated with Backed, Jupiter, Pyth or the issuers of
               the assets its markets track.
             </p>
-          </div>
-          <div className="flex flex-none flex-col items-start gap-4 md:items-end">
-            <div className="flex items-center gap-5">
-              {socials.map(({ label, href, Icon }) => (
-                <a key={label} href={href} {...out} aria-label={label}
-                  className="text-foreground/70 transition-colors hover:text-foreground">
-                  <Icon size={18} aria-hidden />
-                </a>
-              ))}
-            </div>
-            {/* Superteam's own lockup, from np.superteam.fun: white for dark,
-                the same with the wordmark in black for light. */}
-            <a href={SUPERTEAM_NP} {...out} aria-label="Superteam Nepal"
-              className="opacity-80 transition-opacity hover:opacity-100">
-              <img src="/footer/superteam-np-light.webp" alt="" width={568} height={72}
-                className="h-[18px] w-auto dark:hidden" />
-              <img src="/footer/superteam-np-dark.webp" alt="" width={568} height={72}
-                className="hidden h-[18px] w-auto dark:block" />
-            </a>
           </div>
         </div>
       </div>
