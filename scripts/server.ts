@@ -664,10 +664,13 @@ function observedBars(m: MarketRt, tf: number): Candle[] {
  *
  * The seeded pools hold the real token's price (testnet-flow.ts), so the
  * real token's own chart is this market's chart before the venue's tape
- * begins. Read from the token's deepest mainnet pool on GeckoTerminal, whose
- * free API allows about thirty calls a minute: calls are spaced two seconds
- * apart, each chart is kept five minutes and answered stale while it
- * refreshes, and a failure leaves the market on its own tape.
+ * begins. Read from the token's deepest mainnet pool on GeckoTerminal. Its
+ * free API refused calls two seconds apart, so they are spaced six apart and
+ * a 429 pauses them for a minute. Nothing ever waits on it: a chart not read
+ * yet answers with the venue's own tape and is fetched behind the answer,
+ * each is kept five minutes and answered stale while it refreshes, and a
+ * failure leaves the market on its own tape. (Waiting on it held the
+ * server's startup warm-up past the deploy's health check.)
  */
 const GT = "https://api.geckoterminal.com/api/v2/networks/solana";
 const GT_FRAMES: Record<number, [string, number]> = {
@@ -677,9 +680,10 @@ const GT_FRAMES: Record<number, [string, number]> = {
 let gtNext = 0;
 async function gtGet(url: string): Promise<any> {
   const wait = gtNext - Date.now();
-  gtNext = Math.max(Date.now(), gtNext) + 2_100;
+  gtNext = Math.max(Date.now(), gtNext) + 6_000;
   if (wait > 0) await new Promise((ok) => setTimeout(ok, wait));
   const r = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+  if (r.status === 429) gtNext = Math.max(gtNext, Date.now() + 60_000);
   if (!r.ok) throw new Error(`geckoterminal ${r.status}`);
   return r.json();
 }
@@ -729,14 +733,11 @@ async function realBars(m: MarketRt, tf: number): Promise<Candle[]> {
     .then((bars) => { realSeeds.set(key, { at: Date.now(), bars }); return bars; })
     .catch((e: any) => { console.warn(`real candles ${m.symbol}@${tf}s: ${e?.message ?? e}`); return hit?.bars ?? []; });
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.bars;
-  if (hit) {
-    if (!realRefreshing.has(key)) {
-      realRefreshing.add(key);
-      void load().finally(() => realRefreshing.delete(key));
-    }
-    return hit.bars;
+  if (!realRefreshing.has(key)) {
+    realRefreshing.add(key);
+    void load().finally(() => realRefreshing.delete(key));
   }
-  return load();
+  return hit?.bars ?? [];
 }
 
 async function fetchSeed(m: MarketRt, tf: number, key: string): Promise<Candle[]> {

@@ -63,6 +63,9 @@ done
 
 echo "$REV did not come up; restoring the previous tree" >&2
 journalctl -u unwind-testnet --no-pager -n 20 -o cat >&2
+# A failed tree from an earlier deploy would take this one inside it and
+# stop the rollback half way, so it goes first.
+rm -rf "$APP.failed"
 mv "$APP" "$APP.failed"
 mv "$APP.prev" "$APP"
 systemctl restart unwind-testnet
