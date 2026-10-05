@@ -22,8 +22,11 @@ once a day.
   chain in Pyth's format. On
   weekends and outside US trading hours they run in their closed session at
   lower leverage (see [Sessions](sessions.md)).
-- **Popular Solana tokens.** SOL, JUP, BONK, WIF, JTO, PYTH, RAY, TRUMP,
-  PENGU, FARTCOIN, POPCAT, RENDER, HNT, ORCA and DRIFT. These are test copies:
+- **Popular Solana tokens.** 47 of them: SOL, JUP, BONK, WIF, JTO, PYTH, RAY,
+  TRUMP, PENGU, FARTCOIN, POPCAT, RENDER, HNT, ORCA, DRIFT, PUMP, STONK, ZEC,
+  cbBTC, HYPE, USELESS, BP, wNEAR, ETH, CARDS, ANSEM, MET, JLP, CATE, JitoSOL,
+  GRASS, ORE, ANTFUN, ZCAT, KMNO, GEOD, NOS, MPLX, neet, DBR, BOME and ZBCN,
+  plus the xStocks SPCXx, NVDAx, GLDx, TSLAx and AAPLx. These are test copies:
   devnet tokens under the real tickers, each in a Meteora DLMM pool against
   test USDC. They are listed through the ordinary permissionless path, but
   on devnet their mark is the real token's price on mainnet (Jupiter), pushed
