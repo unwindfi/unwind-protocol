@@ -77,6 +77,8 @@ const AUCTION_MS = Number(process.env.AUCTION_MS ?? 1_000);
 /// largest single spend of RPC calls, and almost all of it read empty
 /// batches.
 const AUCTION_IDLE_MS = Number(process.env.AUCTION_IDLE_MS ?? 4_000);
+/// How many markets the auction works at once (see `auction`).
+const AUCTION_PARALLEL = Number(process.env.AUCTION_PARALLEL ?? 6);
 /// Until when the auction runs at full speed: set when a batch is seen
 /// holding orders, and when this server builds an order for someone.
 let auctionHotUntil = 0;
@@ -2725,6 +2727,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     // throttle a handful of markets.
     const markets = Object.values(rt);
     const infos = await conn.getMultipleAccountsInfo(markets.map((m) => batchPda(m.address)));
+    const due: { m: MarketRt; state: any; open: boolean }[] = [];
     for (const [i, m] of markets.entries()) {
       const info = infos[i];
       if (!info) continue;
@@ -2736,15 +2739,25 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       // and clears on the next pass.
       const open = Number(state.clearedTs) === 0;
       if (open && !state.orders.some((o: any) => o.active)) continue;
-      heatAuction(10_000);
+      due.push({ m, state, open });
+    }
+    if (due.length) heatAuction(10_000);
+
+    /*
+     * Up to AUCTION_PARALLEL markets at once. Each market has its own batch
+     * account, so nothing orders them against each other; worked one after
+     * another, every quote, clear and settlement waited on the market before
+     * it, and with a hundred wallets in two dozen markets a pass took minutes
+     * and every batch sat that long past due.
+     */
+    const work = async ({ m, state, open }: { m: MarketRt; state: any; open: boolean }) => {
       // Quote before clearing, into the batch the takers are waiting in. A
       // listing still seasoning has no mark to quote around yet.
       if (MAKER_ON && open && !(m.observed && !m.observed.seasoned)) {
         await makeMarket(m, state).catch((e: any) =>
           console.warn(`maker ${m.symbol}: ${explain(e)}`));
       }
-      // One market that cannot clear must not hold up the rest, which is what
-      // a single throw out of this loop used to do.
+      // One market that cannot clear must not hold up the rest.
       try { await clearAndSettle(m, state); }
       catch (e: any) {
         // The chain's clock runs a little behind this one; a batch the
@@ -2754,7 +2767,11 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
           console.warn(`auction ${m.symbol}: ${explain(e)}`);
         }
       }
-    }
+    };
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(AUCTION_PARALLEL, due.length) }, async () => {
+      while (next < due.length) await work(due[next++]);
+    }));
   };
 
   const clearAndSettle = async (m: MarketRt, state: any) => {
