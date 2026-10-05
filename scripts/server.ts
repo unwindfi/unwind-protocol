@@ -844,6 +844,10 @@ async function shadowNameMap(): Promise<Map<string, string>> {
  * otherwise). On devnet a test copy also takes the real token's name, so a
  * search for "Pudgy" finds PENGU.
  */
+/// Listed markets whose token name has been looked up, so the lookup runs
+/// once per market rather than every ten minutes.
+const namedListings = new Set<string>();
+
 async function refreshListedDay() {
   const names = await shadowNameMap();
   const since = Date.now() / 1000 - 86_400;
@@ -851,6 +855,17 @@ async function refreshListedDay() {
     if (!m.observed) continue;
     const name = names.get(m.observed.source.toBase58());
     if (name) m.name = name;
+    // Otherwise the token's own metadata name. A token that wrote none was
+    // shown as its mint code twice ("4sqG / 4sqG"); it now reads "Unnamed
+    // token", so nobody takes the code for a name.
+    else if (m.name === m.symbol && !namedListings.has(m.symbol)) {
+      namedListings.add(m.symbol);
+      try {
+        const p = await readPool(conn, m.observed.source, usdcMint);
+        const meta = await readTokenMeta(conn, new PublicKey(p.base));
+        m.name = meta.name?.trim() || "Unnamed token";
+      } catch { namedListings.delete(m.symbol); }
+    }
     const day = (await seedBars(m, 900).catch(() => [] as Candle[])).filter((b) => b.time >= since);
     if (day.length < 4) continue;
     m.open = day[0].open;
@@ -1265,7 +1280,7 @@ async function listingName(base: string, poolAddress: string, unitExp = 0) {
   const clean = (meta.symbol ?? known?.symbol ?? "").replace(/[^A-Za-z0-9._-]/g, "");
   let symbol = (unitLabel(unitExp) + (clean || base.slice(0, 4))).slice(0, 16);
   if (rt[symbol]) symbol = `${symbol.slice(0, 11)}-${poolAddress.slice(0, 4).toUpperCase()}`;
-  return { symbol, name: meta.name ?? known?.name ?? symbol };
+  return { symbol, name: meta.name ?? known?.name ?? "Unnamed token" };
 }
 
 function listingParams(depthUsd: number, choice: { leverageBps?: number; oiUsd?: number } = {}) {

@@ -16,7 +16,9 @@ market nobody can trade.
 1. Find the token. The site searches by ticker, name or mint, and reads every
    USDC or USDT pool the token has on Raydium concentrated liquidity and on
    Meteora DLMM. The most liquid pool is picked by default. An asset with a
-   Pyth feed can be pointed at that feed instead.
+   Pyth feed can be pointed at that feed instead. The market takes its ticker
+   and name from the token's own metadata. A token that has none is listed
+   under the first characters of its mint and shown as "Unnamed token".
 2. Review the limits. Open interest per side defaults to what the pool's depth
    supports, capped at 50,000 USDC and floored at 1,000 USDC. Leverage follows
    the pool's depth (see [Margining](margining.md)): the market opens at 2x
