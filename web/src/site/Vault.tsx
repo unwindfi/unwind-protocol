@@ -10,7 +10,7 @@ import "@/site/serif.css";
 import { AnimatePresence } from "motion/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
+import { RISKS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
@@ -155,7 +155,7 @@ export default function VaultPage() {
                   {v.kind === "pool"
                     ? "The pool takes the losses backers do not, up to each market's budget, and earns the fees on every market."
                     : "Backing takes this market's losses first, up to what you post, and earns half of the pool's share of its fees. Withdrawing pays the mix it holds."}{" "}
-                  <a href="/risk" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
+                  <a href={RISKS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
                 </p>
               </div>
             </aside>

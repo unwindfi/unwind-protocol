@@ -13,7 +13,7 @@ import { TriangleAlert, X } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Checkbox } from "@/components/motion/checkbox";
 import { getApy, getMarkets, useHasBackend, usePoll } from "@/lib/api";
-import { DOCS } from "@/site/Chrome";
+import { DOCS, RISKS } from "@/site/Chrome";
 
 const KEY = (wallet: string) => `unwind.welcome:${wallet}`;
 const VERSION = 1;
@@ -191,7 +191,7 @@ export function Welcome() {
               label="I have read the risk notes and the docs. I understand this is devnet, unaudited, and not investment advice." />
             <p className="mt-3 text-[13px] leading-[1.5] text-muted-foreground">
               Your wallet will ask you to sign a message recording this. It is not a transaction and costs nothing.{" "}
-              <a href="/risk" className="underline decoration-line underline-offset-4 hover:text-foreground">Risk Hub</a>
+              <a href={RISKS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
               {" · "}
               <a href={DOCS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Docs</a>
             </p>

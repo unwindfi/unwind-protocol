@@ -3,6 +3,7 @@ import "@/site/serif.css";
 import {
   ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
+import { SiGitbook, SiGithub, SiX } from "@icons-pack/react-simple-icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavIcon } from "@/components/NavIcon";
 
@@ -36,6 +37,10 @@ export const Shell = ({ children, className = "", main = false }: {
 export const DOCS = "https://unwind.gitbook.io/unwind-docs";
 
 export const X_URL = "https://x.com/unwindfi";
+
+export const RISKS = `${DOCS}/about-unwind/risks`;
+
+export const SUPERTEAM_NP = "https://np.superteam.fun";
 
 /*
  * Sections on the left, actions on the right.
@@ -113,7 +118,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
       <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
           <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-8 w-8" />
-          <span className="text-[17px] font-semibold tracking-[-.02em]">unwind</span>
+          <span className="font-serif-display text-[23px] leading-none tracking-[-.02em]">unwind</span>
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
@@ -219,62 +224,101 @@ export function PageMenu({ here, tradeHref = "/trade", className = "" }: {
 }
 
 export function SiteFooter(_: { tradeHref?: string } = {}) {
-  const left = [
-    { label: "Markets", href: "/markets" },
-    { label: "Earn", href: "/earn" },
-    { label: "List a market", href: "/list" },
+  type L = { label: string; href: string; out?: boolean };
+  const cols: { title: string; links: L[] }[] = [
+    { title: "Product", links: [
+      { label: "Markets", href: "/markets" },
+      { label: "Earn", href: "/earn" },
+      { label: "List a market", href: "/list" },
+      { label: "Rewards", href: "/rewards" },
+    ] },
+    { title: "Resources", links: [
+      { label: "Documentation", href: DOCS, out: true },
+      { label: "Risks", href: RISKS, out: true },
+      { label: "Source", href: REPO, out: true },
+    ] },
+    { title: "Community", links: [
+      { label: "X", href: X_URL, out: true },
+      { label: "GitHub", href: REPO, out: true },
+      { label: "Superteam Nepal", href: SUPERTEAM_NP, out: true },
+    ] },
   ];
-  const right = [
-    { label: "Documentation", href: DOCS, out: true },
-    { label: "Risk Hub", href: "/risk" },
-    { label: "Rewards", href: "/rewards" },
+  // Brand marks come from simple-icons; lucide carries none.
+  const socials = [
+    { label: "X", href: X_URL, Icon: SiX },
+    { label: "GitHub", href: REPO, Icon: SiGithub },
+    { label: "Documentation", href: DOCS, Icon: SiGitbook },
   ];
-  const A = ({ l }: { l: { label: string; href: string; out?: boolean } }) => (
-    <a href={l.href} {...(l.out ? { target: "_blank", rel: "noreferrer" } : {})}
-      className="text-[13.5px] text-muted-foreground hover:text-foreground">{l.label}</a>
-  );
+  const out = { target: "_blank", rel: "noreferrer" };
   return (
     /*
-     * One card at the foot of the page: where to follow on the left, two
-     * short columns of links on the right, and the name set huge across the
-     * bottom, cropped by the card, with a violet light rising behind it.
+     * One card at the foot of the page: the lockup and the line on the left,
+     * three labelled columns on the right, then a rule over the
+     * fine print with the brand marks at the far end.
      */
     <footer className="mt-auto px-3 pb-3 safe-b sm:px-5 sm:pb-5">
-      <div className="relative isolate overflow-hidden rounded-[20px] border border-line bg-panel">
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10
-          bg-[radial-gradient(70%_80%_at_85%_105%,rgba(106,77,244,.35),transparent_70%)]" />
-        <div className="grid gap-10 px-7 pt-10 sm:px-12 sm:pt-14 md:grid-cols-[1fr_auto]">
+      <div className="relative isolate overflow-hidden rounded-[20px] border border-line bg-panel px-6 pt-8 pb-16 sm:px-10 sm:pt-10 sm:pb-20">
+        {/* The /markets hero's field as a band along the foot, below the text,
+            so nothing is ever set on top of it. */}
+        <img src="/waitlist/field.webp" alt="" aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[160px] w-full object-cover opacity-40
+                     [mask-image:linear-gradient(to_top,black,rgba(0,0,0,.55)_30%,rgba(0,0,0,.18)_60%,transparent)]
+                     dark:opacity-55" />
+        <div className="grid gap-8 md:grid-cols-[1.2fr_2fr]">
           <div>
-            <p className="text-[20px] font-medium tracking-[-.01em]">Join the community</p>
-            <div className="mt-5 flex flex-col gap-3 text-[13.5px] text-muted-foreground">
-              <a href={X_URL} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 hover:text-foreground">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-                Follow on X
-              </a>
-            </div>
+            <a href="/markets" className="flex items-center gap-2.5">
+              <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-7 w-7" />
+              <span className="font-serif-display text-[28px] leading-none tracking-[-.02em]">unwind</span>
+            </a>
+            <p className="mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">
+              Every market clears by auction. Anyone can open one.
+            </p>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-20 gap-y-3.5 md:text-right">
-            <div className="flex flex-col gap-3.5">{left.map((l) => <A key={l.label} l={l} />)}</div>
-            <div className="flex flex-col gap-3.5">{right.map((l) => <A key={l.label} l={l} />)}</div>
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-8 sm:grid-cols-3">
+            {cols.map((c) => (
+              <div key={c.title}>
+                <p className="text-[14px] font-semibold">{c.title}</p>
+                <ul className="mt-3 flex flex-col gap-2">
+                  {c.links.map((l) => (
+                    <li key={l.label}>
+                      <a href={l.href} {...(l.out ? out : {})}
+                        className="text-[13.5px] text-muted-foreground transition-colors hover:text-foreground">
+                        {l.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </nav>
         </div>
-        {/*
-         * The lockup across the foot, cropped by the card: the mark as a solid
-         * grey silhouette, then the name. Big
-         * enough that the card's edge cuts both.
-         */}
-        <div aria-hidden className="relative mt-12 flex select-none items-end gap-[.03em] whitespace-nowrap px-5
-                                    font-medium leading-[.8] tracking-[-.06em] text-foreground/30 sm:px-10"
-          style={{ fontSize: "clamp(72px, 22vw, 360px)" }}>
-          <span className="relative mb-[-.3em] mr-[.02em] h-[.95em] w-[.95em] flex-none">
-            <span className="absolute inset-0 bg-current"
-              style={{ WebkitMaskImage: "url(/waitlist/logo-glass-mark.webp)", maskImage: "url(/waitlist/logo-glass-mark.webp)",
-                       WebkitMaskSize: "contain", maskSize: "contain", WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
-                       WebkitMaskPosition: "center", maskPosition: "center" }} />
-          </span>
-          <span className="-mb-[.2em]">unwind</span>
+
+        <div className="mt-9 flex flex-col gap-5 border-t border-line pt-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="max-w-[90ch] text-[12px] leading-relaxed text-muted-foreground">
+              &copy; {new Date().getFullYear()} unwind.
+            </p>
+            <p className="mt-2 max-w-[110ch] text-[12px] leading-relaxed text-muted-foreground">
+              unwind runs perpetual futures markets on Solana that anyone can open, each cleared by batch
+              auction. Every action is a transaction you sign, settled by the unwind program; the program is
+              unaudited. Nothing here is investment advice. Perpetuals are leveraged, and a position can be
+              liquidated with the loss of its whole margin; smart-contract, oracle, keeper, liquidity and
+              listing risks are described in the{" "}
+              <a href={DOCS} {...out} className="underline underline-offset-2 hover:text-foreground">documentation</a>.
+              A market being listed is not an endorsement. Devnet settles in test USDC against devnet copies of
+              tokens marked at Jupiter prices, and carries no real value. Tokenised stocks (xStocks) are not
+              available to US persons. unwind is not affiliated with Backed, Jupiter, Pyth or the issuers of
+              the assets its markets track.
+            </p>
+          </div>
+          <div className="flex flex-none items-center gap-5">
+            {socials.map(({ label, href, Icon }) => (
+              <a key={label} href={href} {...out} aria-label={label}
+                className="text-foreground/70 transition-colors hover:text-foreground">
+                <Icon size={18} aria-hidden />
+              </a>
+            ))}
+          </div>
         </div>
       </div>
     </footer>

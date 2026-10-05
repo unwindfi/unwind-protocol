@@ -55,9 +55,9 @@ holding collateral carries risk that should be priced accordingly.
 The program is the specification. Where these pages and the source disagree,
 the source is correct.
 
-## Risk Hub
+## Risks
 
-The site's `/risk` page lists every parameter the program holds each market
-to, read live (leverage, maintenance margin, fees, backing, budget, open
-interest, price source), the pool's liquidity, utilisation and insurance
-fund, and the rules behind them in short, each linked to its page here.
+[Risks](risks.md) lists where losses come from (the program, leverage and
+liquidation, prices, keepers, the loss order, backing and the pool, liquidity,
+listing and devnet) and links each to the page that states the rule in full.
+The site's `/risk` address redirects there.

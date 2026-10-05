@@ -120,12 +120,11 @@ const ROUTES: Record<string, Loader> = UNLOCKED
         ]);
         return { default: () => <WalletRoot><Page /></WalletRoot> };
       },
+      // The Risk Hub page moved into the docs; vercel.json redirects it too.
       "/risk": async () => {
-        const [{ default: Page }, { WalletRoot }] = await Promise.all([
-          import("./site/Risk"),
-          import("./lib/wallet"),
-        ]);
-        return { default: () => <WalletRoot><Page /></WalletRoot> };
+        const { RISKS } = await import("./site/Chrome");
+        location.replace(RISKS);
+        return { default: () => null };
       },
       "/trade": async () => {
         const [{ default: App }, { WalletRoot }] = await Promise.all([

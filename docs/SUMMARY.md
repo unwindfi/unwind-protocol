@@ -6,6 +6,7 @@
 
 * [What is unwind](about.md)
 * [unwind 101 for non-crypto audiences](101.md)
+* [Risks](risks.md)
 
 ## Onboarding
 
