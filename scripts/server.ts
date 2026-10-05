@@ -498,6 +498,8 @@ const batchSeen = new Map<string, { state: any; at: number }>();
 const BATCH_FRESH_MS = 4_000;
 const accountMemo = new Map<string, { at: number; body: Promise<any> }>();
 const ACCOUNT_FRESH_MS = 4_000;
+/// Wallets whose orders the auction settled since its last pass ended.
+const settledOwners = new Set<string>();
 /// Each wallet's last account view that was read in full, served when the
 /// chain cannot be read (see /api/markets).
 const accountLast = new Map<string, { at: number; body: any }>();
@@ -2344,6 +2346,32 @@ async function traderPnlNow() {
   return traderPnl;
 }
 
+/*
+ * One wallet's standing orders, read by address: every market's order slots
+ * 0 to ORDER_SLOTS-1 in batched calls of a hundred, about three calls in all.
+ * It was a `getProgramAccounts` filtered by owner on every account read, the
+ * heaviest call a key serves (only one of the free keys serves it at all),
+ * and under load the reads it made were most of what rate-limited the keys.
+ * The site places orders in slots 0 to 2 (take profit, stop, limit); an order
+ * a wallet placed by hand past slot 7 would not be shown.
+ */
+const ORDER_SLOTS = 8;
+async function ordersOf(owner: PublicKey): Promise<{ publicKey: PublicKey; account: any }[]> {
+  const keys = Object.values(rt).flatMap((m) =>
+    Array.from({ length: ORDER_SLOTS }, (_, slot) => PublicKey.findProgramAddressSync(
+      [Buffer.from("order"), m.address.toBuffer(), owner.toBuffer(), Buffer.from([slot])],
+      program.programId)[0]));
+  const infos = (await Promise.all(Array.from({ length: Math.ceil(keys.length / 100) }, (_, k) =>
+    conn.getMultipleAccountsInfo(keys.slice(k * 100, k * 100 + 100))))).flat();
+  const out: { publicKey: PublicKey; account: any }[] = [];
+  infos.forEach((info, i) => {
+    if (!info) return;
+    try { out.push({ publicKey: keys[i], account: program.coder.accounts.decode("order", info.data) }); }
+    catch { /* not an order account */ }
+  });
+  return out;
+}
+
 app.get("/api/account", async (req, res) => {
   try {
     const owner = ownerOf(req);
@@ -2381,7 +2409,7 @@ async function accountView(owner: PublicKey) {
       lpSupplyRead(),
       poolAccount(),
       loadPositions(owner),
-      program.account.order.all([{ memcmp: { offset: 8 + 1, bytes: owner.toBase58() } }]),
+      ordersOf(owner),
       traderPnlNow(),
     ]);
     const orders = orderAccounts.map((e: any) => ({
@@ -2775,6 +2803,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         pending.push({ i, o, ix });
       }
       const settled = (o: any) => {
+        settledOwners.add(new PublicKey(o.owner).toBase58());
         if (Number(o.filledUsd) > 0) {
           // A fill opened or resized a position the liquidation check holds.
           invalidatePositions();
@@ -2823,9 +2852,11 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   {
     const pass = async () => {
       await rpcWho.run("auction", auction).catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
-      // A clear moves positions; while orders are arriving, the next account
-      // read should see them rather than a view cached before the clear.
-      if (Date.now() < auctionHotUntil) accountMemo.clear();
+      // A settlement moves positions; the next read of those wallets should see
+      // them rather than a view cached before it. Only those wallets: clearing
+      // everyone's on every pass while orders flowed left nothing cached.
+      for (const o of settledOwners) accountMemo.delete(o);
+      settledOwners.clear();
       const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
       const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
         ? void pass() : void setTimeout(wait, 100);
@@ -3762,7 +3793,7 @@ app.post("/api/tx/close", async (req, res) => {
     const open = await closableUsd(m, owner);
     const full = !!open && size >= open.usd - 1e-6;
     const triggers = full
-      ? (await program.account.order.all([{ memcmp: { offset: 8 + 1, bytes: owner.toBase58() } }]))
+      ? (await ordersOf(owner))
           .filter((o: any) => String(o.account.market) === m.address.toBase58() && o.account.kind === 0)
       : [];
     const cancels = await Promise.all(triggers.map((o: any) =>
@@ -3803,8 +3834,11 @@ app.post("/api/tx/send", async (req, res) => {
     invalidateOrders();
     // An opened, resized or closed position is in the next liquidation check.
     invalidatePositions();
-    // Whatever it changed, no page should be shown the balance from before it.
-    accountMemo.clear();
+    // Whatever it changed, the sender's page should not be shown the balance
+    // from before it. Only the sender's: clearing every wallet's view on every
+    // send left nothing cached under load, and every poll went to the chain.
+    const sender = VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58();
+    accountMemo.delete(sender);
     if (req.body.record?.symbol) {
       const r = req.body.record;
       if (rt[r.symbol]) {
