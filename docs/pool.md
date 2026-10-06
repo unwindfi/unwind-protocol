@@ -113,7 +113,11 @@ completed checkpoint under a minute old, taken while the same set of markets car
 open interest; the pool records a version that changes whenever that set
 does, so a checkpoint from before a market gained or lost its positions is
 refused. The venue's server runs a pass every twenty seconds, and before
-building a deposit or claim if the last one is older than 45 seconds.
+building a deposit or claim if the last one is older than 45 seconds. A
+signed deposit or claim that reaches the chain after the set changed is not
+handed back as an error: the server runs a fresh pass and sends the same
+transaction again, up to three times, since it reads the checkpoint by
+address when it runs.
 
 A checkpoint stays exact when positions close after it. A close moves the
 trader's PnL into or out of the pool's liquidity, and the checkpoint still

@@ -4461,8 +4461,18 @@ app.post("/api/tx/send", async (req, res) => {
     for (let tries = 0; ; tries++) {
       try { sig = await conn.sendRawTransaction(raw, { skipPreflight: false }); break; }
       catch (e: any) {
-        const sealed = /BatchSealed|sealed and awaiting settlement/.test(
-          `${e?.message ?? e} ${(e?.logs ?? e?.transactionLogs ?? []).join(" ")}`);
+        const text = `${e?.message ?? e} ${(e?.logs ?? e?.transactionLogs ?? []).join(" ")}`;
+        // A deposit or withdrawal claim reads the AUM checkpoint when it
+        // runs, and the checkpoint goes out of date whenever a market gains
+        // its first position or loses its last, which under load happens
+        // between building and sending. The checkpoint is an account the
+        // transaction names, not data it carries, so refreshing it and
+        // sending the same signed transaction again succeeds.
+        if (/AumCheckpointStale|valuation checkpoint is stale/.test(text) && tries < 3) {
+          await refreshAum().catch(() => {});
+          continue;
+        }
+        const sealed = /BatchSealed|sealed and awaiting settlement/.test(text);
         if (!sealed || tries >= 8) throw e;
         await new Promise((r) => setTimeout(r, 1_500));
       }
