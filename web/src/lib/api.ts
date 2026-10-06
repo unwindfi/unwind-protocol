@@ -265,9 +265,18 @@ export const getAccount = async (owner?: string) => {
 /// A testnet pool a tester can list a market on. Only the testnet has any:
 /// every real pool is on mainnet, and a market can only watch a pool on its
 /// own chain.
-export interface TestnetPool { symbol: string; name: string; pool: string; listed: boolean }
+/// `real` is the mainnet mint a pool copies, when it copies one.
+export interface TestnetPool { symbol: string; name: string; pool: string; listed: boolean; real?: string | null }
 export const getTestnetPools = async () =>
   (await hasBackend()) ? get<TestnetPool[]>("/api/testnet-pools").catch(() => []) : [];
+
+/// Has devnet copy a mainnet token: a test token and a pool at its price.
+/// Takes several seconds; answers with the pool to list on.
+export async function copyToDevnet(mint: string): Promise<{ pool: string; symbol: string }> {
+  const r = await post("/devnet-copy", { mint }) as { pool?: string; symbol?: string; error?: string };
+  if (!r.pool) throw new Error(r.error ?? "Copy failed.");
+  return { pool: r.pool, symbol: r.symbol! };
+}
 
 /// One owner's backing, by market. Worth what the market's first-loss pot
 /// holds per share now, which moves as that market pays out and earns.

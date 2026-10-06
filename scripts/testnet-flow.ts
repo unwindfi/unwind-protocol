@@ -17,7 +17,7 @@ import { BN } from "@coral-xyz/anchor";
 import {
   Connection, Keypair, PublicKey, SYSVAR_RENT_PUBKEY, SystemProgram, sendAndConfirmTransaction, Transaction,
 } from "@solana/web3.js";
-import { getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
+import { createMint, getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
 
 /// The real token each seeded one follows, by mainnet mint.
 ///
@@ -99,21 +99,30 @@ const EDGE_BINS = 5;
 const SIDE_USD = 180_000;
 const HALF_WIDTH = 30;
 
-type Seeded = { symbol: string; mint: string; pair: string };
+/// `real` is set on a copy made on request (`seedPool` via the server's
+/// /api/devnet-copy): the mainnet mint it follows, and `sideUsd` the depth it
+/// was laid with. The seeded set is looked up in SHADOWS instead.
+export type Seeded = { symbol: string; name?: string; mint: string; pair: string; real?: string; sideUsd?: number };
+
+/// The mainnet mint a seeded pool follows, if any.
+export const realMintOf = (s: Seeded) => s.real ?? SHADOWS[s.symbol]?.mint;
+/// A copy is held at the real price; an invented token only follows its moves.
+const isCopy = (s: Seeded) => !!s.real || SHADOWS[s.symbol]?.symbol === s.symbol;
 type Anchor = { real: number; pool: number };
 
 export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, seeded: Seeded[]) {
   const anchors = new Map<string, Anchor>();
-  const pools = seeded.filter((s) => SHADOWS[s.symbol]);
 
   return async function flow() {
-    const ids = pools.map((s) => SHADOWS[s.symbol].mint).join(",");
+    // Read each pass: copies made on request join `seeded` while this runs.
+    const pools = seeded.filter((s) => realMintOf(s));
+    const ids = [...new Set(pools.map((s) => realMintOf(s)!))].join(",");
     const r = await fetch(`${JUP_PRICE}?ids=${ids}`, { signal: AbortSignal.timeout(10_000) });
     if (!r.ok) throw new Error(`jupiter price ${r.status}`);
     const real = (await r.json()) as Record<string, { usdPrice: number }>;
 
     for (const s of pools) {
-      const realPrice = real[SHADOWS[s.symbol].mint]?.usdPrice;
+      const realPrice = real[realMintOf(s)!]?.usdPrice;
       if (!realPrice) continue;
       try {
         try {
@@ -156,7 +165,7 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
     // drifted is walked back in a pass. An invented token keeps its own price
     // and follows the real one's moves from where it was when this started.
     let target = realPrice;
-    if (SHADOWS[s.symbol].symbol !== s.symbol) {
+    if (!isCopy(s)) {
       let a = anchors.get(s.symbol);
       if (!a) { a = { real: realPrice, pool: now }; anchors.set(s.symbol, a); }
       target = a.pool * (realPrice / a.real);
@@ -217,16 +226,59 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
       active >= p.positionData.lowerBinId + EDGE_BINS && active <= p.positionData.upperBinId - EDGE_BINS);
     if (covered) return;
     await layLiquidity(conn, authority, dlmm, s.mint, usdc, active,
-      Number((await dlmm.getActiveBin()).pricePerToken));
+      Number((await dlmm.getActiveBin()).pricePerToken), s.sideUsd);
     console.log(`flow ${s.symbol}: re-laid liquidity around bin ${active}`);
   }
+}
+
+/// The only bin step devnet has a preset for.
+const BIN_STEP = 10;
+
+/// Mints a test token and opens a DLMM pool for it against `usdc` at
+/// `price`, with `sideUsd` of liquidity either side. Used by the seeding
+/// script and by the server's copies made on request.
+export async function seedPool(
+  conn: Connection, authority: Keypair, usdc: PublicKey,
+  t: { price: number; decimals: number; sideUsd?: number },
+) {
+  const presets = await DLMM.getAllPresetParameters(conn);
+  // Devnet carries only the newer preset accounts.
+  const preset = presets.presetParameter2.find((p) => p.account.binStep === BIN_STEP);
+  if (!preset) throw new Error(`no DLMM preset with bin step ${BIN_STEP} on this cluster`);
+
+  const mint = await createMint(conn, authority, authority.publicKey, null, t.decimals);
+  // DLMM prices in base units of Y per base unit of X, so the dollar price
+  // is scaled by the difference in decimals.
+  const perLamport = t.price * 10 ** (6 - t.decimals);
+  const activeId = DLMM.getBinIdFromPrice(perLamport, BIN_STEP, true);
+  const create = await DLMM.createLbPair2(
+    conn, authority.publicKey, mint, usdc, preset.publicKey, new BN(activeId));
+  await sendAndConfirmTransaction(conn, create, [authority]);
+
+  const pair = await DLMM.getPairPubkeyIfExists(
+    conn, mint, usdc, new BN(BIN_STEP), new BN(preset.account.baseFactor),
+    new BN(preset.account.baseFeePowerFactor ?? 0)) ?? await findPair(conn, mint, usdc);
+  // The pair is read back before the cluster has it everywhere otherwise.
+  await new Promise((r) => setTimeout(r, 2_000));
+  const dlmm = await DLMM.create(conn, pair);
+  const position = await layLiquidity(conn, authority, dlmm, mint.toBase58(), usdc, activeId, t.price, t.sideUsd);
+  return { mint, pair, position };
+}
+
+/// The pair just created, found by its two mints when the address derivation
+/// above does not match this SDK version's seeds.
+async function findPair(conn: Connection, x: PublicKey, y: PublicKey): Promise<PublicKey> {
+  const pairs = await DLMM.getLbPairs(conn);
+  const hit = pairs.find((p) => p.account.tokenXMint.equals(x) && p.account.tokenYMint.equals(y));
+  if (!hit) throw new Error(`pair for ${x.toBase58()} not found`);
+  return hit.publicKey;
 }
 
 /// One position of `SIDE_USD` each side, `HALF_WIDTH` bins either side of
 /// `active`, minted fresh. Shared with the seeding script's shape.
 export async function layLiquidity(
   conn: Connection, authority: Keypair, dlmm: DLMM, mint: string, usdc: PublicKey,
-  active: number, priceUsd: number, sideUsd = SIDE_USD,
+  active: number, priceUsd: number, sideUsd: number = SIDE_USD,
 ) {
   const base = new PublicKey(mint);
   const decimals = dlmm.tokenX.mint.decimals;

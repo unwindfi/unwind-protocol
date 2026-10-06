@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/motion/checkbox";
 import { WalletActions } from "@/components/WalletActions";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import {
-  canSign, getMarkets, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
+  canSign, copyToDevnet, getMarkets, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
   type TestnetPool,
 } from "@/lib/api";
 import {
@@ -183,9 +183,10 @@ export default function List() {
   }, []);
   const defaultBacking = testnetPools.length ? TESTNET_LISTING_BACKING_USD : MIN_LISTING_BACKING_USD;
   const unlisted = testnetPools.filter((p) => !p.listed);
-  /// On devnet only the seeded pools can be listed, and the token search
+  /// On devnet only pools on devnet can be listed, and the token search
   /// finds mainnet tokens with similar names instead: "WIND" found Windoge.
-  /// So devnet answers the search from its own pools.
+  /// So devnet answers the search from its own pools first, then offers the
+  /// mainnet tokens it has no pool for as copies (`copyable`).
   const devnetHits = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!testnetPools.length || !q) return [];
@@ -193,6 +194,26 @@ export default function List() {
       p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
   }, [testnetPools, query]);
   const [hits, setHits] = useState<TokenHit[]>([]);
+  /// Mainnet tokens with no devnet pool yet, which devnet can copy on request.
+  const copyable = useMemo(() => {
+    if (!testnetPools.length) return [];
+    const have = new Set(testnetPools.map((p) => p.real).filter(Boolean));
+    return hits.filter((t) => !have.has(t.mint));
+  }, [testnetPools, hits]);
+  const [copying, setCopying] = useState<string | null>(null);
+  async function copy(t: TokenHit) {
+    setCopying(t.mint); setSearchErr(null);
+    try {
+      const { pool } = await copyToDevnet(t.mint);
+      setTestnetPools(await getTestnetPools());
+      setOpen(false);
+      await readPoolAddress(pool);
+    } catch (e: any) {
+      setSearchErr(e?.message ?? "Copy failed.");
+    } finally {
+      setCopying(null);
+    }
+  }
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -558,10 +579,32 @@ export default function List() {
                             )}
                           </li>
                         ))}
-                        {devnetHits.length === 0 && (
+                        {copyable.map((t) => (
+                          <li key={t.mint} role="option" aria-selected={false}>
+                            <button type="button" disabled={!!copying}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => void copy(t)}
+                              className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left
+                                         hover:bg-panel2 disabled:opacity-60">
+                              <TokenIcon src={t.icon} label={t.symbol} />
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1 text-[13.5px] font-medium">
+                                  <span title={t.symbol} className="truncate">{t.symbol}</span>
+                                  {t.verified && <BadgeCheck size={14} className="flex-none text-brand" />}
+                                </span>
+                                <span title={t.mint} className="block truncate text-[11.5px] text-muted-foreground">
+                                  {t.name} · mainnet · {t.liquidity > 0 ? `${compact(t.liquidity)} liq` : short(t.mint)}
+                                </span>
+                              </span>
+                              <span className="flex-none text-[12px] text-foreground">
+                                {copying === t.mint ? "Copying…" : "Copy to devnet"}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                        {devnetHits.length === 0 && copyable.length === 0 && (
                           <li className="px-3 py-3 text-[12.5px] text-muted-foreground">
-                            Nothing on devnet matches. Devnet lists its own pools only:{" "}
-                            {unlisted.map((p) => p.symbol).join(", ") || "all are listed"}.
+                            {searching ? "Searching…" : "No token by that name on devnet or mainnet."}
                           </li>
                         )}
                       </ul>
@@ -617,8 +660,7 @@ export default function List() {
                         </a>
                       </>
                     ) : unlisted.length ? (
-                      // On the testnet the search finds mainnet tokens, which
-                      // cannot list here; these are pools that can.
+                      // Devnet pools nobody has listed yet.
                       <>
                         Devnet pools:{" "}
                         {unlisted.map((p, i) => (

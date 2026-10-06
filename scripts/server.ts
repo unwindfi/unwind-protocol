@@ -36,7 +36,7 @@ import { METEORA_DLMM, RAYDIUM_CLMM, dlmmObserveAccounts, readPool } from "./clm
 import { SOURCE_KIND } from "./pools";
 import {
   BACKER_FEE_SHARE_BPS, DEPTH_LEVERAGE_TIERS, LISTING_LEVERAGE_CEILING_BPS, MIN_LISTING_BACKING_USD, MIN_OBSERVATIONS,
-  MIN_OBSERVATION_WINDOW_SEC, listingLimits, unitLabel,
+  MIN_OBSERVATION_WINDOW_SEC, QUOTE_MINTS, listingLimits, unitLabel,
 } from "./listing-policy";
 import { GET as mainnetPoolPreview } from "../api/pool/[address]";
 import { backingBookPda, baseUnits } from "./custodies";
@@ -843,8 +843,8 @@ async function shadowMintMap(): Promise<Map<string, string>> {
   if (!shadowMints) {
     const { SHADOWS } = await import("./testnet-flow");
     shadowMints = new Map(seeded
-      .filter((p) => SHADOWS[p.symbol]?.symbol === p.symbol)
-      .map((p) => [p.pair, SHADOWS[p.symbol].mint]));
+      .filter((p) => p.real || SHADOWS[p.symbol]?.symbol === p.symbol)
+      .map((p) => [p.pair, p.real ?? SHADOWS[p.symbol].mint]));
   }
   return shadowMints;
 }
@@ -857,7 +857,7 @@ async function shadowNameMap(): Promise<Map<string, string>> {
     // The real token's name for a copy of one, and the seeding script's own
     // for an invented token ("Wind"), which otherwise listed as its ticker.
     shadowNames = new Map(seeded.map((p) => [p.pair,
-      SHADOWS[p.symbol]?.symbol === p.symbol && SHADOWS[p.symbol].name ? SHADOWS[p.symbol].name! : p.name]));
+      !p.real && SHADOWS[p.symbol]?.symbol === p.symbol && SHADOWS[p.symbol].name ? SHADOWS[p.symbol].name! : p.name]));
   }
   return shadowNames;
 }
@@ -1292,7 +1292,13 @@ function quote(ma: any, m: MarketRt) {
  */
 /// The testnet's own pools (scripts/seed-devnet-pools.ts): made-up tokens
 /// with no metadata account, named here instead.
-const seeded: { symbol: string; name: string; mint: string; pair: string }[] = st.seededPools ?? [];
+/// Copies of mainnet tokens made on request (/api/devnet-copy) join them,
+/// kept in their own file so the state file stays what the scripts wrote.
+type SeededPool = { symbol: string; name: string; mint: string; pair: string; real?: string; sideUsd?: number; t?: number; ip?: string };
+const COPIES_FILE = path.join(ROOT, `.${CLUSTER}-copies.json`);
+let copies: SeededPool[] = [];
+try { copies = JSON.parse(fs.readFileSync(COPIES_FILE, "utf8")); } catch { copies = []; }
+const seeded: SeededPool[] = [...(st.seededPools ?? []), ...copies];
 
 const KNOWN_TOKENS: Record<string, { symbol: string; name: string }> = {
   So11111111111111111111111111111111111111112: { symbol: "SOL", name: "Wrapped SOL" },
@@ -3299,7 +3305,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   }
   // The testnet's own pools shadow real tokens so their markets move. Loaded
   // only there: nothing else has pools this process is allowed to trade.
-  if (CLUSTER === "devnet" && seeded.length) {
+  if (CLUSTER === "devnet") {
     const { makeFlow } = await import("./testnet-flow");
     loop("flow", makeFlow(conn, authority, usdcMint, seeded), FLOW_MS);
   }
@@ -3372,7 +3378,86 @@ async function ataIxs(owner: PublicKey, mints: PublicKey[]) {
 /// anywhere but the testnet, where every real pool is on another chain.
 app.get("/api/testnet-pools", async (_req, res) => {
   const listed = new Set(Object.values(rt).map((m) => m.observed?.source?.toBase58()).filter(Boolean));
-  res.json(seeded.map((s) => ({ symbol: s.symbol, name: s.name, pool: s.pair, listed: listed.has(s.pair) })));
+  const real = await shadowMintMap();
+  res.json(seeded.map((s) => ({
+    symbol: s.symbol, name: s.name, pool: s.pair, listed: listed.has(s.pair), real: real.get(s.pair) ?? null,
+  })));
+});
+
+/*
+ * A devnet copy of any mainnet token, made on request.
+ *
+ * Every real pool is on mainnet, so devnet can only list what has a pool on
+ * devnet. Asked for a mainnet mint, this mints a test token under the real
+ * one's ticker and decimals, opens a Meteora DLMM pool for it against the
+ * test USDC at the real price, and lays liquidity either side scaled to the
+ * real token's: half its liquidity a side, between $5k and $180k. From then
+ * on the flow keeps the pool at the real price like the seeded copies, and
+ * listing it goes through the same permissionless path and depth limits as
+ * any other pool. One copy per mainnet mint; the copy is not listed here.
+ *
+ * It spends the authority's SOL (about 0.2 a copy), so it is capped per day
+ * in all and per address, and stops above the floor the crank needs.
+ */
+const COPY_PER_DAY = Number(process.env.COPY_PER_DAY ?? 30);
+const COPY_PER_IP_PER_DAY = Number(process.env.COPY_PER_IP_PER_DAY ?? 5);
+const COPY_MIN_LIQUIDITY_USD = 10_000;
+const COPY_SOL = 0.3;
+let copying: Promise<unknown> = Promise.resolve();
+app.post("/api/devnet-copy", async (req, res) => {
+  try {
+    if (CLUSTER !== "devnet") throw new Error("copies are made on devnet only");
+    const real = new PublicKey(String(req.body?.mint ?? "")).toBase58();
+    const copied = await shadowMintMap();
+    const existing = seeded.find((s) => copied.get(s.pair) === real);
+    if (existing) return res.json({ pool: existing.pair, symbol: existing.symbol, created: false });
+    if (QUOTE_MINTS[real]) throw new Error("stablecoins are the quote side, not a market");
+
+    const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+    const today = copies.filter((c) => Date.now() - (c.t ?? 0) < DAY_MS);
+    if (today.length >= COPY_PER_DAY) throw new Error("devnet has made today's copies; try again tomorrow");
+    if (today.filter((c) => c.ip === ip).length >= COPY_PER_IP_PER_DAY) {
+      throw new Error("too many copies from this address today");
+    }
+    if ((await conn.getBalance(authority.publicKey)) / 1e9 - COPY_SOL < AUTHORITY_SOL_FLOOR) {
+      throw new Error("devnet is out of SOL for copies right now");
+    }
+
+    // The real token, as Jupiter knows it: ticker, decimals, price, depth.
+    const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${real}`,
+      { signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) throw new Error(`token lookup failed (${r.status})`);
+    const t = ((await r.json()) as any[]).find((x) => x.id === real);
+    if (!t || !(t.usdPrice > 0) || !Number.isInteger(t.decimals)) throw new Error("no price for that token on mainnet");
+    const liquidity = Number(t.liquidity) || 0;
+    if (liquidity < COPY_MIN_LIQUIDITY_USD) {
+      throw new Error(`that token has $${Math.round(liquidity).toLocaleString("en-US")} of liquidity on mainnet; copies need $10,000`);
+    }
+
+    // One at a time: two copies of one token must not both be made.
+    const made = copying.then(async () => {
+      const again = seeded.find((s) => s.real === real);
+      if (again) return again;
+      const { seedPool } = await import("./testnet-flow");
+      const sideUsd = Math.round(Math.min(180_000, Math.max(5_000, liquidity / 2)));
+      const { mint, pair } = await seedPool(conn, authority, usdcMint,
+        { price: t.usdPrice, decimals: t.decimals, sideUsd });
+      const clean = String(t.symbol ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 12) || real.slice(0, 4);
+      const symbol = seeded.some((s) => s.symbol === clean) ? `${clean.slice(0, 7)}-${real.slice(0, 4)}` : clean;
+      const copy: SeededPool = {
+        symbol, name: String(t.name ?? symbol), mint: mint.toBase58(), pair: pair.toBase58(),
+        real, sideUsd, t: Date.now(), ip,
+      };
+      copies.push(copy); seeded.push(copy);
+      fs.writeFileSync(COPIES_FILE, JSON.stringify(copies, null, 2));
+      shadowMints = null; shadowNames = null;
+      console.log(`devnet copy ${symbol} of ${real}: pool ${copy.pair}, $${sideUsd} a side`);
+      return copy;
+    });
+    copying = made.catch(() => {});
+    const copy = await made;
+    res.json({ pool: copy.pair, symbol: copy.symbol, created: true });
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
 app.get("/api/pool/:address", async (req, res) => {

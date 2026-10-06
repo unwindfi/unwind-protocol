@@ -12,11 +12,8 @@
 /// the state file are left alone.
 ///
 ///   CLUSTER=devnet npx ts-node scripts/seed-devnet-pools.ts
-import DLMM from "@meteora-ag/dlmm";
-import { BN } from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from "@solana/web3.js";
-import { createMint } from "@solana/spl-token";
-import { JUP_PRICE, POPULAR, SHADOWS, layLiquidity } from "./testnet-flow";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { JUP_PRICE, POPULAR, SHADOWS, seedPool } from "./testnet-flow";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -40,22 +37,12 @@ const DECIMALS = 9;
 /// measured over, which clears the $50k a listing's open-interest ceiling
 /// is measured against, so these list at full limits.
 const SIDE_USD = 180_000;
-/// The only step devnet has a preset for.
-const BIN_STEP = 10;
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 (async () => {
   // RPC_URL, so a run can stay off the key the testnet server is using.
   const conn = new Connection(process.env.RPC_URL ?? st.rpc, "confirmed");
   const authority = kp(st.keys.authority);
   const usdc = new PublicKey(st.usdcMint);
   st.seededPools ??= [];
-
-  const presets = await DLMM.getAllPresetParameters(conn);
-  // Devnet carries only the newer preset accounts.
-  const preset = presets.presetParameter2.find((p) => p.account.binStep === BIN_STEP);
-  if (!preset) throw new Error(`no DLMM preset with bin step ${BIN_STEP} on this cluster`);
 
   const r = await fetch(`${JUP_PRICE}?ids=${POPULAR.map((k) => SHADOWS[k].mint).join(",")}`);
   if (!r.ok) throw new Error(`jupiter price ${r.status}`);
@@ -75,24 +62,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       continue;
     }
 
-    const decimals = t.decimals ?? DECIMALS;
-    const mint = await createMint(conn, authority, authority.publicKey, null, decimals);
-    // DLMM prices in base units of Y per base unit of X, so the dollar price
-    // is scaled by the difference in decimals.
-    const perLamport = t.price * 10 ** (6 - decimals);
-    const activeId = DLMM.getBinIdFromPrice(perLamport, BIN_STEP, true);
-    const create = await DLMM.createLbPair2(
-      conn, authority.publicKey, mint, usdc, preset.publicKey, new BN(activeId));
-    await sendAndConfirmTransaction(conn, create, [authority]);
-
-    const pair = await DLMM.getPairPubkeyIfExists(
-      conn, mint, usdc, new BN(BIN_STEP), new BN(preset.account.baseFactor),
-      new BN(preset.account.baseFeePowerFactor ?? 0));
-    const pairKey = pair ?? (await findPair(conn, mint, usdc));
-    await sleep(2_000);
-
-    const dlmm = await DLMM.create(conn, pairKey);
-    const position = await layLiquidity(conn, authority, dlmm, mint.toBase58(), usdc, activeId, t.price, SIDE_USD);
+    const { mint, pair: pairKey, position } = await seedPool(conn, authority, usdc,
+      { price: t.price, decimals: t.decimals ?? DECIMALS, sideUsd: SIDE_USD });
 
     st.seededPools.push({
       symbol: t.symbol, name: t.name, mint: mint.toBase58(), pair: pairKey.toBase58(),
@@ -102,12 +73,3 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     console.log(`${t.symbol}  mint ${mint.toBase58()}  pair ${pairKey.toBase58()}`);
   }
 })().catch((e) => { console.error(e?.message ?? e); process.exit(1); });
-
-/// The pair the SDK just created, found by its two mints when the address
-/// derivation above does not match this SDK version's seeds.
-async function findPair(conn: Connection, x: PublicKey, y: PublicKey): Promise<PublicKey> {
-  const pairs = await DLMM.getLbPairs(conn);
-  const hit = pairs.find((p) => p.account.tokenXMint.equals(x) && p.account.tokenYMint.equals(y));
-  if (!hit) throw new Error(`pair for ${x.toBase58()} not found`);
-  return hit.publicKey;
-}

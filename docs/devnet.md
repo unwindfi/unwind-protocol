@@ -45,6 +45,17 @@ comes from devnet's own faucet.
   real price. Their charts start with the real token's history (Jupiter's
   chart data), then continue with the venue's own prints. A market somebody lists on mainnet is priced from its own pool
   (see [Price sources](price-sources.md)).
+- **Any other Solana token, copied on request.** Search a mainnet token on
+  the list page and devnet offers **Copy to devnet** for anything it has no
+  pool for. The copy is made like the 47 above: a devnet test token under the
+  real ticker and decimals, in a Meteora DLMM pool against test USDC at the
+  real price, held there and marked at it the same way. Its liquidity is
+  scaled to the real token's: half its mainnet liquidity a side, between
+  $5,000 and $180,000, so the depth limits a listing gets are about the ones
+  it would get on mainnet. The copy is not listed; listing it is the same
+  permissionless step as any other pool. The token needs $10,000 of mainnet
+  liquidity and a Jupiter price. Devnet makes one copy per token, up to 30 a
+  day in all and 5 a day from one address.
 - **WIND, KITE and YAK.** Invented tokens with their own pools, left for
   testers to list and back. They follow the percentage moves of BONK, JUP and
   WIF.
