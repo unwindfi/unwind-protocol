@@ -3107,10 +3107,17 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         .accounts(accounts).instruction();
 
     // Positions do not flip, so the side the maker already holds is quoted as
-    // an open and the other side as a close of what it holds.
+    // an open and the other side as a close of what it holds. Flat, it may
+    // open only one way a batch (the program refuses a wallet opening both),
+    // so it takes the side the takers are short of: bids under net selling,
+    // asks under net buying. Quoting both refused the pair, and a flat maker
+    // never quoted at all.
     const ixs: TransactionInstruction[] = [];
     const heldUsd = open?.usd ?? 0;
-    for (const isBid of [true, false]) {
+    let net = 0;
+    for (const o of active) if (!o.isMaker) net += (o.isBid ? 1 : -1) * num(o.sizeUsd);
+    const sides = open ? [true, false] : net > 0 ? [false] : net < 0 ? [true] : [];
+    for (const isBid of sides) {
       const adds = !open || open.isLong === isBid;
       if (adds) {
         if (heldUsd + MAKER_SIZE_USD <= MAKER_MAX_POSITION_USD) {
