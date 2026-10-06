@@ -42,10 +42,15 @@ export function YourBacking({ backings, markets, onWithdraw, onAdd }: {
   return (
     <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel">
       <div className="flex flex-wrap items-end justify-between gap-4 px-5 pb-5 pt-7 sm:px-9">
-        <h2 className="text-balance text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
-          Your backing
-          <span className="n ml-2 text-[14px] font-normal text-dim">{backings.length}</span>
-        </h2>
+        <div>
+          <h2 className="text-balance text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
+            Your backing
+            <span className="n ml-2 text-[14px] font-normal text-dim">{backings.length}</span>
+          </h2>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            Not trades. Earns half each market's fees, takes the first loss when its traders win.
+          </p>
+        </div>
         <div className="flex gap-6 text-right">
           <div>
             <div className="n text-[16px] font-semibold">
@@ -77,9 +82,9 @@ export function YourBacking({ backings, markets, onWithdraw, onAdd }: {
               <div className="flex min-w-0 items-center gap-3">
                 {m && <TickerLogo m={m} size={32} />}
                 <div className="min-w-0">
-                  <a href={`/trade?symbol=${b.symbol}`}
+                  <a href={`/vault?id=${encodeURIComponent(b.symbol)}`}
                     className="block truncate text-[14px] font-medium underline-offset-2 hover:underline">
-                    {m?.name ?? b.symbol}
+                    {m?.name ?? b.symbol} backing
                   </a>
                   <div className={`truncate text-[12.5px] ${s.tone}`}>{s.text}</div>
                 </div>

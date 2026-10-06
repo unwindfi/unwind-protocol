@@ -413,8 +413,13 @@ function Orders({ orders, owner, loaded, canAct, busy, onCancel }: {
 const HOLD = "grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 " +
   "md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]";
 
-/// The pool and every market's backing, in one table: both are capital this
-/// wallet has lent the venue, and /earn is where either is changed.
+/// One row of capital this wallet has lent the venue: the pool, or one
+/// market's backing. Never a trade, so never in the Positions card.
+type HoldRow = { key: string; href: string; name: string; sub: string; value: number;
+                 deposited: number | null; status: string };
+
+/// Market backing and pool deposits, each in its own card so neither is read
+/// as the other or as a position. /earn is where either is changed.
 function Holdings({ account, backings, rewards, owner, loaded }: {
   account: Account | null; backings: Backing[]; rewards: Rewards | null;
   owner?: string; loaded: boolean;
@@ -424,25 +429,35 @@ function Holdings({ account, backings, rewards, owner, loaded }: {
   // minted. Tokens bought elsewhere have no cost here, so it is left blank
   // rather than shown as a gain.
   const lpCost = rewards?.exists && rewards.lp > 0 ? rewards.lp : null;
-  const rows: { key: string; name: string; sub: string; value: number; deposited: number | null;
-                status: string }[] = [];
-  if (lp && lp.held > 0) {
-    rows.push({ key: "pool", name: "Pool", sub: `${lp.held.toLocaleString(undefined,
+  const pool: HoldRow[] = lp && lp.held > 0 ? [{
+    key: "pool", href: "/vault?id=pool", name: "Pool", sub: `${lp.held.toLocaleString(undefined,
       { maximumFractionDigits: 2 })} xLP at ${price(lp.price)}`,
-      value: lp.value, deposited: lpCost, status: "Every market" });
-  }
-  for (const b of backings) {
-    rows.push({ key: b.symbol, name: b.symbol, sub: "Backing", value: b.value, deposited: b.deposited,
-      status: b.opening ? "Opening" : b.tradeable ? "Live" : "Waiting" });
-  }
-  const sum = rows.reduce((a, r) => a + r.value, 0);
+    value: lp.value, deposited: lpCost, status: "Every market" }] : [];
+  const backed: HoldRow[] = backings.map((b) => ({
+    key: b.symbol, href: `/vault?id=${encodeURIComponent(b.symbol)}`, name: `${b.symbol} backing`,
+    sub: "First-loss vault", value: b.value, deposited: b.deposited,
+    status: b.opening ? "Opening" : b.tradeable ? "Live" : "Waiting" }));
 
   return (
-    <Card title="Pool and backing" aside={rows.length > 0 && (
+    <>
+      <HoldCard title="Backing" rows={backed} owner={owner} loaded={loaded}
+        empty={<>Not backing any market. <a href="/earn" className={LINK}>Back one on Earn</a></>} />
+      <HoldCard title="Pool deposits" rows={pool} owner={owner} loaded={loaded}
+        empty={<>Nothing in the pool. <a href="/earn" className={LINK}>Earn</a></>} />
+    </>
+  );
+}
+
+function HoldCard({ title, rows, owner, loaded, empty }: {
+  title: string; rows: HoldRow[]; owner?: string; loaded: boolean; empty: ReactNode;
+}) {
+  const sum = rows.reduce((a, r) => a + r.value, 0);
+  return (
+    <Card title={title} aside={rows.length > 0 && (
       <span className="n text-[12.5px] text-muted-foreground">{money(sum)}</span>
     )}>
       {!loaded ? (owner ? <Skeleton /> : <Empty>{waiting(owner)}</Empty>) : rows.length === 0 ? (
-        <Empty>Nothing in the pool or behind a market. <a href="/earn" className={LINK}>Earn</a></Empty>
+        <Empty>{empty}</Empty>
       ) : (
         <>
           <Head cols={HOLD}>
@@ -455,7 +470,7 @@ function Holdings({ account, backings, rewards, owner, loaded }: {
           {rows.map((r) => {
             const change = r.deposited == null ? null : r.value - r.deposited;
             return (
-              <a key={r.key} href="/earn" className={`${HOLD} ${ROW} hover:bg-panel2`}>
+              <a key={r.key} href={r.href} className={`${HOLD} ${ROW} hover:bg-panel2`}>
                 <span className="min-w-0">
                   <span title={r.name} className="block truncate font-medium">{r.name}</span>
                   <span className="block truncate text-[12px] text-muted-foreground">{r.sub}</span>

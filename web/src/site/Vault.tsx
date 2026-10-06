@@ -15,10 +15,10 @@ import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
 import {
-  getAccount, getAllMarkets, getApy, getApySeries, getBackings, useHasBackend, usePoll,
+  getAccount, getAllMarkets, getApy, getApySeries, getBackings, getRewards, useHasBackend, usePoll,
   type Backing, type Market,
 } from "@/lib/api";
-import { Tile, VaultDialog, VaultIcon, vaultsOf } from "@/site/Earn";
+import { PositionLine, Tile, VaultDialog, VaultIcon, vaultsOf } from "@/site/Earn";
 import { compact, money } from "@/lib/format";
 
 const NONE: Market[] = [];
@@ -41,8 +41,10 @@ export default function VaultPage() {
   const devnet = useHasBackend() === true;
   const [open, setOpen] = useState<"in" | "out" | null>(null);
 
-  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner),
-    [account, markets, backings, apy, owner]);
+  const rewards = usePoll(() => getRewards(owner), 30_000, [owner]);
+  const listed = useMemo(() => new Set(rewards?.listed?.map((l) => l.symbol) ?? []), [rewards]);
+  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner, listed),
+    [account, markets, backings, apy, owner, listed]);
   const v = vaults.find((x) => x.id === id);
   const m = v?.market;
   const points = (id === "pool" ? series?.pool : series?.markets[id]) ?? [];
@@ -74,7 +76,7 @@ export default function VaultPage() {
                   <p className="mt-1.5 text-[14px] text-muted-foreground">
                     {v.kind === "pool"
                       ? "Every market's liquidity. Takes what backers leave, after them."
-                      : `First-loss backing behind ${m?.name ?? v.id}. ${v.subtitle}.`}
+                      : `First-loss backing behind ${m?.name ?? v.id}, not a trading position.${v.listedByYou ? " You listed this market." : ""}`}
                   </p>
                 </div>
               </div>
@@ -84,7 +86,7 @@ export default function VaultPage() {
                 <Tile k="APY" tone={v.apy.tone}
                   v={v.apy.value != null ? `${v.apy.value.toFixed(2)}%` : v.apy.text} sub={v.apy.note} />
                 <Tile k="Utilisation" v={v.util.pct != null ? `${v.util.pct.toFixed(1)}%` : "–"} sub={v.util.note} />
-                <Tile k="Yours" v={v.yours > 0 ? money(v.yours) : DASH}
+                <Tile k={v.kind === "pool" ? "Your deposit" : "Your backing"} v={v.yours > 0 ? money(v.yours) : DASH}
                   sub={backing ? `${money(backing.deposited)} posted` : v.kind === "pool" && account ? `${compact(account.lp.value)} in xLP` : owner ? "Nothing here yet" : "Not connected"} />
               </div>
 
@@ -122,7 +124,7 @@ export default function VaultPage() {
 
             <aside className="lg:sticky lg:top-6 lg:self-start">
               <div className="overflow-hidden rounded-[24px] border border-line bg-panel px-6 py-6">
-                <div className="text-[13px] text-muted-foreground">Your position</div>
+                <div className="text-[13px] text-muted-foreground">{v.kind === "pool" ? "Your deposit" : "Your backing"}</div>
                 <div className="n mt-2 text-[34px] font-semibold leading-none tracking-[-.02em]">
                   {v.yours > 0 ? money(v.yours) : DASH}
                 </div>
@@ -136,6 +138,7 @@ export default function VaultPage() {
                   {v.kind === "pool" && account && <KV k="xLP">{account.lp.value > 0 ? money(account.lp.value) : DASH}</KV>}
                   <KV k="Strategy">{v.strategy}</KV>
                 </div>
+                {v.position && <PositionLine v={v} className="mt-3 text-[12.5px]" />}
                 <div className="mt-6 flex flex-col gap-2">
                   {!owner ? (
                     <button type="button" onClick={() => setVisible(true)} disabled={api.readOnly}
@@ -143,7 +146,7 @@ export default function VaultPage() {
                   ) : (
                     <>
                       <button type="button" onClick={() => setOpen("in")} disabled={!devnet}
-                        className={`${BTN} bg-foreground text-background hover:opacity-85`}>Deposit</button>
+                        className={`${BTN} bg-foreground text-background hover:opacity-85`}>{v.kind === "pool" ? "Deposit" : "Back"}</button>
                       <button type="button" onClick={() => setOpen("out")} disabled={!devnet || v.yours <= 0}
                         className={`${BTN} border border-line hover:border-foreground/40`}>Withdraw</button>
                     </>

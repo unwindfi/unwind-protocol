@@ -43,8 +43,8 @@ import { EASE_OUT } from "@/lib/ease";
 import * as api from "@/lib/api";
 import { Pending, Unavailable } from "@/components/ui/unavailable";
 import {
-  getAccount, getAllMarkets, getApy, getBackings, peek, usePoll, usePollState,
-  type Account, type Apy, type Backing, type Market,
+  getAccount, getAllMarkets, getApy, getBackings, getRewards, peek, usePoll, usePollState,
+  type Account, type Apy, type Backing, type Market, type Position,
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
 import { PAY_TOKENS, usdPrices, type PayWith } from "@/lib/listing";
@@ -99,8 +99,14 @@ export interface Vault {
   /// The APY column: the rate, and the window it was measured over.
   apy: { text: string; tone: string; note: string; value?: number };
   strategy: string;
+  /// The wallet's backing here (or its xLP, for the pool). Never a trade.
   yours: number;
   symbol?: string;
+  /// The connected wallet deployed this market.
+  listedByYou?: boolean;
+  /// A trading position the wallet also holds in this market, kept apart
+  /// from the backing so the two never read as one figure.
+  position?: Position | null;
   /// Which of the toggle's groups it belongs to.
   group: "pool" | "equities" | "crypto" | "opened";
   /// How much of what the vault can carry is in use: the pool's utilisation,
@@ -128,9 +134,11 @@ export function apyCell(a: Apy | null | undefined, empty: string) {
 
 /// `owned` says the account and backings are a connected wallet's. Without
 /// one the server answers with its demo account, which is fine for the
-/// pool's figures and nobody's to show as "yours".
+/// pool's figures and nobody's to show as "yours". `listed` is the symbols
+/// the wallet deployed, from its rewards.
 export function vaultsOf(account: Account | null | undefined, markets: Market[], backings: Backing[],
-  apy: { pool: Apy | null; markets: Record<string, Apy> } | null | undefined, owned = true) {
+  apy: { pool: Apy | null; markets: Record<string, Apy> } | null | undefined, owned = true,
+  listed: ReadonlySet<string> = new Set()) {
   const out: Vault[] = [];
   const pool = account?.pool;
   if (pool) {
@@ -159,8 +167,11 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
     const o = m.observed;
     out.push({
       id: m.symbol, kind: "market", symbol: m.symbol, market: m,
-      title: m.name,
-      subtitle: m.name === m.symbol ? "Listed by anyone" : m.symbol,
+      // Named as backing, so a row is never read as a trade in the market.
+      title: `${m.name} backing`,
+      subtitle: owned && listed.has(m.symbol) ? "First-loss vault · You listed this" : "First-loss vault",
+      listedByYou: owned && listed.has(m.symbol),
+      position: owned ? account?.positions?.[m.symbol] ?? null : null,
       tvl: m.backingUsd,
       tvlNote: o ? `of ${compact(o.depthUsd)} depth` : `${compact(m.lossBudgetUsd)} budget`,
       // Backed but not yet measured is a new vault, not an unbacked one.
@@ -466,7 +477,8 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           <Stat k="Fee">{!fee ? "none" : usd
             ? `${money(usdOf(usd) * fee / 100)} (${fee}%), paid to remaining LPs`
             : `${fee}%, paid to remaining LPs`}</Stat>
-          <Stat k="Yours now">{money(v.yours)}</Stat>
+          <Stat k={v.kind === "pool" ? "Your deposit now" : "Your backing now"}>{money(v.yours)}</Stat>
+          {v.position && <PositionLine v={v} />}
           <Stat k="APY" tone={v.apy.tone}>
             {v.apy.text}
             <span className="ml-1.5 font-normal text-dim">{v.apy.note}</span>
@@ -478,7 +490,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
               ? side === "out"
                 ? "Withdrawing takes two steps. Your xLP waits about a minute (150 slots) in escrow, still earning and losing with the pool, then pays out at the pool's value when you claim. Cancel any time before."
                 : "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
-              : `First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
+              : `Backing, not a trading position. First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
                 paying === "SOL" ? "; counts at 80%" : ""
               }. Withdraw any time, in the same mix. Winners are paid only from what is left, so leaving early cuts their payout, not yours.`}
           </p>
@@ -500,6 +512,19 @@ export function VaultIcon({ v }: { v: Vault }) {
   );
 }
 
+/// A trading position in the same market, labelled as one and sent to
+/// /trade, so it never merges with the backing beside it.
+export function PositionLine({ v, className = "" }: { v: Vault; className?: string }) {
+  const p = v.position;
+  if (!p || !v.symbol) return null;
+  return (
+    <a href={`/trade?symbol=${encodeURIComponent(v.symbol)}`}
+      className={`n block truncate text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline ${className}`}>
+      Position: <span className={p.isLong ? "text-up" : "text-down"}>{p.isLong ? "Long" : "Short"}</span> {money(p.size, 0)}
+    </a>
+  );
+}
+
 /*
  * The toggle over the table, in the pills /list switches its tabs with. The
  * groups are the market list's own, what a market tracks and who opened it,
@@ -510,7 +535,7 @@ const FILTERS = [
   { key: "equities", label: "Equities" },
   { key: "crypto", label: "Crypto" },
   { key: "opened", label: "Opened" },
-  { key: "yours", label: "Yours" },
+  { key: "yours", label: "Your backing" },
 ] as const;
 type Filter = (typeof FILTERS)[number]["key"];
 
@@ -539,12 +564,15 @@ export default function Earn() {
   // The tape is sampled every two minutes, so polling faster than this would
   // only ask the same question again.
   const apy = usePoll(getApy, 30_000);
+  // Which markets this wallet deployed, so its rows can say so.
+  const rewards = usePoll(() => getRewards(owner), 30_000, [owner]);
+  const listed = useMemo(() => new Set(rewards?.listed?.map((l) => l.symbol) ?? []), [rewards]);
 
   const [open, setOpen] = useState<{ id: string; start: "in" | "out" } | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
 
-  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner),
-    [account, markets, backings, apy, owner]);
+  const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner, listed),
+    [account, markets, backings, apy, owner, listed]);
   const opened = open ? vaults.find((v) => v.id === open.id) ?? null : null;
   // Markets first, most-backed at the top, and the pool after them: backing
   // is the thing to choose, and the pool is what you get by not choosing.
@@ -728,7 +756,8 @@ export default function Earn() {
                 <span className="n ml-2 text-[14px] font-normal text-dim">{shown.length}</span>
               </h2>
               <p className="n mt-1 text-[12.5px] text-muted-foreground">
-                <AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} /> deposited
+                <AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} /> deposited.
+                Backing earns half a market's fees and takes the first loss when its traders win.
               </p>
             </div>
             <Tabs value={filter} onValueChange={(f) => setFilter(f as Filter)} variant="pill"
@@ -755,26 +784,30 @@ export default function Earn() {
             <span>TVL</span>
             <span className="hidden md:block">APY</span>
             <span className="hidden md:block">Utilisation</span>
-            <span className="hidden md:block">Yours</span>
+            <span className="hidden md:block">Your backing</span>
             <span />
           </div>
 
           {shown.length === 0 && (
             <p className="border-t border-line px-5 py-10 text-center text-[13px] text-muted-foreground">
               {filter === "yours"
-                ? "Nothing deposited yet."
+                ? "No backing yet."
                 : "None yet."}
             </p>
           )}
           {shown.map((v) => (
             <div key={v.id} className={`${COLS} border-t border-line px-5 py-3.5 transition-colors hover:bg-panel2 sm:px-9`}>
-              <a href={`/vault?id=${encodeURIComponent(v.id)}`} className="flex min-w-0 items-center gap-3">
-                <VaultIcon v={v} />
+              <span className="flex min-w-0 items-center gap-3">
+                <a href={`/vault?id=${encodeURIComponent(v.id)}`} className="flex-none"><VaultIcon v={v} /></a>
                 <span className="min-w-0">
-                  <span title={v.title} className="block truncate text-[14px] font-medium">{v.title}</span>
-                  <span className="block truncate text-[12.5px] text-muted-foreground">{v.subtitle}</span>
+                  <a href={`/vault?id=${encodeURIComponent(v.id)}`} className="block min-w-0">
+                    <span title={v.title} className="block truncate text-[14px] font-medium">{v.title}</span>
+                    <span className="block truncate text-[12.5px] text-muted-foreground">{v.subtitle}</span>
+                  </a>
+                  {/* A trade in the same market, on its own line and its own link. */}
+                  <PositionLine v={v} />
                 </span>
-              </a>
+              </span>
               <span className="min-w-0">
                 <span className="n block text-[14px] font-semibold">
                   <AnimatedNumber value={v.tvl} duration={0.9} format={compact} className="md:hidden" />
@@ -810,7 +843,7 @@ export default function Earn() {
                 <button type="button" onClick={() => setOpen({ id: v.id, start: "in" })} disabled={!devnet}
                   className="press h-8 rounded-full bg-foreground px-3.5 text-[12.5px] font-medium text-background
                              transition-opacity hover:opacity-85 disabled:opacity-35">
-                  Deposit
+                  {v.kind === "pool" ? "Deposit" : "Back"}
                 </button>
                 <button type="button" onClick={() => setOpen({ id: v.id, start: "out" })} disabled={!devnet || v.yours <= 0}
                   className="press hidden h-8 rounded-full bg-panel2 px-3.5 text-[12.5px] font-medium
