@@ -6,13 +6,16 @@
 .localnet-ledger
 .localnet-oracles
 .localnet-state.json
-target
-app
-programs
-tests
+/target
+/app
+/programs
+/tests
 Cargo.toml
 Cargo.lock
 Anchor.toml
 node_modules
-web/dist
-brand
+/web/dist
+/brand
+# Each deploy builds a different folder: web/ for the site, docs-site/ for
+# the docs. A Next.js build there would come back as `.next`.
+docs-site/.next
