@@ -12,12 +12,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /// five minutes.
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { AccountInfo, Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   NATIVE_MINT, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction,
   createAssociatedTokenAccountInstruction, createCloseAccountInstruction,
   createMintToInstruction, createSyncNativeInstruction, getAccount, getAssociatedTokenAddressSync, mintTo,
-  TokenAccountNotFoundError,
+  unpackAccount, unpackMint,
 } from "@solana/spl-token";
 import {
   AddressLookupTableAccount, ComputeBudgetProgram, Transaction, TransactionInstruction,
@@ -33,8 +33,9 @@ import { MARKETS, MarketDef } from "./markets";
 import { Candle, LiveQuote, Session, fetchCandles, fetchQuotes, fetchSessions } from "./prices";
 import { packInstructions, withComputeLimit } from "./pack";
 import { mockPythProgram, postQuotes, priceAccountFor, relayKeypair } from "./mock-pyth";
-import { METEORA_DLMM, RAYDIUM_CLMM, dlmmObserveAccounts, readPool } from "./clmm";
-import { SOURCE_KIND } from "./pools";
+import { METEORA_DLMM, RAYDIUM_CLMM, dlmmArrayKeys, isDlmmArray, readPool } from "./clmm";
+import { SOURCE_KIND, clmmPrice, decodeBinArray, decodeClmm, decodeDlmmPair, dlmmPrice } from "./pools";
+import { Memo, markMayRest } from "./read-cache";
 import {
   BACKER_FEE_SHARE_BPS, DEPTH_LEVERAGE_TIERS, LISTING_LEVERAGE_CEILING_BPS, MIN_LISTING_BACKING_USD, MIN_OBSERVATIONS,
   MIN_OBSERVATION_WINDOW_SEC, QUOTE_MINTS, listingLimits, unitLabel,
@@ -566,11 +567,13 @@ const custodyPairs = (writable: boolean) =>
 /// Refreshed by the crank and after anything that moves it.
 const books: Record<string, { amounts: Record<string, number>; reimbursedUsd: number }> = {};
 
-/// Read at most every ten seconds: the backings view asks on every poll, and
-/// this is a `getProgramAccounts`, one of the slowest calls a key serves.
+/// Read at most every thirty seconds, and again after any transaction this
+/// server relays (a backing in kind moves a book). Read by address, one book
+/// per market of this pool, in a batched call: it was a `getProgramAccounts`
+/// every ten seconds whenever a page showed backings.
 let booksRead: { at: number; body: Promise<void> } | null = null;
 function loadBooks(): Promise<void> {
-  if (booksRead && Date.now() - booksRead.at < 10_000) return booksRead.body;
+  if (booksRead && Date.now() - booksRead.at < 30_000) return booksRead.body;
   const body = readBooks();
   booksRead = { at: Date.now(), body };
   body.catch(() => { booksRead = null; });
@@ -578,7 +581,15 @@ function loadBooks(): Promise<void> {
 }
 
 async function readBooks() {
-  const all = await program.account.backingBook.all();
+  const markets = new Map<string, PublicKey>();
+  for (const m of Object.values(rt)) markets.set(m.address.toBase58(), m.address);
+  for (const { publicKey } of poolMarketsLast?.list ?? []) markets.set(publicKey.toBase58(), publicKey);
+  const keys = [...markets.values()].map((m) => backingBookPda(program.programId, m));
+  const { infos } = await getMany(keys);
+  const all = infos.flatMap((info) => {
+    if (!info) return [];
+    try { return [{ account: program.coder.accounts.decode("backingBook", info.data) }]; } catch { return []; }
+  });
   for (const { account: b } of all as any[]) {
     const amounts: Record<string, number> = {};
     for (const c of custodies) amounts[c.symbol] = num(b.amounts[c.index]) / 10 ** c.decimals;
@@ -612,11 +623,16 @@ const potUsd = (market: PublicKey, backingUsdRaw: any) =>
  * moment and dropped whenever a transaction lands.
  */
 const batchSeen = new Map<string, { state: any; at: number }>();
-/// Matches the auction's idle pace: while it runs fast it refreshes this
-/// itself every second, and while it is idle nothing in a batch changes.
-const BATCH_FRESH_MS = 4_000;
+/// Twice the auction's idle pace: while it runs fast it refreshes this itself
+/// every second, and while it is idle nothing in a batch changes. At exactly
+/// the idle pace, a poll fell through to the chain whenever a pass was a
+/// little late, which with each pass's own read on top was most of them.
+const BATCH_FRESH_MS = AUCTION_IDLE_MS * 2;
+/// When a batch does have to be read for a page, one read serves every
+/// page asking for that market meanwhile.
+const batchReads = new Memo<any>(1_000);
 const accountMemo = new Map<string, { at: number; body: Promise<any> }>();
-const ACCOUNT_FRESH_MS = 4_000;
+const ACCOUNT_FRESH_MS = Number(process.env.ACCOUNT_FRESH_MS ?? 4_000);
 /// Wallets whose orders the auction settled since its last pass ended.
 const settledOwners = new Set<string>();
 /// Each wallet's last account view that was read in full, served when the
@@ -684,13 +700,36 @@ for (const def of LIVE) {
 /// The market shown for each feed discovery has registered, by feed id hex.
 const shownByFeed = new Map<string, string>();
 
+/*
+ * Every market of this pool, generations this process does not show
+ * included, read by one `getProgramAccounts` and kept. Discovery refreshes it
+ * on its own loop; the mark keeper (which prices every generation), the books
+ * and the leaderboard read it from here rather than scanning again. The
+ * keeper used to scan observations and markets on every pass, and the
+ * leaderboard on every poll.
+ */
+let poolMarketsLast: { at: number; list: { publicKey: PublicKey; account: any }[] } | null = null;
+let poolMarketsReading: Promise<{ publicKey: PublicKey; account: any }[]> | null = null;
+function poolMarkets(maxAgeMs = DISCOVER_MS): Promise<{ publicKey: PublicKey; account: any }[]> {
+  if (poolMarketsLast && Date.now() - poolMarketsLast.at < maxAgeMs) return Promise.resolve(poolMarketsLast.list);
+  if (!poolMarketsReading) {
+    const at = Date.now();
+    // This pool's markets only, filtered on-chain. On a cluster the program has
+    // been deployed to before, an unfiltered scan also returns markets from
+    // older pools in older layouts, and one that fails to decode sinks the scan.
+    poolMarketsReading = program.account.market.all([
+      { memcmp: { offset: 9, bytes: pool.toBase58() } },
+    ]).then((list: any[]) => {
+      poolMarketsLast = { at, list };
+      return list;
+    }).finally(() => { poolMarketsReading = null; });
+  }
+  return poolMarketsReading!;
+}
+
 async function discoverMarkets() {
-  // This pool's markets only, filtered on-chain. On a cluster the program has
-  // been deployed to before, an unfiltered scan also returns markets from
-  // older pools in older layouts, and one that fails to decode sinks the scan.
-  const all = await program.account.market.all([
-    { memcmp: { offset: 9, bytes: pool.toBase58() } },
-  ]);
+  // A fresh scan: finding what was listed is this loop's whole job.
+  const all = await poolMarkets(0);
   // One feed can be listed more than once: each listing is a generation with
   // its own address (scripts/market-address.ts), so a market listed first
   // with a bad source does not hold the feed. Show one per feed, the newest
@@ -1179,9 +1218,74 @@ async function syncSessions() {
   }
 }
 
-/// A market account read at most once a second. The account view, trader
-/// PnL and positions each read every market, and a page polls them all, so
-/// the same account was fetched from the RPC several times a second.
+/// Any number of accounts in as few calls as the RPC allows (100 a call, the
+/// calls in parallel), with the slot they were read at.
+async function getMany(keys: PublicKey[]): Promise<{ infos: (AccountInfo<Buffer> | null)[]; slot: number }> {
+  const parts = await Promise.all(Array.from({ length: Math.ceil(keys.length / 100) }, (_, k) =>
+    conn.getMultipleAccountsInfoAndContext(keys.slice(k * 100, k * 100 + 100))));
+  return {
+    infos: parts.flatMap((p) => p.value),
+    slot: Math.min(...parts.map((p) => p.context.slot), Number.MAX_SAFE_INTEGER),
+  };
+}
+
+/*
+ * The accounts every page and keeper reads: the pool, the LP mint and every
+ * market, held as one snapshot.
+ *
+ * The auction loop reads them in the same call as the batches (every second
+ * while anything rests, every AUCTION_IDLE_MS otherwise) and the AUM pass in
+ * the same call as its checkpoint, so in steady state nothing else reads them
+ * at all: the market list, every account view, trader PnL, the liquidation
+ * check and the creators page are served from here. Only when the snapshot is
+ * older than SHARED_FRESH_MS does a reader go to the chain, and then one read
+ * serves everyone waiting.
+ */
+const SHARED_FRESH_MS = Number(process.env.SHARED_FRESH_MS ?? 5_000);
+type Shared = { at: number; markets: Map<string, any>; pool: any; lpSupply: bigint };
+let shared: Shared | null = null;
+let sharedReading: Promise<Shared> | null = null;
+/// What a shared snapshot reads, in this order; callers append their own keys.
+const sharedKeys = () => [pool, lpMint, ...Object.values(rt).map((m) => m.address)];
+/// Keeps a snapshot read along with something else. `infos` lines up with
+/// `keys`, which are `sharedKeys()` as they were when the read was made.
+function noteShared(keys: PublicKey[], infos: (AccountInfo<Buffer> | null)[], at = Date.now()): Shared | null {
+  if (!infos[0] || !infos[1]) return null;
+  const markets = new Map<string, any>();
+  for (let i = 2; i < keys.length; i++) {
+    const info = infos[i];
+    if (!info) continue;
+    // A market in a layout this build cannot decode is left out, as a failed
+    // fetchMultiple entry was.
+    try { markets.set(keys[i].toBase58(), program.coder.accounts.decode("market", info.data)); } catch { /* skip */ }
+  }
+  const next: Shared = {
+    at, markets,
+    pool: program.coder.accounts.decode("pool", infos[0].data),
+    lpSupply: unpackMint(lpMint, infos[1], infos[1].owner).supply,
+  };
+  if (!shared || next.at >= shared.at) {
+    shared = next;
+    for (const [k, ma] of markets) marketReads.set(k, { at, body: Promise.resolve(ma) });
+  }
+  return next;
+}
+function sharedState(maxAgeMs = SHARED_FRESH_MS): Promise<Shared> {
+  if (shared && Date.now() - shared.at < maxAgeMs) return Promise.resolve(shared);
+  if (!sharedReading) {
+    const keys = sharedKeys();
+    const at = Date.now();
+    sharedReading = getMany(keys).then(({ infos }) => {
+      const s = noteShared(keys, infos, at);
+      if (!s) throw new Error("pool account not found");
+      return s;
+    }).finally(() => { sharedReading = null; });
+  }
+  return sharedReading;
+}
+
+/// A market account read at most once a second: the snapshot when it is that
+/// fresh (it is, whenever the auction is busy), otherwise the account alone.
 const marketReads = new Map<string, { at: number; body: Promise<any> }>();
 async function marketAccount(m: MarketRt) {
   const key = m.address.toBase58();
@@ -1193,60 +1297,22 @@ async function marketAccount(m: MarketRt) {
   return body;
 }
 
-/*
- * Every market in one read, at most every two seconds.
- *
- * Trader PnL needs all of them, and the account view asks for it on every
- * poll: one market at a time, against a one-second cache shorter than the
- * page's poll, it was a getAccountInfo per market per view, most of the
- * server's RPC spend. One getMultipleAccounts (100 accounts a call) replaces
- * them, and seeds the per-market cache so a position read just after it
- * costs nothing.
- */
-/// Keyed by market address: markets are listed while the server runs, so a
-/// position in a list read two seconds ago is not a market.
-let allMarketsRead: { at: number; body: Promise<Map<string, any>> } | null = null;
+/// Every market by address, from the shared snapshot. Keyed by address:
+/// markets are listed while the server runs, so a position in a list read a
+/// moment ago is not a market.
 function marketsByAddress(): Promise<Map<string, any>> {
-  if (allMarketsRead && Date.now() - allMarketsRead.at < 2_000) return allMarketsRead.body;
-  const markets = Object.values(rt);
-  const body = (async () => {
-    const out: any[] = [];
-    for (let i = 0; i < markets.length; i += 100) {
-      out.push(...await program.account.market.fetchMultiple(markets.slice(i, i + 100).map((m) => m.address)));
-    }
-    const at = Date.now();
-    const byAddress = new Map<string, any>();
-    markets.forEach((m, i) => {
-      if (!out[i]) return;
-      byAddress.set(m.address.toBase58(), out[i]);
-      marketReads.set(m.address.toBase58(), { at, body: Promise.resolve(out[i]) });
-    });
-    return byAddress;
-  })();
-  allMarketsRead = { at: Date.now(), body };
-  body.catch(() => { allMarketsRead = null; });
-  return body;
+  return sharedState().then((s) => s.markets);
 }
 
-/// The LP mint's supply, read at most every five seconds: the account view
-/// and the tape both price the pool share from it.
-let supplyRead: { at: number; body: ReturnType<typeof conn.getTokenSupply> } | null = null;
-function lpSupplyRead() {
-  if (supplyRead && Date.now() - supplyRead.at < 5_000) return supplyRead.body;
-  const body = conn.getTokenSupply(lpMint);
-  supplyRead = { at: Date.now(), body };
-  body.catch(() => { supplyRead = null; });
-  return body;
+/// The LP mint's supply, in the shape `getTokenSupply` answered with, from
+/// the shared snapshot.
+function lpSupplyRead(): Promise<{ value: { amount: string } }> {
+  return sharedState().then((s) => ({ value: { amount: s.lpSupply.toString() } }));
 }
 
-/// The pool account, on the same one-second terms.
-let poolRead: { at: number; body: Promise<any> } | null = null;
-function poolAccount() {
-  if (poolRead && Date.now() - poolRead.at < 1_000) return poolRead.body;
-  const body = program.account.pool.fetch(pool);
-  poolRead = { at: Date.now(), body };
-  body.catch(() => { poolRead = null; });
-  return body;
+/// The pool account, from the shared snapshot.
+function poolAccount(): Promise<any> {
+  return sharedState().then((s) => s.pool);
 }
 
 /// Mirrors `Market::spread_bps` / `fill_price`.
@@ -1421,21 +1487,6 @@ function describePosition(pos: any, ma: any, m: MarketRt) {
   };
 }
 
-async function loadPositions(owner: PublicKey) {
-  const out: Record<string, any> = {};
-  const infos = await conn.getMultipleAccountsInfo(
-    Object.values(rt).map((m) => positionPda(m.address, owner)));
-  await Promise.all(
-    Object.values(rt).map(async (m, i) => {
-      if (!infos[i]) return;
-      const pos = program.coder.accounts.decode("position", infos[i]!.data);
-      const d = describePosition(pos, await marketAccount(m), m);
-      if (d) out[m.symbol] = d;
-    })
-  );
-  return out;
-}
-
 /// Every liquidity instruction must see all markets, so the pool's liability is
 /// priced in full.
 /// The table the liquidity instructions compress their accounts through.
@@ -1500,24 +1551,51 @@ const AUM_EVERY_MS = 20_000;
 const AUM_FRESH_MS = 45_000;
 let aumPassing: Promise<void> | null = null;
 
+/// Runs a checkpoint pass now, or joins the one running.
 function refreshAum(): Promise<void> {
   if (!aumPassing) {
-    aumPassing = rpcWho.run("aum", runAumPass).finally(() => { aumPassing = null; });
+    aumPassing = rpcWho.run("aum", () => runAumPass(true)).finally(() => { aumPassing = null; });
   }
   return aumPassing;
 }
 
-async function runAumPass() {
-  const markets = Object.values(rt);
-  const accounts = await program.account.market.fetchMultiple(markets.map((m) => m.address));
-  const withOi = markets
-    .filter((m, i) => {
-      const a: any = accounts[i];
+/// The loop's pass: the same, but a checkpoint that will still be fresh at
+/// the next pass is left alone. Writing one every AUM_EVERY_MS was a
+/// transaction and three reads every twenty seconds whether anybody deposited
+/// or not; now it is one read, and a transaction about every other pass.
+/// Not registered as `aumPassing`: a deposit that asks for a checkpoint must
+/// get a pass that writes one, not join a pass that decided not to.
+function keepAumWarm(): Promise<void> {
+  return aumPassing ?? runAumPass(false);
+}
+
+/// The checkpoint, the pool and every market in one read (and the shared
+/// snapshot refreshed by it).
+async function aumRead() {
+  const keys = sharedKeys();
+  const at = Date.now();
+  const { infos } = await getMany([aumCheckpointPda, ...keys]);
+  const snap = noteShared(keys, infos.slice(1), at);
+  if (!snap) throw new Error("pool account not found");
+  const c: any = infos[0] ? program.coder.accounts.decode("aumCheckpoint", infos[0].data) : null;
+  return { c, p: snap.pool, markets: snap.markets };
+}
+
+/// Whether a checkpoint is one a deposit may be priced from for at least
+/// another `marginMs`.
+const aumFresh = (c: any, p: any, marginMs: number) =>
+  !!c && Date.now() / 1000 - num(c.doneTs) < (AUM_FRESH_MS - marginMs) / 1000
+    && c.doneVersion === p.oiVersion && c.doneMarkets === p.marketsWithOi;
+
+async function runAumPass(force: boolean) {
+  const { c, p, markets: accounts } = await aumRead();
+  if (!force && aumFresh(c, p, AUM_EVERY_MS)) return;
+  const withOi = Object.values(rt)
+    .filter((m) => {
+      const a: any = accounts.get(m.address.toBase58());
       return a && !(a.longSizeUsd.isZero() && a.shortSizeUsd.isZero());
     })
     .sort((a, b) => Buffer.compare(a.address.toBuffer(), b.address.toBuffer()));
-  const c: any = await program.account.aumCheckpoint.fetchNullable(aumCheckpointPda);
-  const p: any = await program.account.pool.fetch(pool);
   const now = Date.now() / 1000;
   // Continue a pass that is open, fresh and under the pool's current set of
   // markets; otherwise start one.
@@ -1545,11 +1623,11 @@ async function runAumPass() {
 /// accept: under a minute old, with the margin AUM_FRESH_MS leaves for the
 /// trader to sign.
 async function aumReady() {
-  const c: any = await program.account.aumCheckpoint.fetchNullable(aumCheckpointPda);
-  const p: any = await program.account.pool.fetch(pool);
-  const fresh = c && Date.now() / 1000 - num(c.doneTs) < AUM_FRESH_MS / 1000
-    && c.doneVersion === p.oiVersion && c.doneMarkets === p.marketsWithOi;
-  if (!fresh) await refreshAum();
+  const { infos } = await getMany([aumCheckpointPda, pool]);
+  const c: any = infos[0] ? program.coder.accounts.decode("aumCheckpoint", infos[0].data) : null;
+  if (!infos[1]) throw new Error("pool account not found");
+  const p: any = program.coder.accounts.decode("pool", infos[1].data);
+  if (!aumFresh(c, p, 0)) await refreshAum();
 }
 
 /// What a deposit or withdrawal carries besides its named accounts: the
@@ -1837,14 +1915,59 @@ function countedTraders(market: string, deployer: string, house: Set<string>): n
 let positionCache: { at: number; all: any[] } | null = null;
 const POSITION_CACHE_MS = 60_000;
 const LIQ_CHECK_MS = Number(process.env.LIQ_CHECK_MS ?? 3_000);
-const invalidatePositions = () => { positionCache = null; };
+/*
+ * Wallets whose positions changed since the cache was read: a transaction this
+ * server relayed for them, a fill it settled, a liquidation it sent. Each
+ * used to drop the whole cache, so every trade cost a `getProgramAccounts` on
+ * the next check. Now the next check re-reads only those wallets' position
+ * slots, one batched call for up to five wallets, and the full scan stays on
+ * its minute for anything sent elsewhere.
+ */
+const dirtyPositions = new Set<string>();
+const positionsChanged = (owner: string) => { dirtyPositions.add(owner); };
+/// Past this many wallets at once, one full scan is cheaper than the slots.
+const DIRTY_POSITION_OWNERS = 20;
 /// A liquidation that failed is not tried again on every check.
 const liqRetryAt = new Map<string, number>();
 
+/// Re-reads `owners`' slots in `markets` and puts what is there in place of
+/// what the cache held for those addresses. Entries for addresses not read
+/// (markets not shown here, order slots past ORDER_SLOTS) are kept.
+async function patchOwners(all: any[], keys: PublicKey[], decode: (info: AccountInfo<Buffer>) => any | null) {
+  const { infos } = await getMany(keys);
+  const read = new Set(keys.map((k) => k.toBase58()));
+  const kept = all.filter((e) => !read.has(e.publicKey.toBase58()));
+  infos.forEach((info, i) => {
+    if (!info) return;
+    const account = decode(info);
+    if (account) kept.push({ publicKey: keys[i], account });
+  });
+  return kept;
+}
+
 async function openPositions(): Promise<any[]> {
-  if (!positionCache || Date.now() - positionCache.at > POSITION_CACHE_MS) {
-    const all = (await program.account.position.all()) as any[];
-    positionCache = { at: Date.now(), all: all.filter((e) => num(e.account.sizeUsd) !== 0) };
+  const owners = [...dirtyPositions];
+  dirtyPositions.clear();
+  try {
+    if (!positionCache || Date.now() - positionCache.at > POSITION_CACHE_MS
+      || owners.length > DIRTY_POSITION_OWNERS) {
+      const at = Date.now();
+      const all = (await program.account.position.all()) as any[];
+      positionCache = { at, all: all.filter((e) => num(e.account.sizeUsd) !== 0) };
+    } else if (owners.length) {
+      const markets = Object.values(rt);
+      const keys = owners.flatMap((o) => markets.map((m) => positionPda(m.address, new PublicKey(o))));
+      positionCache = {
+        at: positionCache.at,
+        all: await patchOwners(positionCache.all, keys, (info) => {
+          const pos = program.coder.accounts.decode("position", info.data);
+          return num(pos.sizeUsd) !== 0 ? pos : null;
+        }),
+      };
+    }
+  } catch (e) {
+    owners.forEach(positionsChanged);
+    throw e;
   }
   return positionCache.all;
 }
@@ -1860,7 +1983,7 @@ async function liquidationCheck() {
     console.warn(`liquidation scan: ${e.message}`);
     return;
   }
-  let closed = false;
+  const closed = new Set<string>();
   const stepped = new Set<string>();
 
   const byMarket = new Map<string, MarketRt>();
@@ -1912,7 +2035,7 @@ async function liquidationCheck() {
       continue;
     }
 
-    closed = true;
+    closed.add(owner.toBase58());
     liquidations.unshift({
       t: Date.now(), symbol: m.symbol, isLong: d.isLong,
       size: d.size, price: px(m), returned: d.equity,
@@ -1925,8 +2048,9 @@ async function liquidationCheck() {
     });
     console.log(`liquidated ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
   }
-  // What closed is gone from the chain; read it again rather than retry it.
-  if (closed) { invalidatePositions(); accountMemo.clear(); }
+  // What closed is gone from the chain: those wallets are read again rather
+  // than retried, and their pages are not shown the position.
+  for (const o of closed) { positionsChanged(o); accountMemo.delete(o); }
 }
 
 
@@ -1945,7 +2069,11 @@ async function liquidationCheck() {
 let orderCache: { at: number; all: any[] } | null = null;
 const ORDER_CACHE_MS = 60_000;
 const ORDER_CHECK_MS = Number(process.env.ORDER_CHECK_MS ?? 3_000);
-const invalidateOrders = () => { orderCache = null; };
+/// Wallets whose orders changed since the list was read, re-read by slot on
+/// the next check; past DIRTY_ORDER_OWNERS of them, one full scan instead.
+const dirtyOrders = new Set<string>();
+const ordersChanged = (owner: string) => { dirtyOrders.add(owner); };
+const DIRTY_ORDER_OWNERS = 4;
 /// Orders that were hit but refused, and when they may be tried again: a
 /// three-second check would otherwise send the same failing transaction
 /// twenty times a minute.
@@ -1953,16 +2081,28 @@ const orderRetryAt = new Map<string, number>();
 
 async function orderKeeper() {
   let all: any[];
+  const owners = [...dirtyOrders];
+  dirtyOrders.clear();
   try {
-    if (!orderCache || Date.now() - orderCache.at > ORDER_CACHE_MS) {
-      orderCache = { at: Date.now(), all: (await program.account.order.all()) as never };
+    if (!orderCache || Date.now() - orderCache.at > ORDER_CACHE_MS || owners.length > DIRTY_ORDER_OWNERS) {
+      const at = Date.now();
+      orderCache = { at, all: (await program.account.order.all()) as never };
+    } else if (owners.length) {
+      const keys = owners.flatMap((o) => orderKeysOf(new PublicKey(o)));
+      orderCache = {
+        at: orderCache.at,
+        all: await patchOwners(orderCache.all, keys, (info) => {
+          try { return program.coder.accounts.decode("order", info.data); } catch { return null; }
+        }),
+      };
     }
     all = orderCache.all;
   } catch (e: any) {
+    owners.forEach(ordersChanged);
     console.warn(`order scan: ${e.message}`);
     return;
   }
-  let fired = false;
+  const fired = new Set<string>();
 
   const byMarket = new Map<string, MarketRt>();
   for (const m of Object.values(rt)) byMarket.set(m.address.toBase58(), m);
@@ -1997,7 +2137,7 @@ async function orderKeeper() {
         trigger, price, above: o.triggerAbove, expired,
       });
       orderFills.splice(20);
-      fired = true;
+      fired.add(owner.toBase58());
       console.log(
         `${expired ? "expired" : "filled"} order ${m.symbol} ` +
         `(${owner.toBase58().slice(0, 4)}…) trigger ${trigger} at ${price}`);
@@ -2008,8 +2148,9 @@ async function orderKeeper() {
       orderRetryAt.set(entry.publicKey.toBase58(), Date.now() + 60_000);
     }
   }
-  // What fired is gone from the chain; read it again rather than retry it.
-  if (fired) invalidateOrders();
+  // What fired is gone from the chain, and moved its owner's position: read
+  // those wallets again rather than retry it.
+  for (const o of fired) { ordersChanged(o); positionsChanged(o); accountMemo.delete(o); }
 }
 
 /// Keeps the funding index moving when nobody is trading.
@@ -2035,7 +2176,7 @@ async function markBackings() {
   backingsMarkedAt = Date.now();
   let all: any[];
   try { all = await program.account.backing.all(); } catch { return; }
-  const markets: Record<string, any> = {};
+  const markets: Record<string, any> = Object.fromEntries(await marketsByAddress().catch(() => new Map()));
   for (const { publicKey, account: b } of all) {
     const basis = num(b.pointsBasisUsd) / 1e6;
     if (basis === 0) continue;
@@ -2095,12 +2236,10 @@ async function syncBackings() {
 /// observed market is by definition one somebody else listed: a loop
 /// configured with a list of them would price every market except the ones
 /// this exists for.
-/// Markets of pools this program has outlived. Their observations are still on
-/// chain, but the markets are in older layouts the program no longer decodes,
-/// so every `observe` on them fails, and each failure is a transaction spent
-/// against the RPC's rate limit. A market never moves pools, so once found
-/// they stay skipped.
-const otherPoolMarkets = new Set<string>();
+/// Markets of pools this program has outlived are never pushed: the set is
+/// this pool's markets, as discovery lists them, so their observations (still
+/// on chain, for markets in layouts the program no longer decodes) are not
+/// even read.
 
 /// The pool's mark keeper record, and the readings each market's pushed price
 /// is smoothed from.
@@ -2157,23 +2296,49 @@ function breaker(key: string, symbol: string, onChain: number, next: number): nu
   return step;
 }
 
-async function keeperPrice(observation: PublicKey, account: any, real?: number): Promise<number> {
+async function keeperPrice(observation: PublicKey, account: any, real: number | undefined,
+                           source: AccountInfo<Buffer> | null, arrays: { info: AccountInfo<Buffer> | null }[]): Promise<number> {
   const key = observation.toBase58();
   const symbol = Object.values(rt).find((m) => m.address.equals(new PublicKey(account.market)))?.symbol ?? key.slice(0, 8);
-  return breaker(key, symbol, num(account.ewmaPrice), await keeperCandidate(observation, account, real));
+  return breaker(key, symbol, num(account.ewmaPrice), await keeperCandidate(observation, account, real, source, arrays));
 }
 
-async function keeperCandidate(observation: PublicKey, account: any, real?: number): Promise<number> {
+/// The pool's spot price, USD per single token, from accounts already read:
+/// the same arithmetic `readPool` does, without its reads (the pool again,
+/// a CLMM's history ring and the chain clock, a DLMM's mints), which the
+/// listing preview needs and the keeper does not.
+async function spotFromSource(account: any, source: AccountInfo<Buffer> | null,
+                              arrays: { info: AccountInfo<Buffer> | null }[]): Promise<number> {
+  const address = new PublicKey(account.source);
+  if (!source) throw new Error("no account at the pool's address");
+  if (account.sourceKind === SOURCE_KIND.raydiumClmm) {
+    return Number(clmmPrice(decodeClmm(source.data), !!account.quoteIsToken0, 9)) / 1e15;
+  }
+  // A DLMM observation records its mints' decimals; one that somehow does not
+  // is read the long way.
+  if (account.sourceKind === SOURCE_KIND.meteoraDlmm && (account.decX || account.decY)) {
+    const bins = new Map<number, any>();
+    for (const a of arrays) {
+      for (const [id, b] of decodeBinArray(a.info!.data, address.toBase58())) bins.set(id, b);
+    }
+    return Number(dlmmPrice(decodeDlmmPair(source.data), bins, account.decX, account.decY,
+      !!account.quoteIsToken0, 9)) / 1e15;
+  }
+  return (await readPool(conn, address, usdcMint)).price;
+}
+
+async function keeperCandidate(observation: PublicKey, account: any, real: number | undefined,
+                               source: AccountInfo<Buffer> | null, arrays: { info: AccountInfo<Buffer> | null }[]): Promise<number> {
   // A devnet copy of a real token is marked at the real price (see
   // realPricesByPool), unsmoothed: it is already the market's own price.
   if (real && real > 0) {
     const scaled = Math.round(real * 10 ** (account.unitExp ?? 0) * 1e6);
     if (scaled > 0) return scaled;
   }
-  const read = await readPool(conn, new PublicKey(account.source), usdcMint);
-  if (!(read.price > 0)) throw new Error("pool reads no price");
+  const spot = await spotFromSource(account, source, arrays);
+  if (!(spot > 0)) throw new Error("pool reads no price");
   const key = observation.toBase58();
-  const reads = [...(keeperReads.get(key) ?? []), read.price].slice(-KEEPER_WINDOW);
+  const reads = [...(keeperReads.get(key) ?? []), spot].slice(-KEEPER_WINDOW);
   keeperReads.set(key, reads);
   const sorted = [...reads].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
@@ -2182,74 +2347,199 @@ async function keeperCandidate(observation: PublicKey, account: any, real?: numb
   return scaled;
 }
 
+/*
+ * What the keeper costs, kept as low as freshness allows.
+ *
+ * A pass reads every observed market of this pool (each generation, from the
+ * list discovery keeps), its observation, the market and the pool it is priced
+ * from in one batched call; a DLMM pair adds a read for its bin arrays. It
+ * used to scan observations and markets with two `getProgramAccounts` a pass,
+ * read each pool three or four times, and fetch each market again to check its
+ * budget.
+ *
+ * A seasoned mark that would move less than OBSERVE_SKIP_BPS is left alone
+ * while it is young (see `markMayRest`: never past OBSERVE_REFRESH_SEC, and
+ * always well inside the market's own max_price_age_sec by the next pass).
+ * What is pushed goes out MARK_BATCH to a transaction; a market whose push
+ * fails in company is sent alone until one of its own lands, so one bad pool
+ * does not sink the rest.
+ */
+const OBSERVE_SKIP_BPS = Number(process.env.OBSERVE_SKIP_BPS ?? 5);
+const OBSERVE_REFRESH_SEC = Number(process.env.OBSERVE_REFRESH_SEC ?? 55);
+const MARK_BATCH = Math.max(1, Number(process.env.MARK_BATCH ?? 6));
+const pushAlone = new Set<string>();
+/// Each observation's pool, which never changes, so the pass can read pools
+/// in its first call.
+const observedSource = new Map<string, PublicKey>();
+let observePassSec = 0;
+
 async function observer() {
-  const all = await program.account.observation.all();
-  // This pool's markets, filtered on chain by the pool field (offset 9), the
-  // same way the rewards page reads them. An observation whose market is not
-  // among them is either for a listing still seasoning (no market yet, which
-  // must keep being cranked) or for another pool's market (skipped).
-  const ours = new Set(
-    (await program.account.market.all([{ memcmp: { offset: 9, bytes: pool.toBase58() } }]))
-      .map((m: any) => m.publicKey.toBase58()),
-  );
-  const unknown = all
-    .map(({ account }) => new PublicKey(account.market))
-    .filter((m) => !ours.has(m.toBase58()) && !otherPoolMarkets.has(m.toBase58()));
-  for (let i = 0; i < unknown.length; i += 100) {
-    const batch = unknown.slice(i, i + 100);
-    const infos = await conn.getMultipleAccountsInfo(batch);
-    infos.forEach((info, k) => { if (info) otherPoolMarkets.add(batch[k].toBase58()); });
-  }
-  const folded: { publicKey: PublicKey; account: any }[] = [];
-  const real = await realPricesByPool();
-  /*
-   * Up to MARK_PARALLEL markets at once. Pushed one after another, each push
-   * waiting to confirm, a pass over two dozen markets on rate-limited RPC took
-   * longer than a mark may be old (90 to 120s): every price went stale, every
-   * clear was refused with "Oracle price is stale", and no batch cleared.
-   */
-  const push = async ({ publicKey, account }: { publicKey: PublicKey; account: any }) => {
-    if (otherPoolMarkets.has(new PublicKey(account.market).toBase58())) return;
+  const started = Date.now();
+  try { await observePass(); }
+  finally { observePassSec = (Date.now() - started) / 1000; }
+}
+
+async function observePass() {
+  // Observed markets only (price source 1). A market in a layout this build
+  // cannot decode is not in the list at all, so it costs nothing here.
+  const listed = (await poolMarkets()).filter(({ account }) => account.priceSource === 1);
+  if (!listed.length) return;
+  const obsKeys = listed.map(({ publicKey }) => observationPda(publicKey));
+  const known = obsKeys.map((k) => observedSource.get(k.toBase58()) ?? null);
+  const knownSources = known.filter((k): k is PublicKey => !!k);
+  const n = listed.length;
+  const first = await getMany([...obsKeys, ...listed.map((l) => l.publicKey), ...knownSources]);
+  const sourceInfo = new Map<string, AccountInfo<Buffer> | null>();
+  knownSources.forEach((k, i) => sourceInfo.set(k.toBase58(), first.infos[2 * n + i]));
+
+  type Row = { market: PublicKey; observation: PublicKey; o: any; ma: any; source: PublicKey };
+  const rows: Row[] = [];
+  for (const [i, l] of listed.entries()) {
+    const oi = first.infos[i];
+    const mi = first.infos[n + i];
+    // Listed but not yet pointed at a pool, or a market that closed.
+    if (!oi || !mi) continue;
     try {
-      // A DLMM pair is read bin by bin, and the bins live in their own
-      // accounts, which have to be picked fresh each time: which ones the
-      // program needs depends on where the pair is trading now.
-      const extra = account.sourceKind === SOURCE_KIND.meteoraDlmm
-        ? await dlmmObserveAccounts(conn, new PublicKey(account.source), account.quoteIsToken0)
+      const o = program.coder.accounts.decode("observation", oi.data);
+      const ma = program.coder.accounts.decode("market", mi.data);
+      const source = new PublicKey(o.source);
+      observedSource.set(obsKeys[i].toBase58(), source);
+      rows.push({ market: l.publicKey, observation: obsKeys[i], o, ma, source });
+    } catch { /* an older layout */ }
+  }
+  // Pools first seen this pass, in one more call.
+  const missing = rows.map((r) => r.source).filter((s) => !sourceInfo.has(s.toBase58()));
+  if (missing.length) {
+    const { infos } = await getMany(missing);
+    missing.forEach((s, i) => sourceInfo.set(s.toBase58(), infos[i]));
+  }
+
+  const real = await realPricesByPool();
+  const nowSec = Date.now() / 1000;
+  const nextPassSec = OBSERVE_MS / 1000 + observePassSec;
+  const rested: Row[] = [];
+  const pushes: { r: Row; ix: TransactionInstruction; alone: boolean }[] = [];
+  const isDlmm = (r: Row) => r.o.sourceKind === SOURCE_KIND.meteoraDlmm;
+  const sourceOf = (r: Row) => sourceInfo.get(r.source.toBase58()) ?? null;
+  const realOf = (r: Row) => real.get(r.source.toBase58());
+  // Whether `price` may be left unpushed this pass (see `markMayRest`).
+  const mayRest = (r: Row, price: number) => {
+    const span = num(r.o.lastUpdateTs) - num(r.o.firstUpdateTs);
+    return markMayRest({
+      seasoned: r.o.observations >= MIN_OBSERVATIONS && span >= MIN_OBSERVATION_WINDOW_SEC,
+      onChain: num(r.o.ewmaPrice), next: price,
+      ageSec: nowSec - num(r.o.lastUpdateTs), maxAgeSec: Number(r.ma.maxPriceAgeSec ?? 0),
+      nextPassSec, skipBps: OBSERVE_SKIP_BPS, refreshSec: OBSERVE_REFRESH_SEC,
+    });
+  };
+  const warn = (r: Row, e: any) =>
+    // A pool that cannot be read is a market that never opens, which is the
+    // failure mode permissionless listing was given on purpose. Report it and
+    // leave the rest of the set alone.
+    console.warn(`push mark ${r.observation.toBase58().slice(0, 8)}: ${e?.message ?? e}`);
+
+  // Priced first wherever the price needs no more reads: a real price, or a
+  // CLMM pool's own account. A DLMM pair priced off its pool needs its bin
+  // arrays for the price itself; one that is pushed needs them as accounts.
+  const priced = new Map<Row, number>();
+  for (const r of rows) {
+    if (isDlmm(r) && !(realOf(r) && realOf(r)! > 0)) continue;
+    try {
+      const price = await keeperPrice(r.observation, r.o, realOf(r), sourceOf(r), []);
+      if (mayRest(r, price)) rested.push(r); else priced.set(r, price);
+    } catch (e: any) { warn(r, e); }
+  }
+  // Every DLMM pair's bin arrays that are still wanted, in one batched read,
+  // picked fresh each pass: which ones the program needs depends on where the
+  // pair is trading now.
+  const needArrays = rows.filter((r) => isDlmm(r) && sourceOf(r) && (priced.has(r) || !(realOf(r)! > 0)));
+  const arrayKeys = new Map<Row, PublicKey[]>();
+  for (const r of needArrays) {
+    try { arrayKeys.set(r, dlmmArrayKeys(r.source, sourceOf(r)!.data, !!r.o.quoteIsToken0)); }
+    catch (e: any) { warn(r, e); }
+  }
+  const flat = [...arrayKeys.values()].flat();
+  const arrayInfos = flat.length ? (await getMany(flat)).infos : [];
+  const arrays = new Map<Row, { key: PublicKey; info: AccountInfo<Buffer> | null }[]>();
+  let k = 0;
+  for (const [r, keys] of arrayKeys) {
+    arrays.set(r, keys.map((key) => ({ key, info: arrayInfos[k++] })).filter((a) => isDlmmArray(a.info)));
+  }
+  for (const r of rows) {
+    if (!isDlmm(r) || realOf(r)! > 0) continue;
+    try {
+      if (!sourceOf(r)) throw new Error("no account at the pool's address");
+      const price = await keeperPrice(r.observation, r.o, undefined, sourceOf(r), arrays.get(r) ?? []);
+      if (mayRest(r, price)) rested.push(r); else priced.set(r, price);
+    } catch (e: any) { warn(r, e); }
+  }
+  for (const [r, price] of priced) {
+    try {
+      const extra = isDlmm(r)
+        ? (arrays.get(r) ?? []).map((a) => ({ pubkey: a.key, isSigner: false, isWritable: false }))
         : [];
-      const price = await keeperPrice(publicKey, account, real.get(new PublicKey(account.source).toBase58()));
-      await program.methods.pushMark(new BN(price))
+      const ix = await program.methods.pushMark(new BN(price))
         .accounts({
-          keeper: authority.publicKey, observation: publicKey, market: account.market,
-          markKeeper: markKeeperPda, source: account.source,
+          keeper: authority.publicKey, observation: r.observation, market: r.market,
+          markKeeper: markKeeperPda, source: r.source,
         })
         .remainingAccounts(extra)
-        .rpc();
-    } catch (e: any) {
-      // A pool that cannot be read is a market that never opens, which is the
-      // failure mode permissionless listing was given on purpose. Report it
-      // and leave the rest of the set alone.
-      console.warn(`push mark ${publicKey.toBase58().slice(0, 8)}: ${e?.message ?? e}`);
-      return;
-    }
-    folded.push({ publicKey, account });
-  };
-  let nextObs = 0;
-  const list = all as { publicKey: PublicKey; account: any }[];
-  await Promise.all(Array.from({ length: Math.min(MARK_PARALLEL, list.length) }, async () => {
-    while (nextObs < list.length) await push(list[nextObs++]);
-  }));
-  // Re-read: each fold wrote both the mark and the depth, so the copies this
-  // pass started from are one reading stale. One call for all of them, not
-  // one per market.
-  const fresh = await program.account.observation.fetchMultiple(folded.map((f) => f.publicKey));
-  for (const [i, { account }] of folded.entries()) {
-    const o: any = fresh[i];
-    if (!o) continue;
-    const market = new PublicKey(account.market);
-    publish(market, o);
-    await trimBudget(market, o);
+        .instruction();
+      // About 20k compute units and five accounts of its own each (a DLMM
+      // push carries two or three bin arrays), so a transaction holds four
+      // to six; packing measures the size.
+      pushes.push({ r, ix, alone: pushAlone.has(r.market.toBase58()) });
+    } catch (e: any) { warn(r, e); }
   }
+
+  type Push = (typeof pushes)[number];
+  const groups: Push[][] = [];
+  const together = pushes.filter((p) => !p.alone);
+  let at = 0;
+  for (const g of packInstructions(together.map((p) => p.ix), authority.publicKey, MARK_BATCH)) {
+    groups.push(together.slice(at, at + g.length));
+    at += g.length;
+  }
+  for (const p of pushes) if (p.alone) groups.push([p]);
+
+  const landed: Push[] = [];
+  const send = (g: Push[]) =>
+    provider.sendAndConfirm(new Transaction().add(...withComputeLimit(g.map((p) => p.ix))));
+  const sendAlone = async (p: Push) => {
+    try {
+      await send([p]);
+      landed.push(p);
+      pushAlone.delete(p.r.market.toBase58());
+    } catch (e: any) {
+      pushAlone.add(p.r.market.toBase58());
+      console.warn(`push mark ${p.r.observation.toBase58().slice(0, 8)}: ${explain(e)}`);
+    }
+  };
+  let nextGroup = 0;
+  await Promise.all(Array.from({ length: Math.min(MARK_PARALLEL, groups.length) }, async () => {
+    while (nextGroup < groups.length) {
+      const g = groups[nextGroup++];
+      if (g.length === 1) { await sendAlone(g[0]); continue; }
+      try { await send(g); landed.push(...g); }
+      // One push that fails takes its whole transaction with it: send each
+      // alone, so the others land this pass and the bad one is found.
+      catch { for (const p of g) await sendAlone(p); }
+    }
+  }));
+
+  // Re-read: each push wrote both the mark and the depth, so the copies this
+  // pass started from are one reading stale. One call for all of them.
+  if (landed.length) {
+    const { infos } = await getMany(landed.map((p) => p.r.observation));
+    for (const [i, { r }] of landed.entries()) {
+      if (!infos[i]) continue;
+      const o = program.coder.accounts.decode("observation", infos[i]!.data);
+      publish(r.market, o);
+      await trimBudget(r.market, o, r.ma);
+    }
+  }
+  // A mark left where it is still feeds the page's tape, at the age it has.
+  for (const r of rested) publish(r.market, r.o, false);
 }
 
 /// Moves an observed market's mark onto the runtime the API serves.
@@ -2259,7 +2549,11 @@ async function observer() {
 /// tape is appended here for the same reason -- there are no candles to fetch
 /// for a pool nobody publishes history for, and the chart draws what this
 /// process has actually seen.
-function publish(market: PublicKey, o: any) {
+///
+/// `fresh` is false for a mark the keeper left where it was this pass: its
+/// price and depth are taken, but its age is not reset, so the page's feed
+/// age stays the mark's own.
+function publish(market: PublicKey, o: any, fresh = true) {
   const m = Object.values(rt).find((x) => x.address.equals(market));
   if (!m?.observed) return;
 
@@ -2269,7 +2563,7 @@ function publish(market: PublicKey, o: any) {
   m.observed.spanSec = span;
   // This process's clock, not the chain's: the page counts down against the
   // browser's, and a local validator's runs seconds behind both.
-  m.observed.lastReadMs = Date.now();
+  if (fresh) m.observed.lastReadMs = Date.now();
   m.observed.seasoned =
     o.observations >= MIN_OBSERVATIONS && span >= MIN_OBSERVATION_WINDOW_SEC;
   m.observed.depthUsd = num(o.depthUsd) / 1e6;
@@ -2287,7 +2581,7 @@ function publish(market: PublicKey, o: any) {
     underlying: null,
     liquidity: m.observed.depthUsd,
   } as any;
-  m.lastFetch = now;
+  if (fresh || !m.lastFetch) m.lastFetch = now;
   if (!m.liveFrom) m.liveFrom = now;
   if (!m.open) m.open = price;
   m.high = Math.max(m.high || price, price);
@@ -2303,7 +2597,7 @@ function publish(market: PublicKey, o: any) {
 /// refused. It is checked before it is sent rather than sent and allowed to
 /// fail, because a refusal still costs a transaction and the common case — a
 /// market whose depth has not moved — is the one that would pay it.
-async function trimBudget(market: PublicKey, o: any) {
+async function trimBudget(market: PublicKey, o: any, ma: any) {
   const observation = observationPda(market);
   const span = num(o.lastUpdateTs) - num(o.firstUpdateTs);
   if (o.observations < MIN_OBSERVATIONS || span < MIN_OBSERVATION_WINDOW_SEC) return;
@@ -2312,7 +2606,7 @@ async function trimBudget(market: PublicKey, o: any) {
   // cuts to; the last reading alone can be thinned for one crank.
   const depth = num(o.budgetDepthUsd ?? o.depthUsd);
   if (depth === 0) return;
-  const ma: any = await program.account.market.fetch(market);
+  // The market as this pass read it: a push does not move its budget.
   if (depth >= num(ma.lossBudgetUsd)) return;
 
   await program.methods.deriveMarketBudget()
@@ -2463,14 +2757,12 @@ async function marketsView() {
   {
     void loadIcons([...(await shadowMintMap()).values()]);
     const markets = Object.values(rt);
-    // Every market account in one call rather than one call each.
-    const [p, accounts] = await Promise.all([
-      program.account.pool.fetch(pool),
-      program.account.market.fetchMultiple(markets.map((m) => m.address)),
-    ]);
+    // The pool and every market from the shared snapshot, which the auction
+    // loop keeps fresh as it reads the batches.
+    const { pool: p, markets: accounts } = await sharedState();
     const freeLiquidity = (num(p.liquidityUsd) - num(p.lockedUsd)) / 1e6;
-    const out = await Promise.all(markets.map(async (m, i) => {
-      const ma: any = accounts[i] ?? await marketAccount(m);
+    const out = await Promise.all(markets.map(async (m) => {
+      const ma: any = accounts.get(m.address.toBase58()) ?? await marketAccount(m);
       const price = px(m);
       const q = quote(ma, m);
       const longSize = num(ma.longSizeUsd) / 1e6;
@@ -2713,7 +3005,7 @@ app.get("/api/batch/:symbol", async (req, res) => {
     const seen = batchSeen.get(m.symbol);
     const state: any = seen && Date.now() - seen.at < BATCH_FRESH_MS
       ? seen.state
-      : await program.account.batch.fetchNullable(batchPda(m.address));
+      : await batchReads.get(m.symbol, () => program.account.batch.fetchNullable(batchPda(m.address)));
     if (!state) return res.json({ exists: false });
 
     const opened = Number(state.openedTs);
@@ -2827,13 +3119,14 @@ async function traderPnlNow() {
  * a wallet placed by hand past slot 7 would not be shown.
  */
 const ORDER_SLOTS = 8;
-async function ordersOf(owner: PublicKey): Promise<{ publicKey: PublicKey; account: any }[]> {
-  const keys = Object.values(rt).flatMap((m) =>
-    Array.from({ length: ORDER_SLOTS }, (_, slot) => PublicKey.findProgramAddressSync(
-      [Buffer.from("order"), m.address.toBuffer(), owner.toBuffer(), Buffer.from([slot])],
-      program.programId)[0]));
-  const infos = (await Promise.all(Array.from({ length: Math.ceil(keys.length / 100) }, (_, k) =>
-    conn.getMultipleAccountsInfo(keys.slice(k * 100, k * 100 + 100))))).flat();
+/// The slots the site itself places in, which an account view reads by
+/// address every time; the rest come from the trigger keeper's list.
+const SITE_ORDER_SLOTS = 3;
+const orderKeysOf = (owner: PublicKey, slots = ORDER_SLOTS) => Object.values(rt).flatMap((m) =>
+  Array.from({ length: slots }, (_, slot) => PublicKey.findProgramAddressSync(
+    [Buffer.from("order"), m.address.toBuffer(), owner.toBuffer(), Buffer.from([slot])],
+    program.programId)[0]));
+function decodeOrders(keys: PublicKey[], infos: (AccountInfo<Buffer> | null)[]) {
   const out: { publicKey: PublicKey; account: any }[] = [];
   infos.forEach((info, i) => {
     if (!info) return;
@@ -2841,6 +3134,10 @@ async function ordersOf(owner: PublicKey): Promise<{ publicKey: PublicKey; accou
     catch { /* not an order account */ }
   });
   return out;
+}
+async function ordersOf(owner: PublicKey): Promise<{ publicKey: PublicKey; account: any }[]> {
+  const keys = orderKeysOf(owner);
+  return decodeOrders(keys, (await getMany(keys)).infos);
 }
 
 app.get("/api/account", async (req, res) => {
@@ -2867,31 +3164,52 @@ app.get("/api/account", async (req, res) => {
 
 async function accountView(owner: PublicKey) {
   {
-    // A wallet that has never traded has no token accounts yet; that is a zero
-    // balance, not an error, so it must not blank the whole view.
-    // Only a missing account is a zero. A failed read throws, so the request
-    // answers with the last good view (or an error) rather than $0.
-    const zero = (e: unknown) => {
-      if (e instanceof TokenAccountNotFoundError) return { amount: 0n } as any;
-      throw e;
-    };
-    // All at once: none depends on another, and against a remote RPC each
-    // round trip is hundreds of milliseconds the page polls through.
-    const [usdc, sol, lpTok, supply, p, positions, orderAccounts, traderPnl, request, slot] = await Promise.all([
-      getAccount(conn, ata(owner, usdcMint)).catch(zero),
-      // For the faucet prompt: a wallet short of rent cannot list or back.
-      conn.getBalance(owner).then((l) => l / 1e9).catch(() => null),
-      getAccount(conn, ata(owner, lpMint)).catch(zero),
-      lpSupplyRead(),
-      poolAccount(),
-      loadPositions(owner),
-      ordersOf(owner),
+    // Everything this wallet owns, in one batched read (one call up to about
+    // thirty markets): its token accounts, its SOL, its withdrawal request and
+    // token claim, a position slot per market and the order slots the site
+    // uses. The pool, the LP supply and the markets come from the shared
+    // snapshot. It was ten or so calls a view, one per account, plus a slot
+    // read. An order placed by hand in a higher slot is shown from the
+    // trigger keeper's list, which is at most a minute behind.
+    const markets = Object.values(rt);
+    const fixed = [ata(owner, usdcMint), ata(owner, lpMint), owner,
+                   withdrawRequestPda(owner), lpTokenClaimPda(owner)];
+    const posKeys = markets.map((m) => positionPda(m.address, owner));
+    const orderKeys = orderKeysOf(owner, SITE_ORDER_SLOTS);
+    const [{ infos, slot }, snap, traderPnl] = await Promise.all([
+      getMany([...fixed, ...posKeys, ...orderKeys]),
+      sharedState(),
       traderPnlNow(),
-      program.account.withdrawRequest.fetchNullable(withdrawRequestPda(owner)).catch(() => null),
-      conn.getSlot("confirmed").catch(() => null),
     ]);
-    const tokenClaim: any = await program.account.lpTokenClaim
-      .fetchNullable(lpTokenClaimPda(owner)).catch(() => null);
+    // A wallet that has never traded has no token accounts yet; that is a
+    // zero balance, not an error. A failed read throws above, so the request
+    // answers with the last good view (or an error) rather than $0.
+    const tokens = (i: number) => {
+      const info = infos[i];
+      return { amount: info ? unpackAccount(fixed[i], info, info.owner).amount : 0n };
+    };
+    const usdc = tokens(0);
+    const lpTok = tokens(1);
+    // For the faucet prompt: a wallet short of rent cannot list or back.
+    const sol = (infos[2]?.lamports ?? 0) / 1e9;
+    const request: any = infos[3] ? program.coder.accounts.decode("withdrawRequest", infos[3].data) : null;
+    const tokenClaim: any = infos[4] ? program.coder.accounts.decode("lpTokenClaim", infos[4].data) : null;
+    const p = snap.pool;
+    const supply = { value: { amount: snap.lpSupply.toString() } };
+    const positions: Record<string, any> = {};
+    for (const [i, m] of markets.entries()) {
+      const info = infos[fixed.length + i];
+      if (!info) continue;
+      const pos = program.coder.accounts.decode("position", info.data);
+      const d = describePosition(pos, snap.markets.get(m.address.toBase58()) ?? await marketAccount(m), m);
+      if (d) positions[m.symbol] = d;
+    }
+    const me = owner.toBase58();
+    const orderAccounts = [
+      ...decodeOrders(orderKeys, infos.slice(fixed.length + markets.length)),
+      ...(orderCache?.all ?? []).filter((e: any) =>
+        Number(e.account.slot) >= SITE_ORDER_SLOTS && String(e.account.owner) === me),
+    ];
     // Tokens past claims took in kind, by custody, waiting to be pulled.
     const owed = tokenClaim
       ? custodies
@@ -3235,14 +3553,23 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     // Every batch in one read. Fetching them one by one cost a request per
     // market per second, which on its own is enough for the public RPC to
     // throttle a handful of markets.
+    // The pool, the LP mint and every market ride along in the same call:
+    // that is the shared snapshot the pages and the other keepers read, kept
+    // fresh here for nothing.
     const markets = Object.values(rt);
-    const infos = await conn.getMultipleAccountsInfo(markets.map((m) => batchPda(m.address)));
+    const keys = sharedKeys();
+    const at = Date.now();
+    const { infos: all } = await getMany([...markets.map((m) => batchPda(m.address)), ...keys]);
+    try { noteShared(keys, all.slice(markets.length), at); }
+    catch (e: any) { console.warn(`snapshot: ${e?.message ?? e}`); }
+    const infos = all.slice(0, markets.length);
     const due: { m: MarketRt; state: any; open: boolean }[] = [];
     for (const [i, m] of markets.entries()) {
       const info = infos[i];
-      if (!info) continue;
+      // No batch yet is an answer too: the page's poll should not read it again.
+      if (!info) { batchSeen.set(m.symbol, { state: null, at }); continue; }
       const state: any = program.coder.accounts.decode("batch", info.data);
-      batchSeen.set(m.symbol, { state, at: Date.now() });
+      batchSeen.set(m.symbol, { state, at });
       // An open batch with nothing in it has nothing to clear. Clearing it
       // anyway only restarts its window, and cost a transaction per market
       // every second. Once an order lands the batch is already overdue
@@ -3353,7 +3680,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         settledOwners.add(new PublicKey(o.owner).toBase58());
         if (Number(o.filledUsd) > 0) {
           // A fill opened or resized a position the liquidation check holds.
-          invalidatePositions();
+          positionsChanged(new PublicKey(o.owner).toBase58());
           recordTrade({
             symbol: m.symbol,
             side: o.isBid ? "buy" : "sell",
@@ -3447,7 +3774,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   setTimeout(() => loop("orders", orderKeeper, ORDER_CHECK_MS), 5_000);
   loop("crank", crank, CRANK_MS);
   // The AUM checkpoint deposits and withdrawals are priced from.
-  loop("aum", () => refreshAum(), AUM_EVERY_MS);
+  loop("aum", keepAumWarm, AUM_EVERY_MS);
   // Pushing marks needs the keeper record first. Failing here is loud but
   // not fatal: without it every push is refused, and the loop says so.
   await ensureMarkKeeper().catch((e: any) => console.warn(`mark keeper: ${e?.message ?? e}`));
@@ -3899,11 +4226,13 @@ async function syncRewards() {
       .accounts({ referee: traderPda(t.owner), referrer: traderPda(t.referrer) })
       .instruction());
   }
+  // Every market from the shared snapshot, not a read per market a minute.
+  const byAddress = await marketsByAddress();
   for (const m of Object.values(rt)) {
-    const acc: any = await program.account.market.fetch(m.address);
+    const acc: any = byAddress.get(m.address.toBase58());
     // A deployer with no `Trader` has nowhere to be paid; it waits on the
     // market until they make one.
-    if (!known.has(acc.deployer.toBase58())) continue;
+    if (!acc || !known.has(acc.deployer.toBase58())) continue;
     if (num(acc.deployerRewardsUsd) === 0 && num(acc.deployerPointsOwed) === 0
       && num(acc.volumeUsd) === num(acc.deployerSyncedVolumeUsd)) continue;
     ixs.push(await program.methods.syncDeployer()
@@ -4208,9 +4537,9 @@ app.get("/api/leaderboard", async (req, res) => {
     // every referral share and every deployer share, claimed or not.
     // This pool's markets only: markets from pools the program has outlived
     // are still on chain, in older layouts that no longer decode.
-    const markets: any[] = (await program.account.market.all([
-      { memcmp: { offset: 9, bytes: pool.toBase58() } },
-    ])).map((m: any) => m.account);
+    // As discovery last read them: a figure that moves with claims, not
+    // with every poll of the page.
+    const markets: any[] = (await poolMarkets()).map((m: any) => m.account);
     const paidUsd =
       traders.reduce((a, t) => a + num(t.givenToReferrerUsd), 0) / 1e6 +
       markets.reduce((a, m) => a + num(m.deployerEarnedUsd), 0) / 1e6;
@@ -4451,19 +4780,28 @@ app.post("/api/tx/withdraw-cancel", async (req, res) => {
  * value moves when the market pays out or earns: shares times what the pot
  * holds per share now, not what was deposited.
  */
+/// Each wallet's backings, kept for BACKINGS_FRESH_MS and dropped the moment
+/// a transaction of theirs lands (see /api/tx/send): pages poll this every
+/// five to thirty seconds, from several components at once.
+const BACKINGS_FRESH_MS = Number(process.env.BACKINGS_FRESH_MS ?? 5_000);
+const backingsMemo = new Memo<any[]>(BACKINGS_FRESH_MS);
+
 app.get("/api/backings", async (req, res) => {
   try {
     const owner = ownerOf(req);
+    res.json(await backingsMemo.get(owner.toBase58(), () => backingsView(owner)));
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
+});
+
+async function backingsView(owner: PublicKey) {
+  {
     // Every market's backing account in one read, and the markets from the
-    // shared batched read. One fetch per market, in turn, took seven seconds,
+    // shared snapshot. One fetch per market, in turn, took seven seconds,
     // longer than the page polls, and the section sat empty while it ran.
     const list = Object.values(rt);
-    const [, infos, markets] = await Promise.all([
+    const [, { infos }, markets] = await Promise.all([
       loadBooks(),
-      // At most 100 accounts a call.
-      Promise.all(Array.from({ length: Math.ceil(list.length / 100) }, (_, k) =>
-        conn.getMultipleAccountsInfo(list.slice(k * 100, k * 100 + 100).map((m) => backingPda(m.address, owner)))))
-        .then((parts) => parts.flat()),
+      getMany(list.map((m) => backingPda(m.address, owner))),
       marketsByAddress(),
     ]);
     const out: any[] = [];
@@ -4500,9 +4838,9 @@ app.get("/api/backings", async (req, res) => {
         opening: !!m.observed && !m.observed.seasoned,
       });
     }
-    res.json(out);
-  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
-});
+    return out;
+  }
+}
 
 /// Withdraws backing. Asked for in dollars, sent as shares, and capped at what
 /// the owner holds -- the program refuses anything the market's open
@@ -4581,20 +4919,17 @@ try { tape = JSON.parse(fs.readFileSync(TAPE_FILE, "utf8")); } catch { tape = []
 
 async function recordTape() {
   try {
-    const [p, supply, all] = await Promise.all([
-      program.account.pool.fetch(pool), lpSupplyRead(),
-      // This pool's markets only: the program also owns markets from earlier
-      // pools, some in layouts this build can no longer decode.
-      program.account.market.all([{ memcmp: { offset: 9, bytes: pool.toBase58() } }]),
-    ]);
-    const lpSupply = Number(supply.value.amount) / 1e6;
+    // The shared snapshot: only markets this process shows are taped, and
+    // those are exactly the snapshot's.
+    const { pool: p, lpSupply: supply, markets } = await sharedState();
+    const lpSupply = Number(supply) / 1e6;
     const aum = num(p.liquidityUsd) / 1e6 - (await traderPnlNow())
       + custodies.reduce((s, c) => s + c.lpAmount * (custodyPrice[c.symbol] ?? 0), 0);
     const row: TapeRow = { t: Date.now(), pool: lpSupply > 0 ? aum / lpSupply : 1, markets: {} };
-    for (const { publicKey, account } of all as any[]) {
-      const m = Object.values(rt).find((r) => r.address.equals(publicKey));
-      const shares = num(account.backingShares);
-      if (m && shares > 0) row.markets[m.symbol] = (potUsd(publicKey, account.backingUsd) * 1e6) / shares;
+    for (const m of Object.values(rt)) {
+      const account = markets.get(m.address.toBase58());
+      const shares = account ? num(account.backingShares) : 0;
+      if (shares > 0) row.markets[m.symbol] = (potUsd(m.address, account.backingUsd) * 1e6) / shares;
     }
     tape.push(row);
     tape = tape.filter((r) => r.t >= Date.now() - TAPE_KEEP_MS);
@@ -4721,15 +5056,19 @@ app.post("/api/tx/send", async (req, res) => {
       return res.status(400).json({ ok: false, sig, error: custom != null
         ? `custom program error: 0x${Number(custom).toString(16)}` : JSON.stringify(failed) });
     }
-    // A new, cancelled or changed order is in the next trigger check.
-    invalidateOrders();
-    // An opened, resized or closed position is in the next liquidation check.
-    invalidatePositions();
     // Whatever it changed, the sender's page should not be shown the balance
     // from before it. Only the sender's: clearing every wallet's view on every
     // send left nothing cached under load, and every poll went to the chain.
     const sender = VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58();
     accountMemo.delete(sender);
+    backingsMemo.drop(sender);
+    // A new, cancelled or changed order is in the next trigger check, and an
+    // opened, resized or closed position in the next liquidation check: the
+    // sender's slots are read again there, not the whole program.
+    ordersChanged(sender);
+    positionsChanged(sender);
+    // A backing in kind moves a book.
+    booksRead = null;
     if (req.body.record?.symbol) {
       const r = req.body.record;
       if (rt[r.symbol]) {

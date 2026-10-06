@@ -93,7 +93,11 @@ the tracked liquidity thins.
 The mark itself is pushed by the venue's mark keeper. The keeper reads the pool off-chain about every 25 seconds
 and pushes the median of its last five readings, so one block of someone
 moving the pool does not move the mark. A market is tradeable from the
-keeper's first push, seconds after it is opened.
+keeper's first push, seconds after it is opened. A mark that would move less
+than 0.05% is left where it is while it is under about a minute old, and
+always well inside the market's maximum price age, so a quiet market is
+pushed about every 50 seconds and a moving one every pass. Depth, which only
+updates on a push, follows at the same pace.
 
 The program still reads the pool in the same transaction as every push. Depth,
 and with it confidence, leverage and the cap on a market's budget, comes from

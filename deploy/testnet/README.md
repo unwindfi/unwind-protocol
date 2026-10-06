@@ -39,6 +39,27 @@ order was just built; otherwise it reads them every `AUCTION_IDLE_MS` (4
 seconds by default), and wakes at once when an order arrives through this
 server.
 
+What a page polls is served from memory, so the RPC cost does not grow with
+the number of visitors. The pool, the LP mint and every market ride along in
+the auction's batch read and serve `/api/markets`, every account view and
+the keepers; a reader only goes to the chain when that snapshot is older than
+`SHARED_FRESH_MS` (5000). `/api/account` and `/api/backings` are kept per
+wallet for `ACCOUNT_FRESH_MS` and `BACKINGS_FRESH_MS` (4000 and 5000), one
+read serving every poll meanwhile, and dropped the moment that wallet sends a
+transaction through this server. An account view is one batched read of the
+wallet's own accounts. After a send, fill or liquidation the keepers re-read
+only that wallet's positions and orders; the full `getProgramAccounts` scans
+stay on their one-minute refresh.
+
+The mark keeper reads every observed market, its observation and its pool in
+one call a pass (`OBSERVE_MS`, 25000). It leaves a seasoned mark alone when
+the new price is within `OBSERVE_SKIP_BPS` (5) of it and the mark will be
+under `OBSERVE_REFRESH_SEC` (55) old at the next pass, never closer than 20
+seconds to the market's `max_price_age_sec`, and sends up to `MARK_BATCH` (6)
+pushes per transaction. `OBSERVE_SKIP_BPS=0` pushes every market every pass,
+as before. The AUM checkpoint loop writes only when the checkpoint would
+otherwise be stale by the next pass.
+
 Node 20 or newer.
 
 ## Install

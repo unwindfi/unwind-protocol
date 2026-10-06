@@ -50,10 +50,14 @@ export function binArrayPda(pair: PublicKey, index: number): PublicKey {
 /// cheaper than that. Arrays that were never initialised are left out,
 /// because the program refuses an account the DLMM program does not own, and
 /// a missing array only ever reads as less depth.
-async function existingArrays(conn: Connection, pair: PublicKey, ids: number[]) {
+function arrayKeys(pair: PublicKey, ids: number[]) {
   const active = binArrayIndex(ids[0]);
   const indexes = [...new Set([...ids.map(binArrayIndex), active - 1, active + 1])];
-  const keys = indexes.map((i) => binArrayPda(pair, i));
+  return indexes.map((i) => binArrayPda(pair, i));
+}
+
+async function existingArrays(conn: Connection, pair: PublicKey, ids: number[]) {
+  const keys = arrayKeys(pair, ids);
   const infos = await conn.getMultipleAccountsInfo(keys);
   return keys
     .map((key, i) => ({ key, info: infos[i] }))
@@ -68,6 +72,15 @@ export async function dlmmObserveAccounts(conn: Connection, pair: PublicKey, quo
   const arrays = await existingArrays(conn, pair, dlmmBinsNeeded(p, quoteIsX));
   return arrays.map((a) => ({ pubkey: a.key, isSigner: false, isWritable: false }));
 }
+
+/// The bin arrays a DLMM observation may need, from a pair account the
+/// caller already holds, without reading them: the keeper reads every pair's
+/// arrays in one batched call and keeps those `isDlmmArray` says exist.
+export function dlmmArrayKeys(pair: PublicKey, pairData: Uint8Array, quoteIsX: boolean): PublicKey[] {
+  return arrayKeys(pair, dlmmBinsNeeded(decodeDlmmPair(pairData), quoteIsX));
+}
+export const isDlmmArray = (info: { owner: PublicKey } | null | undefined) =>
+  !!info?.owner.equals(METEORA_DLMM);
 
 export interface PoolRead {
   dex: Dex;
