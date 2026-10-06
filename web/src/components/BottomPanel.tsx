@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { phaseOf, useNow } from "@/components/BatchClock";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
 import { getFills, poolFill, usePoll } from "@/lib/api";
@@ -6,7 +7,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink } from "lucide-react";
 import { solscanTx } from "@/lib/tx";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
-import type { Account, Market, Position, Trade } from "@/lib/api";
+import type { Account, Batch, Market, Position, Trade } from "@/lib/api";
 import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
 
 type PosRow = Position & { symbol: string };
@@ -69,84 +70,189 @@ function useSize<T extends HTMLElement>() {
 }
 
 /*
- * Close asks first, in a dialog that says what the close will do: the side and
- * size, the price it is expected to fill at and the PnL that leaves, and when
- * it fills. A position is the one thing on this panel a stray tap cannot take
- * back, and the two-tap button it replaces turned red for three seconds and
- * said only "Confirm".
+ * Close asks first, in a dialog that says what the close will do before
+ * anything is signed: how much of the position, the price it is expected to
+ * fill at, the PnL and fee that leaves, and when it lands. A position is the
+ * one thing on this panel a stray tap cannot take back.
  *
- * Closing is a market order into the next batch. A position larger than the
- * pool fills in one batch closes in part, so the dialog says so before, not
- * the toast after.
+ * Closing is a reduce-only market order into the next batch. All of it goes
+ * as the plain close the panel always sent; part of it goes as a sized close,
+ * which the program holds to the market's minimum position unless it is
+ * everything left. A position larger than the pool fills in one batch may
+ * close in part, so the dialog says so before, not the toast after.
  */
+/// The page's batch poll, for the market it polls. A position in another
+/// market has no countdown here, only "the next batch".
+const BatchCtx = createContext<{ symbol: string; batch: Batch | null } | null>(null);
+
+/// The smallest reduce-only order the program takes, unless it closes all
+/// that is left. The site lists every market at this floor; the API does not
+/// send a market's own.
+const MIN_CLOSE_USD = 10;
+const STEPS = [25, 50, 75, 100];
+
 /// A label and its figure on one line, for the close dialog.
-function DRow({ k, children }: { k: string; children: React.ReactNode }) {
+function DRow({ k, sub, children }: { k: string; sub?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 py-1.5">
-      <span className="text-muted-foreground">{k}</span>
-      <span className="n font-medium">{children}</span>
+    <div className="py-1.5">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-muted-foreground">{k}</span>
+        <span className="n text-right font-medium">{children}</span>
+      </div>
+      {sub && <p className="text-pretty mt-0.5 text-[12px] leading-snug text-dim">{sub}</p>}
     </div>
   );
 }
 
+/// When the close lands, from the batch countdown when the page polls this
+/// market's batch.
+function WhenRow({ symbol }: { symbol: string }) {
+  const ctx = useContext(BatchCtx);
+  const now = useNow(250);
+  const b = ctx?.symbol === symbol ? ctx.batch : null;
+  let text = "Next batch";
+  if (b?.exists) {
+    const { phase, left } = phaseOf(b, now);
+    text = phase === "collecting" ? `Next batch, in ${Math.max(0.1, left / 1000).toFixed(1)}s`
+      : phase === "idle" ? "Next batch, which opens on this order"
+      : phase === "opening" ? "When the opening auction clears"
+      : "Next batch, in about a second";
+  }
+  return <DRow k="Clears">{text}</DRow>;
+}
+
 function CloseButton({
   row, market, busy, onClose, className,
-}: { row: PosRow; market?: Market; busy: boolean; onClose: (symbol: string) => void; className: string }) {
+}: {
+  row: PosRow; market?: Market; busy: boolean;
+  onClose: (symbol: string, size?: number) => void; className: string;
+}) {
   const [open, setOpen] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
-  const cancel = useRef<HTMLButtonElement>(null);
-  useModalFocus(panel, open, () => setOpen(false), cancel);
+  const confirm = useRef<HTMLButtonElement>(null);
+  useModalFocus(panel, open, () => setOpen(false), confirm);
+  const titleId = useId();
+  const [amount, setAmount] = useState("");
+  const start = () => { setAmount(row.size.toFixed(2)); setOpen(true); };
+
+  const amt = Number(amount);
+  const full = amt >= row.size - 0.005;
+  const size = full ? row.size : amt;
+  const share = row.size > 0 ? size / row.size : 0;
+  const pctOf = Math.round(share * 100);
+  const problem = !(amt > 0) ? "Enter an amount to close."
+    : amt > row.size + 0.005 ? `The position is ${money(row.size)}.`
+    : !full && amt < MIN_CLOSE_USD ? `At least ${money(MIN_CLOSE_USD, 0)}, unless it closes the whole position.`
+    : null;
+
   const fill = market ? poolFill(market) : null;
-  const partly = fill != null && row.size > fill;
-  // What the close books: the PnL marked at the price it is expected to fill at.
-  const pnlAtExit = row.entry > 0
+  const partly = fill != null && size > fill;
+  // What the close books: the PnL marked at the price it is expected to fill
+  // at, on the share being closed.
+  const pnlAll = row.entry > 0
     ? row.size * ((row.exit - row.entry) / row.entry) * (row.isLong ? 1 : -1) - row.funding
     : row.pnl;
+  const pnl = pnlAll * share;
+  const pnlPct = row.collateral > 0 ? (pnlAll / row.collateral) * 100 : 0;
+  const feeBps = market?.closeFeeBps ?? market?.openFeeBps;
+  const fee = feeBps != null ? size * (feeBps / 1e4) : null;
+  const payout = market?.payoutPct;
+
+  const go = () => {
+    if (problem || busy) return;
+    setOpen(false);
+    if (full) onClose(row.symbol);
+    else onClose(row.symbol, Number(size.toFixed(2)));
+  };
+
+  const side = row.isLong ? "Long" : "Short";
   return (
     <>
       <button disabled={busy} aria-label={`Close ${row.symbol} position`} aria-haspopup="dialog"
-        onClick={() => setOpen(true)} className={className}>
+        onClick={start} className={className}>
         Close
       </button>
       {open && createPortal(
         <div className="fixed inset-0 z-[95] flex items-end justify-center sm:items-center sm:p-6">
           <button type="button" aria-label="Cancel" tabIndex={-1} onClick={() => setOpen(false)}
             className="absolute inset-0 cursor-default bg-black/60" />
-          <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="close-title"
-            className="relative w-full rounded-t-[12px] border border-line bg-panel sm:max-w-[400px]
-                       sm:rounded-[12px]">
-            <div className="flex items-center gap-2.5 border-b border-line px-5 py-4">
-              <h2 id="close-title" className="text-[16px] font-medium">Close {row.symbol}</h2>
-              <span className={`rounded-[6px] px-1.5 py-0.5 text-[12px] font-medium ${
-                row.isLong ? "bg-up/10 text-up" : "bg-down/10 text-down"}`}>
-                {row.isLong ? "Long" : "Short"} {row.leverage.toFixed(1)}x
-              </span>
+          <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId}
+            className="relative max-h-[100dvh] w-full overflow-y-auto rounded-t-[12px] border border-line bg-panel
+                       sm:max-w-[420px] sm:rounded-[12px]">
+            <div className="border-b border-line px-5 py-4">
+              <h2 id={titleId} className="text-[16px] font-medium">Close {row.symbol}</h2>
+              <p className="n mt-0.5 text-[12.5px] text-muted-foreground">
+                <span className={row.isLong ? "text-up" : "text-down"}>{side}</span>
+                {" "}{money(row.size, 0)} at {row.leverage.toFixed(1)}x, entry {pnum(row.entry)}
+              </p>
             </div>
+
+            <div className="border-b border-line px-5 py-4">
+              <div className="flex items-baseline justify-between">
+                <label htmlFor={`${titleId}-amt`} className="text-[13px] text-muted-foreground">Amount to close</label>
+                <span className="n text-[12px] text-dim">{pctOf}% of position</span>
+              </div>
+              <div className="field-ring mt-2 flex h-10 items-center rounded-[8px] border border-line px-3">
+                <input id={`${titleId}-amt`} inputMode="decimal" autoComplete="off" value={amount}
+                  aria-invalid={!!problem} aria-describedby={problem ? `${titleId}-err` : undefined}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
+                  className="n min-w-0 flex-1 bg-transparent text-[14px] outline-none" />
+                <span className="text-[12px] text-dim">USD</span>
+              </div>
+              <div role="group" aria-label="Share of the position" className="mt-2 grid grid-cols-4 gap-1.5">
+                {STEPS.map((p) => {
+                  const on = Math.abs(share * 100 - p) < 0.5 && !problem;
+                  return (
+                    <button key={p} type="button" aria-pressed={on}
+                      onClick={() => setAmount(p === 100 ? row.size.toFixed(2)
+                        : (Math.floor(row.size * p) / 100).toFixed(2))}
+                      className={`h-8 rounded-[8px] border text-[12.5px] font-medium transition-colors ${on
+                        ? "border-foreground/50 bg-panel3 text-foreground"
+                        : "border-line text-muted-foreground hover:border-foreground/30 hover:text-foreground"}`}>
+                      {p}%
+                    </button>
+                  );
+                })}
+              </div>
+              {problem && <p id={`${titleId}-err`} className="mt-2 text-[12px] text-down">{problem}</p>}
+            </div>
+
             <div className="px-5 py-3 text-[13.5px]">
-              <DRow k="Size">{money(row.size, 0)}</DRow>
-              <DRow k="Entry">{pnum(row.entry)}</DRow>
-              <DRow k="Expected close price">{pnum(row.exit)}</DRow>
-              <DRow k="Expected PnL">
-                <span className={tone(pnlAtExit)}>{money(pnlAtExit)}</span>
+              <DRow k="Estimated fill" sub={`Mark now ${pnum(row.mark)}. The batch clears every order at one price inside its band, so the fill can differ a little.`}>
+                {pnum(row.exit)}
               </DRow>
-              <DRow k="Fills">Next batch, in a few seconds</DRow>
+              <DRow k="Estimated PnL">
+                <span className={tone(pnl)}>{money(pnl)} <span className="text-[12px]">({pct(pnlPct)})</span></span>
+              </DRow>
+              {fee != null && (
+                <DRow k="Close fee" sub={`${(feeBps! / 100).toFixed(2)}% of the amount closed, less any discount you have.`}>
+                  {money(fee)}
+                </DRow>
+              )}
+              {payout != null && payout < 100 && (
+                <DRow k="Profit paid" sub="The market's backing cannot cover every winner right now, so profit is paid as a fair share. Losses are not cut.">
+                  {payout.toFixed(0)}%
+                </DRow>
+              )}
+              <WhenRow symbol={row.symbol} />
             </div>
-            <p className="text-pretty border-t border-line px-5 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
-              {partly
-                ? `A market close at the next batch's price. This market fills up to ${money(fill!, 0)} a batch, so part of this position may stay open; close the rest after.`
-                : "A market close at the next batch's price, which can differ a little from the price shown."}
-            </p>
-            <div className="grid grid-cols-2 gap-2.5 border-t border-line px-5 py-4">
-              <button ref={cancel} type="button" onClick={() => setOpen(false)}
-                className="press h-11 rounded-full border border-line text-[14px] font-medium
+            {partly && (
+              <p className="text-pretty border-t border-line px-5 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+                This market fills up to {money(fill!, 0)} a batch, so part of this close may stay open; close the rest after.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-2.5 border-t border-line px-5 py-4 safe-b">
+              <button type="button" onClick={() => setOpen(false)}
+                className="press h-11 rounded-[8px] border border-line text-[14px] font-medium
                            transition-colors hover:border-foreground/40">
                 Cancel
               </button>
-              <button type="button" disabled={busy}
-                onClick={() => { setOpen(false); onClose(row.symbol); }}
-                className="press h-11 rounded-full bg-down text-[14px] font-medium text-background
+              <button ref={confirm} type="button" disabled={busy || !!problem} onClick={go}
+                className="press h-11 rounded-[8px] bg-down text-[14px] font-medium text-background
                            transition-opacity hover:opacity-90 disabled:opacity-35">
-                Close position
+                {full ? "Close position" : `Close ${pctOf}%`}
               </button>
             </div>
           </div>
@@ -176,7 +282,7 @@ function KV({ k, children }: { k: string; children: React.ReactNode }) {
 
 function PositionCard({
   r, busy, onClose, markets,
-}: { r: PosRow; busy: boolean; onClose: (symbol: string) => void; markets: Market[] }) {
+}: { r: PosRow; busy: boolean; onClose: (symbol: string, size?: number) => void; markets: Market[] }) {
   return (
     <div className="border-b border-line px-4 py-3.5">
       <div className="flex items-center gap-2">
@@ -215,12 +321,16 @@ function PositionCard({
 
 export function BottomPanel({
   account, busy, onClose, mobile = false, docked = false,
-  markets = [], market, owner, onCancelOrder,
+  markets = [], market, owner, onCancelOrder, batch,
 }: {
   account: Account | null;
   trades: Trade[];
   busy: boolean;
-  onClose: (symbol: string) => void;
+  /// Closes a position: all of it with no size, that many USD of it with one.
+  onClose: (symbol: string, size?: number) => void;
+  /// The page's batch poll and the market it is for, so the close dialog can
+  /// say when the close lands.
+  batch?: { symbol: string; batch: Batch | null };
   mobile?: boolean;
   /// Fills a fixed-height box in the terminal, scrolling inside it, rather
   /// than being as tall as its rows.
@@ -450,6 +560,7 @@ export function BottomPanel({
   );
 
   return (
+    <BatchCtx.Provider value={batch ?? null}>
     <section className={mobile || docked
       // As a tab pane or a docked panel it owns its box; on the page it is
       // as tall as its table, inside a panel that already draws the edge.
@@ -531,5 +642,6 @@ export function BottomPanel({
         )}
       </div>
     </section>
+    </BatchCtx.Provider>
   );
 }

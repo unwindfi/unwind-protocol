@@ -7,6 +7,7 @@ import { getBatch, useHasBackend, type Account, type Batch, type Market } from "
 import { cn } from "@/lib/utils";
 import { CHART_TFS } from "./bars";
 import { accountLines, type ChartLine } from "./lines";
+import { BatchStrip } from "@/components/BatchStrip";
 import { DepthView, FundingView, InfoView, type FundingSample } from "./views";
 
 type View = "chart" | "depth" | "funding" | "info";
@@ -109,7 +110,7 @@ const Sep = () => <span className="mx-1 h-4 w-px flex-none bg-line" />;
  */
 export function ChartPanel({
   market, tf: tfProp, onTf, account, batch: batchProp, lines, compact = false,
-  showTimeframes = true, className,
+  showTimeframes = true, showBatch = false, className,
 }: {
   market: Market;
   tf?: number; onTf?: (tf: number) => void;
@@ -123,6 +124,9 @@ export function ChartPanel({
   compact?: boolean;
   /// Off when the page already shows timeframes somewhere else.
   showTimeframes?: boolean;
+  /// The batch strip along the bottom edge: the window, the last clear and
+  /// the mark's age, from the batch passed in.
+  showBatch?: boolean;
   className?: string;
 }) {
   const symbol = market.symbol;
@@ -252,6 +256,7 @@ export function ChartPanel({
       {view === "depth" && <DepthView m={market} batch={batch} hasBackend={hasBackend} />}
       {view === "funding" && <FundingView m={market} samples={samples} />}
       {view === "info" && <InfoView m={market} />}
+      {showBatch && <BatchStrip m={market} batch={batch} className="mt-2 -mb-2" />}
     </div>
   );
 }

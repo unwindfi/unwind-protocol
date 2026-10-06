@@ -20,6 +20,9 @@ export interface Market {
   fundingRateLongBps?: number; fundingRateShortBps?: number;
   lastFundingTs?: number;
   maintenanceMarginBps: number; openFeeBps: number;
+  /// The close fee, when the server sends it; the listing sets it equal to the
+  /// open fee, which stands in for it until then.
+  closeFeeBps?: number;
   freeLiquidity: number; capLong: number; capShort: number;
   longSize: number; shortSize: number; volume24h: number;
   /// First-loss capital behind this market, and the budget it is held to.

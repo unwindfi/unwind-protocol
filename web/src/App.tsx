@@ -4,6 +4,7 @@ import { CommandMenu } from "@/components/CommandMenu";
 import { Chart } from "@/components/Chart";
 import { ChartBoundary } from "@/components/ChartBoundary";
 import { ChartPanel } from "@/components/chart/ChartPanel";
+import { BatchStrip } from "@/components/BatchStrip";
 import { BookPanel } from "@/components/BookPanel";
 import { AccountPanel, OrderTicket } from "@/components/OrderTicket";
 import { MarketList } from "@/components/MarketList";
@@ -212,7 +213,14 @@ export default function App() {
       });
     }
   }, [account, showToast]);
-  const onCloseAll = (s: string) => {
+  const onCloseAll = (s: string, size?: number) => {
+    // Part of a position goes as a sized close, the same order the ticket's
+    // reduce-only sends; all of it as the plain close below.
+    if (size != null) return act("/close", { symbol: s, size }, {
+      label: `Close ${money(size, 0)} of ${s}`,
+      done: `Close ${money(size, 0)} of ${s} queued`,
+      note: CLOSE_NOTE,
+    });
     const p = account?.positions[s];
     if (p) pendingClose.current = { symbol: s, size: p.size, at: Date.now() };
     return act("/close", { symbol: s },
@@ -349,6 +357,7 @@ export default function App() {
                 <Chart symbol={market.symbol} price={market.price} tf={tf} compact
                   position={account?.positions[market.symbol]} />
               </ChartBoundary>
+              <BatchStrip m={market} batch={batch} condensed className="px-4" />
             </>
           )}
           {view === "book" && (
@@ -357,6 +366,7 @@ export default function App() {
           )}
           {view === "positions" && (
             <BottomPanel account={account} trades={trades} busy={busy} mobile
+              markets={markets} batch={{ symbol: market.symbol, batch }}
               onClose={onCloseAll} />
           )}
           {view === "account" && (
@@ -381,12 +391,13 @@ export default function App() {
   const positions = (
     <BottomPanel account={account} trades={trades} busy={busy} docked={isWide}
       markets={markets} market={market} owner={owner}
+      batch={{ symbol: market.symbol, batch }}
       onClose={onCloseAll}
       onCancelOrder={(o) => act("/order/cancel", { symbol: o.symbol, slot: o.slot },
         { label: `Cancel ${o.symbol} order`, done: "Order canceled" })} />
   );
   const chart = (
-    <ChartPanel market={market} tf={tf} onTf={setTf} account={account} batch={batch} />
+    <ChartPanel market={market} tf={tf} onTf={setTf} account={account} batch={batch} showBatch />
   );
   const book = (
     <BookPanel m={market} trades={trades} utilization={account?.pool.utilization}
