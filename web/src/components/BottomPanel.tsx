@@ -176,11 +176,27 @@ export function BottomPanel({
    * Side, so switching tabs changes what follows them rather than moving
    * them. Each tab used to set its own (110 to 130px, 64 to 90px), and the
    * history tabs led with Time, so the first columns jumped on every switch.
-   * Time now closes those tabs, and the figures share whatever is left.
+   * Time now closes those tabs.
+   *
+   * The figures get widths too, when the panel has room for them. Left to
+   * share a wide panel, three of them sat hundreds of pixels apart; packed,
+   * they sit together and the table's empty last column takes what is left.
+   * On a laptop's panel they do not fit at those widths, and the table
+   * cannot narrow a column below the width it was given, so there they share
+   * the space as before.
    */
-  const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px" };
+  const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px",
+    num: "112px", pnl: "150px" };
   const sideCell = (isLong: boolean) => (
     <span className={isLong ? "text-up" : "text-down"}>{isLong ? "Long" : "Short"}</span>);
+  const pack = <R,>(cols: TableColumn<R>[]): TableColumn<R>[] => {
+    const px = (w?: string) => (w ? parseInt(w, 10) || 0 : 0);
+    const figure = (c: TableColumn<R>) => !c.width && c.align === "right";
+    const need = cols.reduce((t, c) => t + (figure(c) ? px(c.key === "pnl" ? W.pnl : W.num) : px(c.width)), 16);
+    return bodyW >= need
+      ? cols.map((c) => (figure(c) ? { ...c, width: c.key === "pnl" ? W.pnl : W.num } : c))
+      : cols;
+  };
   const timeCol = { key: "t", header: "Time", width: W.time, align: "right" as const,
     cell: (r: { t: number }) => <span className="text-muted-foreground">{hhmmss(r.t)}</span> };
 
@@ -356,7 +372,7 @@ export function BottomPanel({
       <div ref={bodyRef}
         className={mobile ? "pane-scroll min-h-0 flex-1" : docked ? "min-h-0 flex-1 overflow-hidden" : ""}>
         {tab === "orders" && (
-          <Table data={orders} columns={orderCols} getRowId={(r) => r.address}
+          <Table data={orders} columns={pack(orderCols)} getRowId={(r) => r.address}
             className={flat} height={tableH(orders.length)}
             emptyState={mine("No take profits, stops or limit orders", "Connect a wallet to see its orders")} />
         )}
@@ -364,7 +380,7 @@ export function BottomPanel({
             fill the body: swapping the table for a line of text changed the
             panel's shape on every switch to this tab. */}
         {tab === "funding" && (
-          <Table data={positions} columns={fundCols} getRowId={(r) => r.symbol}
+          <Table data={positions} columns={pack(fundCols)} getRowId={(r) => r.symbol}
             className={flat} height={tableH(positions.length)}
             emptyState={account && nowRates ? nowRates
               : mine("No open positions", "Connect a wallet to see its positions")} />
@@ -376,7 +392,7 @@ export function BottomPanel({
               ? mine("No open positions", "Connect a wallet to see its positions")
               : positions.map((r) => (
                   <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} />))
-            : <Table data={positions} columns={posCols} getRowId={(r) => r.symbol}
+            : <Table data={positions} columns={pack(posCols)} getRowId={(r) => r.symbol}
                 className={flat} height={tableH(positions.length)}
                 emptyState={mine("No open positions", "Connect a wallet to see its positions")} />
         )}
@@ -389,14 +405,14 @@ export function BottomPanel({
          */}
         {tab === "history" && (
           <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[560px]" : ""}>
-            <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
+            <Table data={fills} columns={pack(fillCols)} getRowId={(_, i) => String(i)}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(fills.length)}
               emptyState={mine("No fills yet", "Connect a wallet to see its fills")} />
           </div>
         )}
         {tab === "liqs" && (
           <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[620px]" : ""}>
-            <Table data={liqs} columns={liqCols} getRowId={(_, i) => String(i)}
+            <Table data={liqs} columns={pack(liqCols)} getRowId={(_, i) => String(i)}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(liqs.length)}
               emptyState={empty("No liquidations")} />
           </div>
