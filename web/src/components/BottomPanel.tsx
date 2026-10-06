@@ -3,6 +3,8 @@ import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
 import { getFills, poolFill, usePoll } from "@/lib/api";
 import { createPortal } from "react-dom";
+import { ExternalLink } from "lucide-react";
+import { solscanTx } from "@/lib/tx";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 import type { Account, Market, Position, Trade } from "@/lib/api";
 import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
@@ -284,8 +286,15 @@ export function BottomPanel({
   const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px" };
   const sideCell = (isLong: boolean) => (
     <span className={isLong ? "text-up" : "text-down"}>{isLong ? "Long" : "Short"}</span>);
+  // The time links to the transaction that settled the row, where the server
+  // kept it, so a fill or a liquidation can be checked on Solscan.
   const timeCol = { key: "t", header: "Time", width: W.time,
-    cell: (r: { t: number }) => <span className="text-muted-foreground">{hhmmss(r.t)}</span> };
+    cell: (r: { t: number; sig?: string }) => r.sig
+      ? <a href={solscanTx(r.sig)} target="_blank" rel="noreferrer" title="View on Solscan"
+          className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground">
+          {hhmmss(r.t)}<ExternalLink size={11} strokeWidth={2} aria-hidden />
+        </a>
+      : <span className="text-muted-foreground">{hhmmss(r.t)}</span> };
 
   const posCols: TableColumn<PosRow>[] = [
     { key: "symbol", header: "Market", width: W.market,

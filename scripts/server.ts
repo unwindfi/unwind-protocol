@@ -2196,6 +2196,8 @@ async function liquidationCheck() {
     liquidations.splice(20);
     recordTrade({
       symbol: m.symbol, side: d.isLong ? "sell" : "buy", kind: "liquidation", owner: owner.toBase58(), ...liq,
+      // The liquidation itself, for the history's explorer link.
+      sig: liqSig,
     });
     console.log(`liquidated ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
   }
@@ -3892,8 +3894,12 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       };
       // Best effort, after the fact: a fill is on the tape whether or not its
       // logs can be read back.
-      const enrich = (sig: string, recs: ReturnType<typeof settled>[]) =>
+      const enrich = (sig: string, recs: ReturnType<typeof settled>[]) => {
+        // The settling transaction, so each fill in the history links to it.
+        for (const r of recs) if (r) r.entry.sig = sig;
+        fillsDirty = true;
         void enrichFills(sig, recs).catch((e: any) => console.warn(`fill log ${m.symbol}: ${e?.message ?? e}`));
+      };
       const send = (ixs: TransactionInstruction[]) =>
         provider.sendAndConfirm(new Transaction().add(...withComputeLimit(ixs)));
       // The groups go out together, up to SETTLE_PARALLEL at a time, rather

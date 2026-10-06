@@ -66,4 +66,6 @@ liquidator's bounty, from the liquidation's own event. Rows recorded before
 October 7, 2026 have neither.
 
 The trade screen's Trade history and Liquidations tabs show the same rows, and
-only the connected wallet's.
+only the connected wallet's. Each row's time links to the transaction that
+settled it on Solscan; rows recorded before the server kept the signature
+have no link.
