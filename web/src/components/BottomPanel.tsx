@@ -191,16 +191,20 @@ export function BottomPanel({
    * cannot narrow a column below the width it was given, so there they share
    * the space as before.
    */
-  const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px",
-    num: "112px", pnl: "150px" };
+  const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px" };
   const sideCell = (isLong: boolean) => (
     <span className={isLong ? "text-up" : "text-down"}>{isLong ? "Long" : "Short"}</span>);
+  // Two sizes to try, roomiest first: a narrower window (the stacked layout
+  // under 1024px, which adds a Funding column) fits Positions only at the
+  // second, and fell back to spreading the figures across the panel.
+  const TIERS = [{ num: 112, pnl: 150 }, { num: 96, pnl: 128 }];
   const pack = <R,>(cols: TableColumn<R>[]): TableColumn<R>[] => {
     const px = (w?: string) => (w ? parseInt(w, 10) || 0 : 0);
     const figure = (c: TableColumn<R>) => !c.width && c.align === "right";
-    const need = cols.reduce((t, c) => t + (figure(c) ? px(c.key === "pnl" ? W.pnl : W.num) : px(c.width)), 16);
-    return bodyW >= need
-      ? cols.map((c) => (figure(c) ? { ...c, width: c.key === "pnl" ? W.pnl : W.num } : c))
+    const fits = TIERS.find((t) =>
+      cols.reduce((sum, c) => sum + (figure(c) ? (c.key === "pnl" ? t.pnl : t.num) : px(c.width)), 16) <= bodyW);
+    return fits
+      ? cols.map((c) => (figure(c) ? { ...c, width: `${c.key === "pnl" ? fits.pnl : fits.num}px` } : c))
       : cols;
   };
   const timeCol = { key: "t", header: "Time", width: W.time, align: "right" as const,
