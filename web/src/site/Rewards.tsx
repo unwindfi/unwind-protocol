@@ -27,7 +27,7 @@ import {
 import { storedRef } from "@/lib/ref";
 import { signAndSend, type TxToastOptions } from "@/lib/tx";
 import { compact, money } from "@/lib/format";
-import { tradeHref } from "@/lib/trade-url";
+import { refHref, tradeHref } from "@/lib/urls";
 
 /// The rules in force. Shown on the page so a change is never silent.
 const RULES_VERSION = "v1";
@@ -139,7 +139,7 @@ export default function RewardsPage() {
   };
 
   const arrived = storedRef();
-  const link = r?.code ? `${location.origin}/?ref=${r.code}` : null;
+  const link = r?.code ? refHref(r.code) : null;
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     if (!link) return;

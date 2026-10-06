@@ -28,7 +28,7 @@ import {
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
 import { money, price, tone } from "@/lib/format";
-import { tradeHref } from "@/lib/trade-url";
+import { tradeHref, vaultHref } from "@/lib/urls";
 
 const BTN = "press h-[48px] rounded-full bg-foreground px-6 text-[14px] font-medium text-background " +
   "transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-35";
@@ -431,11 +431,11 @@ function Holdings({ account, backings, rewards, owner, loaded }: {
   // rather than shown as a gain.
   const lpCost = rewards?.exists && rewards.lp > 0 ? rewards.lp : null;
   const pool: HoldRow[] = lp && lp.held > 0 ? [{
-    key: "pool", href: "/vault?id=pool", name: "Pool", sub: `${lp.held.toLocaleString(undefined,
+    key: "pool", href: vaultHref("pool"), name: "Pool", sub: `${lp.held.toLocaleString(undefined,
       { maximumFractionDigits: 2 })} xLP at ${price(lp.price)}`,
     value: lp.value, deposited: lpCost, status: "Every market" }] : [];
   const backed: HoldRow[] = backings.map((b) => ({
-    key: b.symbol, href: `/vault?id=${encodeURIComponent(b.symbol)}`, name: `${b.symbol} backing`,
+    key: b.symbol, href: vaultHref(b.symbol), name: `${b.symbol} backing`,
     sub: "First-loss vault", value: b.value, deposited: b.deposited,
     status: b.opening ? "Opening" : b.tradeable ? "Live" : "Waiting" }));
 

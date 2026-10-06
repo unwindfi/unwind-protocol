@@ -5,7 +5,7 @@
  * market it stands behind can do to it, and the way in and out. Reached
  * from a row on /earn; `?id=` names the vault, `pool` or a market symbol.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "@/site/serif.css";
 import { AnimatePresence } from "motion/react";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { PositionLine, Tile, VaultDialog, VaultIcon, vaultsOf } from "@/site/Earn";
 import { compact, money } from "@/lib/format";
+import { vaultFromPath, vaultHref } from "@/lib/urls";
 
 const NONE: Market[] = [];
 const NO_BACKINGS: Backing[] = [];
@@ -28,7 +29,8 @@ const BTN = "press inline-flex h-11 items-center justify-center rounded-full px-
   "transition-opacity disabled:pointer-events-none disabled:opacity-35";
 
 export default function VaultPage() {
-  const id = new URLSearchParams(location.search).get("id") ?? "pool";
+  // `/vault/<ID>`, as typed; bare `/vault` is the pool.
+  const asked = vaultFromPath(location.pathname) ?? "pool";
   const wallet = useWallet();
   const { setVisible } = useWalletModal();
   const owner = wallet.publicKey?.toBase58();
@@ -45,7 +47,15 @@ export default function VaultPage() {
   const listed = useMemo(() => new Set(rewards?.listed?.map((l) => l.symbol) ?? []), [rewards]);
   const vaults = useMemo(() => vaultsOf(account, markets, backings, apy, !!owner, listed),
     [account, markets, backings, apy, owner, listed]);
-  const v = vaults.find((x) => x.id === id);
+  // A typed address may differ in case from the symbol; the vault it names
+  // gives the id, and the address is corrected to it.
+  const v = vaults.find((x) => x.id === asked)
+    ?? vaults.find((x) => x.id.toLowerCase() === asked.toLowerCase());
+  const id = v?.id ?? asked;
+  useEffect(() => {
+    if (!v || location.pathname === vaultHref(v.id)) return;
+    history.replaceState(history.state, "", vaultHref(v.id) + location.search + location.hash);
+  }, [v]);
   const m = v?.market;
   const points = (id === "pool" ? series?.pool : series?.markets[id]) ?? [];
   const backing = backings.find((b) => b.symbol === id);

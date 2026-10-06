@@ -10,7 +10,7 @@
       "destination": "/api/[...path]?__path=:first/:rest*"
     },
     {
-      "source": "/trade/:symbol",
+      "source": "/:page(trade|vault|list|r)/:name",
       "destination": "/index.html"
     },
     {

@@ -2,7 +2,7 @@ import { TickerLogo } from "@/components/TickerLogo";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import type { Market } from "@/lib/api";
 import { price } from "@/lib/format";
-import { tradeHref } from "@/lib/trade-url";
+import { tradeHref } from "@/lib/urls";
 
 /// Seconds since the source pool was first read, which is the market's age:
 /// nothing observes a pool until someone lists it against one.

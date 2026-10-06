@@ -23,7 +23,7 @@ import { MarketPeek } from "@/components/MarketPeek";
 import { NavIcon } from "@/components/NavIcon";
 import { getMarkets, usePollState, type Market } from "@/lib/api";
 import { compact, pct, price, tone } from "@/lib/format";
-import { tradeHref } from "@/lib/trade-url";
+import { listHref, tradeHref } from "@/lib/urls";
 
 const NONE: Market[] = [];
 const SAVED = "unwind.watchlist";
@@ -507,7 +507,7 @@ export default function Markets() {
                 {group === "watchlist" && !query.trim() ? "Star a market to keep it here" : "No results"}
               </span>
               {query.trim() && (
-                <a href={`/list?q=${encodeURIComponent(query.trim())}`}
+                <a href={listHref(query)}
                   className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
                   <NavIcon name="list" size={16} />
                   List {query.trim().toUpperCase()}

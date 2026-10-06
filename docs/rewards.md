@@ -71,7 +71,7 @@ earns again from the cancel.
 
 A wallet takes a referral code once: 3 to 16 characters of `a` to `z`, `0` to
 `9`, `_` and `-`, first come, permanent. Its link is
-`unwindfi.xyz/?ref=<code>`.
+`unwindfi.xyz/r/<code>`; the older `unwindfi.xyz/?ref=<code>` works too.
 
 A wallet that arrives on a link names that code's holder as its referrer with
 its first order. It can also do so from the Rewards page before trading. The

@@ -35,8 +35,9 @@ export default async function middleware(req: Request) {
         });
   }
   // Files at the root -- the favicon, robots, the manifest -- are the same
-  // either way. A market's page is never a file, even when its symbol has a dot.
-  if (/\.[^/]*$/.test(path) && !/^\/trade\/[^/]+$/.test(path)) return next();
+  // either way. A market's, vault's, search's or referral's page is never a
+  // file, even when its name has a dot.
+  if (/\.[^/]*$/.test(path) && !/^\/(trade|vault|list|r)\/[^/]+$/.test(path)) return next();
   return rewrite(new URL("/unlocked/index.html", url));
 }
 

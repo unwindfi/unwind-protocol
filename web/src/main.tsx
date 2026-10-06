@@ -11,7 +11,7 @@ import "@fontsource/inter/700.css";
 import "./index.css";
 import WaitlistPage from "./site/Waitlist";
 import { rememberRef } from "./lib/ref";
-import { routeKey, tradeHref } from "./lib/trade-url";
+import { listHref, refFromPath, routeKey, tradeHref, vaultHref } from "./lib/urls";
 
 /*
  * The site and the app behind one entry, split by path.
@@ -274,17 +274,23 @@ function Site() {
 
 // The `/waitlist` alias and, while locked, anything that is not the front
 // page, are corrected in the address bar before the first render.
-// So is the old market address: `/trade?symbol=HYPE` becomes `/trade/HYPE`,
-// keeping any other query.
+// So are the old query addresses, keeping any other query: `/trade?symbol=HYPE`
+// becomes `/trade/HYPE`, `/vault?id=HYPE` `/vault/HYPE`, `/list?q=bonk`
+// `/list/bonk`. A referral path goes the other way: `/r/CODE` is `/?ref=CODE`,
+// the shape every page already reads its code from, so it lands where that
+// link always has.
 {
   const path = location.pathname.replace(/(.)\/$/, "$1");
   let resolved = normalize(path);
   const query = new URLSearchParams(location.search);
-  const linked = resolved === "/trade" ? query.get("symbol") : null;
-  if (linked) { resolved = tradeHref(linked); query.delete("symbol"); }
+  const moved = ([["/trade", "symbol", tradeHref], ["/vault", "id", vaultHref], ["/list", "q", listHref]] as const)
+    .find(([at, key]) => resolved === at && query.get(key));
+  if (moved) { const [, key, href] = moved; resolved = href(query.get(key)!); query.delete(key); }
+  const code = refFromPath(resolved);
+  if (code) { resolved = "/"; query.set("ref", code); }
   const search = query.toString() ? `?${query}` : "";
   const hidden = !UNLOCKED && !ROUTES[routeKey(resolved)];
-  if (hidden || resolved !== path || linked) {
+  if (hidden || resolved !== path || moved || code) {
     history.replaceState(null, "",
       hidden ? "/" : `${resolved}${search}${location.hash}`);
   }

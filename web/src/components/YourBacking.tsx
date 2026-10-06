@@ -3,6 +3,7 @@ import { AnimatedNumber } from "@/components/motion/animated-number";
 import { TickerLogo } from "@/components/TickerLogo";
 import type { Backing, Market } from "@/lib/api";
 import { compact, money } from "@/lib/format";
+import { vaultHref } from "@/lib/urls";
 import type { PayWith } from "@/lib/listing";
 
 /*
@@ -82,7 +83,7 @@ export function YourBacking({ backings, markets, onWithdraw, onAdd }: {
               <div className="flex min-w-0 items-center gap-3">
                 {m && <TickerLogo m={m} size={32} />}
                 <div className="min-w-0">
-                  <a href={`/vault?id=${encodeURIComponent(b.symbol)}`}
+                  <a href={vaultHref(b.symbol)}
                     className="block truncate text-[14px] font-medium underline-offset-2 hover:underline">
                     {m?.name ?? b.symbol} backing
                   </a>

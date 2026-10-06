@@ -49,7 +49,7 @@ import {
   listingLimits, LISTING_ROUND_TRIP_FEE_BPS, MIN_LISTING_BACKING_USD, POOL_QUOTE_BUDGET_BPS,
   TESTNET_LISTING_BACKING_USD,
 } from "@scripts/listing-policy";
-import { tradeHref } from "@/lib/trade-url";
+import { queryFromPath, tradeHref } from "@/lib/urls";
 
 const NONE: Market[] = [];
 
@@ -170,7 +170,7 @@ export default function List() {
 
   // ------------------------------------------------------------ search
   // A search handed over from Markets ("List ZZZZ") arrives as ?q=.
-  const [query, setQuery] = useState(() => new URLSearchParams(location.search).get("q") ?? "");
+  const [query, setQuery] = useState(() => queryFromPath(location.pathname) ?? "");
   const [testnetPools, setTestnetPools] = useState<TestnetPool[]>([]);
   const [seed, setSeed] = useState(String(MIN_LISTING_BACKING_USD));
   useEffect(() => {

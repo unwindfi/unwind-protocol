@@ -26,7 +26,7 @@ import { claimFaucet, signAndSend, type TxToastOptions } from "@/lib/tx";
 import { toast } from "@/lib/toasts";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
 import { money, pnum } from "@/lib/format";
-import { TRADE, symbolFromPath, tradeHref } from "@/lib/trade-url";
+import { TRADE, symbolFromPath, tradeHref } from "@/lib/urls";
 
 /// Only timeframes the price source actually carries. Jupiter publishes no
 /// sub-minute bars at all, so 5s/15s had nothing behind them but this process's
