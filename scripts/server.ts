@@ -3117,11 +3117,24 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     let net = 0;
     for (const o of active) if (!o.isMaker) net += (o.isBid ? 1 : -1) * num(o.sizeUsd);
     const sides = open ? [true, false] : net > 0 ? [false] : net < 0 ? [true] : [];
+    // An open past the side's open-interest cap is refused, and with it the
+    // whole quote, so an open is sized to the room left: the cap less the
+    // side's open interest and every open already resting on that side.
+    const ma: any = await marketAccount(m);
+    const room = (isLong: boolean) => {
+      const base = num(isLong ? ma.maxOiLongUsd : ma.maxOiShortUsd) / 1e6;
+      const cap = Number(ma.session) === Session.Closed ? base * Number(ma.closedSessionOiMultBps) / 10_000 : base;
+      const pending = active.filter((o) => !o.reduceOnly && !!o.isBid === isLong)
+        .reduce((t, o) => t + num(o.sizeUsd) / 1e6, 0);
+      return cap - num(isLong ? ma.longSizeUsd : ma.shortSizeUsd) / 1e6 - pending;
+    };
     for (const isBid of sides) {
       const adds = !open || open.isLong === isBid;
       if (adds) {
-        if (heldUsd + MAKER_SIZE_USD <= MAKER_MAX_POSITION_USD) {
-          ixs.push(await quote(isBid ? bidPx : askPx, MAKER_SIZE_USD, isBid, false));
+        // A dollar short of the room, for the rounding between here and chain.
+        const size = Math.min(MAKER_SIZE_USD, MAKER_MAX_POSITION_USD - heldUsd, room(isBid) - 1);
+        if (size >= Math.max(1, num(ma.minPositionUsd) / 1e6)) {
+          ixs.push(await quote(isBid ? bidPx : askPx, size, isBid, false));
         }
       } else {
         ixs.push(await quote(isBid ? bidPx : askPx, Math.min(MAKER_SIZE_USD, heldUsd), isBid, true));
@@ -3183,7 +3196,9 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         // program says is not due yet is simply early, and is tried again
         // next second.
         if (!/BatchNotDue/.test(String(e?.message ?? e))) {
-          console.warn(`auction ${m.symbol}: ${explain(e)}`);
+          // The reason a failed simulation carries is in its last log lines.
+          const logs: string[] = e?.logs ?? e?.transactionLogs ?? [];
+          console.warn(`auction ${m.symbol}: ${explain(e)}${logs.length ? ` | ${logs.slice(-3).join(" | ")}` : ""}`);
         }
       }
     };
