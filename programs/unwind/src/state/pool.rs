@@ -114,7 +114,21 @@ pub struct Pool {
     /// even one whose count happens to match.
     pub oi_version: u16,
 
-    pub _reserved: [u8; 1],
+    /// Set at `initialize_pool` when the pool was created by anyone but the
+    /// program's upgrade authority, which only a devnet build allows. Such a
+    /// pool earns nobody points: its money is whatever token its creator
+    /// chose, so a deposit, a backing or a fill there costs nothing real and
+    /// would otherwise mint points without limit. Was `_reserved`, which was
+    /// zero, so every pool from before earns as it did.
+    pub no_points: bool,
+
+    /// Running total, wrapping, of how much what the markets with open
+    /// interest owe the LPs has moved since each was last counted (see
+    /// `aum::book_lp_drift`). A deposit or claim adds it to the AUM
+    /// checkpoint, which is what stops a settlement after the checkpoint from
+    /// counting the same PnL twice: once in `liquidity_usd`, once as still
+    /// owed. Grew the account; `resize_pool` grows a pool created before it.
+    pub aum_drift_usd: i64,
     // Note: the account grew when the chain-fee fields were added. Pools are
     // recreated rather than migrated — there is no deployment this breaks.
 }
@@ -284,7 +298,8 @@ mod tests {
             markets_with_oi: 0,
             rewards_usd: 0,
             oi_version: 0,
-            _reserved: [0; 1],
+            no_points: false,
+            aum_drift_usd: 0,
         }
     }
 

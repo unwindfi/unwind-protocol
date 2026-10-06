@@ -50,7 +50,7 @@ Around the auction, with the bounds each harness states:
 | One reading moves the observed mark at most its clamp (or one unit, so a tiny mark never freezes), only toward the reading, and never to zero | `the_mark_moves_at_most_its_clamp_and_toward_the_reading` |
 | A reading counts toward seasoning exactly once, a rejected one (zero, or a second in the same second) not at all, and the seasoning window starts at the first reading | `a_reading_counts_once_and_a_rejected_one_not_at_all` |
 | Sustained depth falls at once and rises by at most a tenth of the gap, once per interval | `sustained_depth_falls_at_once_and_rises_slowly` |
-| The depth a budget may be cut to falls by at most a tenth of the gap per crank, never below the reading | `one_crank_cuts_budget_depth_by_a_tenth_at_most` |
+| The depth a budget may be cut to moves by at most a tenth of the gap per crank, and up by at most a tenth of itself, never past the reading | `one_crank_cuts_budget_depth_by_a_tenth_at_most` |
 | An observed mark's confidence never exceeds the mark | `observed_confidence_never_exceeds_the_price` |
 | Pyth readings are rescaled exactly (up) or truncated (down), or refused; never wrapped or served as zero | `scaling_a_reading_up_is_exact_or_refused`, `scaling_a_reading_down_truncates_or_refuses` |
 | A step of the risk price lands between where it was and the oracle, never at zero, and moves no more than its cap | `the_risk_price_never_overshoots_or_passes_its_cap` |

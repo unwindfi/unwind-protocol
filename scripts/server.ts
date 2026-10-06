@@ -1950,6 +1950,45 @@ async function crank() {
     } catch {}
   }
   await syncBackings();
+  await markBackings();
+}
+
+/// Marks down the points stake of every backer whose shares are worth less
+/// than it, so a stake the market's losses drew on stops earning backing
+/// points on what was lost. Permissionless; only stakes visibly above their
+/// value are sent, with a cent of slack for rounding. Every ten minutes at
+/// most: listing every backing is a `getProgramAccounts`.
+let backingsMarkedAt = 0;
+async function markBackings() {
+  if (Date.now() - backingsMarkedAt < 600_000) return;
+  backingsMarkedAt = Date.now();
+  let all: any[];
+  try { all = await program.account.backing.all(); } catch { return; }
+  const markets: Record<string, any> = {};
+  for (const { publicKey, account: b } of all) {
+    const basis = num(b.pointsBasisUsd) / 1e6;
+    if (basis === 0) continue;
+    const key = new PublicKey(b.market);
+    const m = Object.values(rt).find((x) => x.address.equals(key));
+    if (!m) continue;
+    const id = key.toBase58();
+    try {
+      markets[id] ??= await program.account.market.fetch(key);
+    } catch { continue; }
+    const ma = markets[id];
+    const total = num(ma.backingShares);
+    const worth = total === 0 ? 0 : potUsd(key, ma.backingUsd) * num(b.shares) / total;
+    if (basis - worth < 0.01) continue;
+    try {
+      await program.methods.markBacking()
+        .accounts({
+          pool, market: key, book: books[id] ? backingBookPda(program.programId, key) : null,
+          backing: publicKey, trader: traderPda(new PublicKey(b.owner)),
+        } as any)
+        .remainingAccounts(custodyPairs(false))
+        .rpc();
+    } catch (e: any) { console.warn(`mark backing ${m.symbol}: ${explain(e)}`); }
+  }
 }
 
 /// Pays the LPs in kind for losses they covered past a market's USDC backing,

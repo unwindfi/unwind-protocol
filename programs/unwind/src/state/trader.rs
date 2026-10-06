@@ -136,9 +136,18 @@ impl FeeRoute {
     /// in any other pool pays the referrer nothing: the cut stays with the
     /// protocol. The referee's discount is kept either way. Ties an untied
     /// wallet to `pool` when it has a referrer.
-    pub fn for_trade_in(trader: &mut Trader, owner: &Pubkey, deployer: &Pubkey, pool: Pubkey) -> Self {
+    ///
+    /// A pool that earns no points (`Pool::no_points`) pays no referrer and
+    /// ties nobody: its rewards are in a token its creator chose.
+    pub fn for_trade_in(
+        trader: &mut Trader,
+        owner: &Pubkey,
+        deployer: &Pubkey,
+        pool: Pubkey,
+        no_points: bool,
+    ) -> Self {
         let mut route = Self::for_trade(trader, owner, deployer);
-        route.referrer = route.referrer && trader.bind_rewards_pool(pool);
+        route.referrer = route.referrer && !no_points && trader.bind_rewards_pool(pool);
         route
     }
 
@@ -233,13 +242,22 @@ impl Trader {
         self.accrue_lp(balance, now)
     }
 
-    /// Ties this wallet's rewards to `pool` if they are tied to nothing yet,
-    /// and says whether a credit from `pool` may land here.
+    /// Ties this wallet's rewards to `pool` if they are tied to nothing, or
+    /// to a pool where nothing is left to account for, and says whether a
+    /// credit from `pool` may land here.
+    ///
+    /// Nothing left means no balance waiting to be claimed and no referrer's
+    /// cut waiting to be synced, both of which sit in the tied pool's vault.
+    /// With either at zero the tie only decides where the next credit lands,
+    /// so it may move; a deployer or referrer tied to one pool would otherwise
+    /// never be paid what another pool owes them.
     pub fn bind_rewards_pool(&mut self, pool: Pubkey) -> bool {
         if pool == Pubkey::default() {
             return false;
         }
-        if self.rewards_pool == Pubkey::default() {
+        if self.rewards_pool == Pubkey::default()
+            || (self.rewards_usd == 0 && self.referrer_rewards_owed == 0)
+        {
             self.rewards_pool = pool;
         }
         self.rewards_pool == pool
@@ -321,10 +339,10 @@ pub fn carve_rewards(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn trader() -> Trader {
+    pub(crate) fn trader() -> Trader {
         Trader {
             bump: 0,
             owner: Pubkey::new_unique(),
@@ -481,9 +499,28 @@ mod tests {
         assert!(t.bind_rewards_pool(a), "an unbound wallet takes the first pool");
         assert_eq!(t.rewards_pool, a);
         assert!(t.bind_rewards_pool(a));
+        t.rewards_usd = 5;
         assert!(!t.bind_rewards_pool(b), "another pool's rewards are refused");
         assert_eq!(t.rewards_pool, a, "and do not move the binding");
         assert!(!t.bind_rewards_pool(Pubkey::default()));
+    }
+
+    /// SP-6. A wallet tied to one pool with nothing held or owed there can
+    /// be paid from another: the binding follows the money, and only moves
+    /// when no money would be left behind in the old pool's books.
+    #[test]
+    fn a_wallet_with_nothing_held_or_owed_moves_to_the_pool_that_pays_it() {
+        let mut t = trader();
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        assert!(t.bind_rewards_pool(a));
+        assert!(t.bind_rewards_pool(b), "nothing held or owed in a, so b may pay");
+        assert_eq!(t.rewards_pool, b);
+        t.rewards_usd = 1;
+        assert!(!t.bind_rewards_pool(a), "a balance held in b keeps it there");
+        t.rewards_usd = 0;
+        t.referrer_rewards_owed = 1;
+        assert!(!t.bind_rewards_pool(a), "so does a referrer's cut still owed from b");
+        assert_eq!(t.rewards_pool, b);
     }
 
     #[test]
@@ -493,16 +530,18 @@ mod tests {
         let owner = t.owner;
         let deployer = Pubkey::new_unique();
         let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
-        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, a);
+        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, a, false);
         assert!(r.referrer);
         assert_eq!(t.rewards_pool, a);
-        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, b);
+        // The cut that fill carved is owed from a until it is synced.
+        t.referrer_rewards_owed = 7;
+        let r = FeeRoute::for_trade_in(&mut t, &owner, &deployer, b, false);
         assert!(!r.referrer, "a fill in another pool carves nothing for the referrer");
         assert_eq!(r.discount_bps, REFEREE_DISCOUNT_BPS, "the discount stays");
         // A wallet with no referrer is not tied by trading.
         let mut n = trader();
         let o = n.owner;
-        FeeRoute::for_trade_in(&mut n, &o, &deployer, a);
+        FeeRoute::for_trade_in(&mut n, &o, &deployer, a, false);
         assert_eq!(n.rewards_pool, Pubkey::default());
     }
 

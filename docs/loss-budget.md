@@ -19,11 +19,14 @@ It is capped by the tracked asset rather than by an administrator. The
 observation measures the cost of moving the asset's spot pool by one percent,
 and any account may cut a market's budget to that figure as liquidity drains
 from the underlying pool. The figure a cut uses is depth that has held: it
-rises to a deeper reading at once and falls toward a thinner one by a tenth of
-the gap at most once every 20 seconds. One thin reading cuts nothing, and a
-pool that has really drained takes about seven minutes to cut a budget to a
-tenth. The budget also falls on its own when backing is withdrawn, or when the
-price of a token the backing is held in falls.
+moves toward each reading by a tenth of the gap at most once every 20
+seconds, and up by no more than a tenth of itself. One thin reading cuts
+nothing, one deep reading undoes nothing, and a pool that has really drained
+takes about seven minutes to cut a budget to a tenth. The budget also falls on its own when backing is withdrawn, or when the
+price of a token the backing is held in falls, so that what remains of it is
+never more than the backing behind the market. The budget counts losses over
+the market's life, and the backing is what is left after them, so the two are
+compared after adding back what losses have already spent.
 
 A budget rises only when somebody posts backing, and only by what that
 deposit counts for, up to the backing behind the market. Fee income credited
@@ -84,3 +87,6 @@ one percent costs 40,000 USDC.
    USDC, being five percent of the remaining budget.
 3. After losses consume 30,000 USDC, the remaining budget is 10,000 USDC and
    the per window cap falls to 500 USDC.
+4. The backing now holds 20,000 USDC. A backer withdrawing 15,000 USDC leaves
+   5,000, and the remaining budget falls to 5,000 USDC. Posting 10,000 USDC
+   instead would have raised it to 20,000 USDC.

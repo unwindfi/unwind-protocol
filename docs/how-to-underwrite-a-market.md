@@ -20,13 +20,28 @@ up to the amount previously drawn from it. Backing does not participate in a
 market's trading gains beyond being made whole, which prevents a market from
 being used as a leveraged claim on the pool's profits.
 
-## When a market's backing is wiped out
+## Backing a market that has been drawn on
+
+What a gain puts back into the backing belongs to the backers it was drawn
+from. So a new share is priced against the pot plus what the market still
+owes back to it, in USDC and in kind, and the new backer pays for their part
+of that repayment at face.
+
+Example: backers post $100,000 and losses draw $90,000. The pot holds $10,000
+and $90,000 is owed back. A new backer posting $10,000 gets 10,000 shares
+against the original 100,000, not 100,000. If a gain then repays the $90,000,
+the pot holds $110,000: the new backer can take out $10,000 and the original
+backers $100,000. Priced against the $10,000 pot alone, the new backer would
+have taken $55,000 of it.
+
+A backer who withdraws takes their part of the pot and leaves their part of
+what is owed back to the backers who stay. Going in and straight back out
+never profits.
 
 If a market's losses draw its backing all the way to zero while its backers
-still hold their shares, the market refuses new backing until a gain restores
-some. New money cannot be priced against shares worth nothing: it would either
-be shared with those holders or cancel their claim on a later recovery, and
-both take from somebody.
+still hold their shares, new backing is priced the same way, against what is
+owed back. A pot with nothing in it and nothing owed back, with shares still
+held, refuses new backing.
 
 If every backer has withdrawn, nothing is restored to the backing: later gains
 stay with the liquidity pool, as backers' fees do in the same case. The next
@@ -37,6 +52,12 @@ backer starts clean, with no claim on losses taken before they arrived.
 Backers of a market take half of the liquidity pool's share of that market's
 trading fees. The cut is taken after the protocol, chain and insurance shares,
 so on a backed market it is 30 percent of every fee. See [Fees](fees.md).
+
+Backing also earns points (see [Rewards](rewards.md)) on what the stake is
+still worth: a stake the market's losses have drawn on stops earning on what
+was lost. `mark_backing` brings any backer's stake down to that figure.
+It is permissionless, and the server runs it for every backer every ten
+minutes.
 
 The fee is not paid to an account. It is credited to the market's backing, so
 every backing share is worth more and the income compounds until the backer
@@ -89,16 +110,27 @@ from the row.
 
 ## Withdrawing
 
-A backer may withdraw all of their stake at any time, bounded only by what
-their shares are worth after the market's losses. Nothing is held back for
-open positions.
+A backer may withdraw their stake at any time, bounded by what their shares
+are worth after the market's losses, less their part of what the market's
+traders are up right now.
 
-Withdrawing lowers the market's loss budget to the backing that is left. A
-backer who leaves while traders are winning does not hand that profit to the
-liquidity providers: winners are only ever paid out of the remaining budget,
-at a fair share when it falls short (see [Profit haircuts](auto-deleveraging.md)).
-So the cost of a backer leaving early falls on the market's winners, not on
-capital that never underwrote it.
+That second part is what the backing would pay if every open position closed
+at the current price: the traders' profit net across both sides, at the
+oracle or the market's risk price, whichever is more, and never more than the
+remaining budget. If the price cannot be read, the whole remaining budget is
+held. It stays in the pot for the backers who stay, who pay it if the loss is
+realised and keep it if the price turns. Only the visible loss is held, not
+the positions' full size, so a balanced book holds nothing back.
+
+Example: a $50,000 pot behind longs that are $20,000 up. A backer with half
+the shares can take out $15,000, half of the $30,000 not already owed.
+
+Withdrawing lowers the market's loss budget so that what is left of it is at
+most the backing that is left. After losses of $30,000 against a $50,000
+budget and $50,000 of backing, $20,000 remains of each, and withdrawing $1
+leaves $19,999 of both. A new deposit raises what remains by what it counts
+for. Winners are only ever paid out of the remaining budget, at a fair share
+when it falls short (see [Profit haircuts](auto-deleveraging.md)).
 
 ## Why anyone would do it
 

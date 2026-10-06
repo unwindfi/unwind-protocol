@@ -100,6 +100,20 @@ impl Position {
         }
         filled_usd.min(self.size_usd)
     }
+
+    /// `closable_by` for an order in a batch that opened at `batch_opened_ts`.
+    ///
+    /// A position opened after that was opened by a settlement of this same
+    /// batch, after a liquidation emptied the one the order was placed to
+    /// close: positions only open at settlement, and the batch an order sits
+    /// in opens after the settlement that rolled the last one. The order is
+    /// not for it, even on the same side, so it closes nothing.
+    pub fn closable_in(&self, order_is_bid: bool, filled_usd: u64, batch_opened_ts: i64) -> u64 {
+        if self.open_ts > batch_opened_ts {
+            return 0;
+        }
+        self.closable_by(order_is_bid, filled_usd)
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +138,18 @@ mod tests {
             q_epoch: 0,
             _reserved: [0; 20],
         }
+    }
+
+    /// SP-5. A sell placed to close a long, which is then liquidated and
+    /// opened again on the same side by the owner's buy in the same batch,
+    /// must not close the new long.
+    #[test]
+    fn a_close_order_skips_a_position_opened_after_its_batch() {
+        let mut p = position(true, 1_000);
+        p.open_ts = 100;
+        assert_eq!(p.closable_in(false, 600, 200), 600, "the long it was placed against");
+        p.open_ts = 260;
+        assert_eq!(p.closable_in(false, 600, 200), 0, "a long opened at this batch's settlement");
     }
 
     #[test]

@@ -28,7 +28,10 @@ pub struct AumCheckpoint {
     pub pass_last_market: Pubkey,
     /// Trader PnL as a deposit reads it: each market at whichever of its
     /// oracle and risk price leaves the pool worth more (see
-    /// `lp_pnl_against_the_mover`).
+    /// `lp_pnl_against_the_mover`), less that market's `aum_drift_usd` at the
+    /// reading. Wrapping; only meaningful once the pool's drift is added back
+    /// (`checkpoint_pnl_usd`), which brings each market up to date with what
+    /// was settled in it since.
     pub pass_pnl_usd: i64,
     /// The same pass as a withdrawal claim reads it: each market at whichever
     /// leaves the pool worth less.

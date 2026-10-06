@@ -327,6 +327,12 @@ pub struct AccruePoints<'info> {
 /// Brings a wallet's backing and LP points up to now. Signed by the owner:
 /// only they can shrink their own LP stake.
 pub fn accrue_points(ctx: Context<AccruePoints>) -> Result<()> {
+    // The LP balance shown has to be of shares the stake counts, which a pool
+    // that earns no points never mints into it (`Pool::no_points`). Shown
+    // anyway, a balance there would keep a stake whose real shares were sold.
+    if ctx.accounts.owner_lp.is_some() {
+        require!(!ctx.accounts.pool.no_points, PerpError::PoolEarnsNoPoints);
+    }
     let now = Clock::get()?.unix_timestamp;
     let balance = ctx.accounts.owner_lp.as_ref().map(|a| a.amount);
     ctx.accounts.trader.accrue_points(balance, now)

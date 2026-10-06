@@ -64,6 +64,12 @@ pub mod unwind {
         instructions::admin::resize_market(ctx)
     }
 
+    /// Grows a pool created before the account gained its AUM drift.
+    /// Permissionless; the payer covers the extra rent.
+    pub fn resize_pool(ctx: Context<ResizePool>) -> Result<()> {
+        instructions::admin::resize_pool(ctx)
+    }
+
     /// 0 = regular hours, 1 = extended, 2 = closed.
     pub fn set_session(ctx: Context<UpdateMarket>, session: u8) -> Result<()> {
         instructions::admin::set_session(ctx, session)
@@ -184,6 +190,14 @@ pub mod unwind {
         ctx: Context<'_, '_, 'info, 'info, SyncBacking<'info>>,
     ) -> Result<()> {
         instructions::backing::sync_backing(ctx)
+    }
+
+    /// Marks a backer's points stake down to what their shares are still
+    /// worth. Permissionless.
+    pub fn mark_backing<'info>(
+        ctx: Context<'_, '_, 'info, 'info, MarkBacking<'info>>,
+    ) -> Result<()> {
+        instructions::backing::mark_backing(ctx)
     }
 
     /// Lets backing be held in another token, JLP-style.

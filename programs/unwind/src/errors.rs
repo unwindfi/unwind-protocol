@@ -122,4 +122,6 @@ pub enum PerpError {
     WrongGeneration,
     #[msg("Only the market's lister may create its observation")]
     NotMarketDeployer,
+    #[msg("This pool earns no points: it was not created by the program's upgrade authority")]
+    PoolEarnsNoPoints,
 }

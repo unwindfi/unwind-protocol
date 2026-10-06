@@ -799,6 +799,11 @@ fn credit_fill(
         route,
     )?;
     market.volume_usd = market.volume_usd.saturating_add(filled_usd);
+    if pool.no_points {
+        // Counted as synced at once, so the deployer earns no points on it.
+        market.deployer_synced_volume_usd =
+            market.deployer_synced_volume_usd.saturating_add(filled_usd);
+    }
     market.deployer_rewards_usd = market
         .deployer_rewards_usd
         .checked_add(to_deployer)
@@ -806,7 +811,9 @@ fn credit_fill(
     market.deployer_earned_usd = market.deployer_earned_usd.saturating_add(to_deployer);
     let saved = full_fee_usd.saturating_sub(fee_usd);
     if let Some(t) = trader {
-        t.credit_fill(filled_usd, saved)?;
+        if !pool.no_points {
+            t.credit_fill(filled_usd, saved)?;
+        }
         t.referrer_rewards_owed = t
             .referrer_rewards_owed
             .checked_add(to_referrer)
@@ -911,7 +918,13 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
     let mut trader = load_trader(&trader_info)?;
     let pool_key = ctx.accounts.pool.key();
     let route = match trader.as_mut() {
-        Some(t) => FeeRoute::for_trade_in(t, &order.owner, &ctx.accounts.market.deployer, pool_key),
+        Some(t) => FeeRoute::for_trade_in(
+            t,
+            &order.owner,
+            &ctx.accounts.market.deployer,
+            pool_key,
+            ctx.accounts.pool.no_points,
+        ),
         None => FeeRoute {
             deployer: order.owner != ctx.accounts.market.deployer
                 && ctx.accounts.market.deployer != Pubkey::default(),
@@ -1065,7 +1078,15 @@ fn settle_close(
     // informed the clearing and then delivered less leaves the pool's books
     // consistent -- it only means one of the prices in that batch came from
     // someone who had already been closed out.
-    let close_size = ctx.accounts.position.closable_by(order.bid(), order.filled_usd);
+    //
+    // Reopened on the same side counts too: a long liquidated and bought
+    // again by the owner's own order in this batch is not the long this sell
+    // was placed to close (`Position::closable_in`).
+    let opened_ts = ctx.accounts.batch.load()?.opened_ts;
+    let close_size = ctx
+        .accounts
+        .position
+        .closable_in(order.bid(), order.filled_usd, opened_ts);
     let now = Clock::get()?.unix_timestamp;
 
     if close_size > 0 {
@@ -1187,4 +1208,37 @@ pub struct OrderSettled {
     pub filled_usd: u64,
     pub price: u64,
     pub refunded_usd: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instructions::trade::tests as t;
+
+    /// S2-05. A pool someone other than the upgrade authority created earns
+    /// nobody points: not the trader's volume, not the referrer's cut of it,
+    /// and not the deployer's on the market's volume.
+    #[test]
+    fn a_fill_in_a_pool_that_earns_no_points_earns_none() {
+        let (mut p, mut m) = (t::pool(), t::market());
+        let mut tr = crate::state::trader::tests::trader();
+        tr.referrer = Pubkey::new_unique();
+        let owner = tr.owner;
+        m.deployer = Pubkey::new_unique();
+        let route = FeeRoute { referrer: false, deployer: true, discount_bps: 0 };
+        const FILL: u64 = 1_000_000_000_000; // $1m
+        p.no_points = true;
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, FILL, 0, 0).unwrap();
+        assert_eq!((tr.points, tr.referrer_points_owed), (0, 0));
+        assert_eq!(m.volume_usd, FILL, "the market's volume is still counted");
+        assert_eq!(m.deployer_synced_volume_usd, m.volume_usd, "but owes its deployer no points");
+
+        // The same fill in a pool that earns pays them all.
+        p.no_points = false;
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, FILL, 0, 0).unwrap();
+        assert!(tr.points > 0 && tr.referrer_points_owed > 0);
+        assert_eq!(m.volume_usd - m.deployer_synced_volume_usd, FILL);
+    }
 }

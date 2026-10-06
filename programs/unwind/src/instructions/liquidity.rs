@@ -153,8 +153,12 @@ pub fn add_liquidity<'info>(
     let held = ctx.accounts.owner_lp.amount;
     let trader = &mut ctx.accounts.trader;
     open_trader(trader, owner, ctx.bumps.trader, now);
-    trader.accrue_lp(held, now)?;
-    trader.add_lp(lp_out, net)?;
+    // A pool that earns no points leaves the stake alone: its shares, and the
+    // balance shown for them, are not the shares the stake counts.
+    if !pool.no_points {
+        trader.accrue_lp(held, now)?;
+        trader.add_lp(lp_out, net)?;
+    }
 
     emit!(LiquidityAdded {
         pool: pool_key,
@@ -345,10 +349,15 @@ pub fn request_withdraw(ctx: Context<RequestWithdraw>, lp_amount: u64) -> Result
     let held = ctx.accounts.owner_lp.amount;
     let trader = &mut ctx.accounts.trader;
     open_trader(trader, owner, ctx.bumps.trader, now);
-    trader.accrue_lp(held, now)?;
-    let before = trader.lp_usd;
-    trader.remove_lp(lp_amount);
-    let points_usd = before - trader.lp_usd;
+    // See `add_liquidity`: no stake moves in a pool that earns no points.
+    let points_usd = if ctx.accounts.pool.no_points {
+        0
+    } else {
+        trader.accrue_lp(held, now)?;
+        let before = trader.lp_usd;
+        trader.remove_lp(lp_amount);
+        before - trader.lp_usd
+    };
 
     transfer_checked(
         CpiContext::new(
@@ -440,8 +449,10 @@ pub fn cancel_withdraw(ctx: Context<CancelWithdraw>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let held = ctx.accounts.owner_lp.amount;
     let trader = &mut ctx.accounts.trader;
-    trader.accrue_lp(held, now)?;
-    trader.add_lp(shares, points_usd)?;
+    if !ctx.accounts.pool.no_points {
+        trader.accrue_lp(held, now)?;
+        trader.add_lp(shares, points_usd)?;
+    }
 
     let usdc_mint_key = ctx.accounts.pool.usdc_mint;
     let bump = ctx.accounts.pool.bump;
@@ -576,7 +587,7 @@ pub fn claim_withdraw<'info>(
     // pool.
     let pool_info = &ctx.accounts.pool;
     let pnl = checkpoint_pnl_usd(
-        pool_info.key(), pool_info.oi_version, pool_info.markets_with_oi,
+        pool_info.key(), pool_info.oi_version, pool_info.markets_with_oi, pool_info.aum_drift_usd,
         &ctx.accounts.checkpoint, Clock::get()?.unix_timestamp, Unpriced::AtWorst,
     )?;
     let mut custodies = lp_in_kind(pool_info, ctx.remaining_accounts)?;
@@ -918,7 +929,8 @@ mod tests {
             num_custodies: 0,
             markets_with_oi: 0,
             oi_version: 0,
-            _reserved: [0; 1],
+            no_points: false,
+            aum_drift_usd: 0,
         }
     }
 

@@ -148,14 +148,15 @@ pub struct Observation {
     /// price alone, so two sources never fight over one mark.
     pub keeper_priced: bool,
 
-    /// Depth a budget may be cut to (`derive_market_budget`): the mirror of
-    /// `sustained_depth_usd`. Rises to any higher reading at once and falls
-    /// toward a lower one by `DEPTH_RISE_BPS` of the gap at most once per
-    /// `DEPTH_RISE_MIN_INTERVAL_SEC`, because depth can be thinned for one
-    /// crank as cheaply as it can be parked for one: a cut read off a single
-    /// thin reading let anyone cut a budget, haircut the winners closing in
-    /// the same transaction, and back it straight up again. Zero until the
-    /// first reading.
+    /// Depth a budget may be cut to (`derive_market_budget`). Moves toward
+    /// each reading by `DEPTH_RISE_BPS` of the gap at most once per
+    /// `DEPTH_RISE_MIN_INTERVAL_SEC`, and up by no more than that share of
+    /// itself, because depth can be thinned for one crank as cheaply as it
+    /// can be parked for one. A cut read off a single thin reading let anyone
+    /// cut a budget, haircut the winners closing in the same transaction, and
+    /// back it straight up again; a rise to any single deep reading let anyone
+    /// hold a budget above what a drained pool supports with one crank of
+    /// borrowed liquidity every few minutes. Set by the first reading.
     pub budget_depth_usd: u64,
 
     // Carved from, so the account is the same size it always was.
@@ -200,17 +201,29 @@ impl Observation {
     /// `DEPTH_RISE_BPS` of the gap at most once per
     /// `DEPTH_RISE_MIN_INTERVAL_SEC`. The asymmetry is the point: a market's
     /// leverage may fall the moment its pool thins, and may only rise on depth
-    /// that stayed. Budget depth, which a budget may be cut to, is the mirror
-    /// image: up at once, down by the same step on the same clock. Both slow
-    /// moves share `depth_rise_ts`, so a burst of cranks inside one interval
-    /// moves either at most once.
+    /// that stayed. Budget depth, which a budget may be cut to, moves slowly
+    /// both ways: down by the same step on the same clock, and up by that step
+    /// capped at a tenth of itself. All the slow moves share `depth_rise_ts`,
+    /// so a burst of cranks inside one interval moves each at most once.
     pub fn track_depth(&mut self, depth: u64, now: i64) {
         let due = now >= self.depth_rise_ts.saturating_add(DEPTH_RISE_MIN_INTERVAL_SEC);
         let mut stepped = false;
 
-        if self.budget_depth_usd == 0 || depth >= self.budget_depth_usd {
+        if self.budget_depth_usd == 0 {
             self.budget_depth_usd = depth;
-        } else if due {
+        } else if depth > self.budget_depth_usd {
+            if due {
+                // Up by a tenth of the gap, and by no more than a tenth of
+                // where it stands: one crank of parked liquidity must not
+                // undo the decline a drained pool has earned.
+                let gap = (depth - self.budget_depth_usd) as u128;
+                let step = (gap * DEPTH_RISE_BPS as u128 / BPS)
+                    .min(self.budget_depth_usd as u128 * DEPTH_RISE_BPS as u128 / BPS)
+                    .max(1) as u64;
+                self.budget_depth_usd += step;
+                stepped = true;
+            }
+        } else if depth < self.budget_depth_usd && due {
             let gap = (self.budget_depth_usd - depth) as u128;
             let step = (gap * DEPTH_RISE_BPS as u128 / BPS).max(1) as u64;
             self.budget_depth_usd -= step;

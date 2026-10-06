@@ -33,7 +33,10 @@ taken from them.
 Backing earns twice the pool's rate because backing takes first loss on its
 market (see [How to underwrite a market](how-to-underwrite-a-market.md)).
 Backing points are counted on what was posted, in dollars at the time, and
-stop in proportion to the shares withdrawn.
+stop in proportion to the shares withdrawn. They never count more than the
+stake is still worth: when the market's losses draw on the backing, the stake
+is marked down to its share of what is left at the next deposit, withdrawal
+or `mark_backing`, which anyone may send.
 
 Pool points are counted on the xLP a wallet minted and still holds. xLP can be
 moved to another wallet without the program seeing it, so tokens sent away
@@ -118,6 +121,19 @@ one pool, the first one that credits it USDC. After that:
    as the referee. Anything else stays owed where it is.
 3. A referred wallet is tied to the first pool it trades in. A fill in any
    other pool keeps its discount but carves nothing for its referrer.
+4. The tie moves once nothing is left in the old pool's books: no USDC
+   waiting to be claimed and no referrer's cut waiting to be synced. So USDC
+   owed from a second pool is never stuck. Claim what the first pool holds,
+   then sync, and the wallet is tied to the pool that pays it.
+
+## Pools that earn no points
+
+Only a pool created by the program's upgrade authority earns points. On
+devnet anyone may create a pool, in a token of their own, so a deposit,
+backing or fill there costs nothing real. Such a pool is marked when it is
+created (`Pool::no_points`) and earns nobody anything: no trading points or
+volume, no referrer's cut, no points to the market's deployer, and no pool or
+backing points. `accrue_points` refuses its pool token account.
 
 ## Numerical example
 

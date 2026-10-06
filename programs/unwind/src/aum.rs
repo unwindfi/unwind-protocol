@@ -24,7 +24,15 @@ pub fn pool_aum_usd<'info>(
         remaining_accounts.len() == (pool.num_custodies as usize) * 2,
         PerpError::IncompleteCustodyList
     );
-    let pnl = checkpoint_pnl_usd(pool.key(), pool.oi_version, pool.markets_with_oi, checkpoint, now, unpriced)?;
+    let pnl = checkpoint_pnl_usd(
+        pool.key(),
+        pool.oi_version,
+        pool.markets_with_oi,
+        pool.aum_drift_usd,
+        checkpoint,
+        now,
+        unpriced,
+    )?;
     // A checkpoint that counted a market at its worst because its price could
     // not be read refuses a deposit, which can wait for the price, and prices
     // a withdrawal, which must not be locked in by one stalled feed.
@@ -65,10 +73,16 @@ fn price_unusable(e: &Error) -> bool {
 /// Trader PnL from a checkpoint, if the pool may be priced from it now: the
 /// deposit-side sum for a deposit (`Refuse`), the claim-side sum for a
 /// withdrawal (`AtWorst`). See `lp_pnl_against_the_mover`.
+///
+/// `aum_drift_usd` is the pool's `Pool::aum_drift_usd`. The pass stored each
+/// market's PnL less that market's drift at the moment it was counted, so
+/// adding the pool's drift now brings every market up to date with whatever
+/// was settled, liquidated or backed in it since (see `book_lp_drift`).
 pub fn checkpoint_pnl_usd(
     pool: Pubkey,
     oi_version: u16,
     markets_with_oi: u16,
+    aum_drift_usd: i64,
     c: &AumCheckpoint,
     now: i64,
     side: Unpriced,
@@ -81,10 +95,60 @@ pub fn checkpoint_pnl_usd(
             && now.saturating_sub(c.done_ts) <= AUM_MAX_AGE_SEC,
         PerpError::AumCheckpointStale
     );
+    // Wrapping, as every drift sum is: only differences are meaningful, and
+    // they come out exact however far the running totals have travelled.
     Ok(match side {
         Unpriced::Refuse => c.done_pnl_usd,
         Unpriced::AtWorst => c.done_claim_pnl_usd,
-    })
+    }
+    .wrapping_add(aum_drift_usd))
+}
+
+/// The price a market's drift is measured at: the newest oracle price it
+/// has accepted, or its risk price before it has recorded one. Neither can be
+/// chosen by whoever sends the instruction, which a fill price could be.
+pub fn drift_price(market: &Market) -> u64 {
+    if market.last_price > 0 {
+        market.last_price
+    } else {
+        market.risk_price
+    }
+}
+
+/// What `market` owes the LPs right now as a checkpoint would count it
+/// (`Market::lp_pnl_usd`), at `drift_price`. Read before anything that can
+/// change it, and handed to `book_lp_drift` afterwards.
+pub fn lp_owed_now(market: &Market) -> Result<i64> {
+    let price = drift_price(market);
+    if price == 0 || !market.has_open_interest() {
+        return Ok(0);
+    }
+    market.lp_pnl_usd(price)
+}
+
+/// Books what the change since `before` (from `lp_owed_now`) did to what
+/// `market` owes the LPs into the market's and the pool's AUM drift.
+///
+/// A checkpoint counts each market once, and a settlement after that moves
+/// money into or out of `Pool::liquidity_usd` while the checkpoint still holds
+/// the same PnL as owed. The drift is what keeps the two from counting it
+/// twice: every write to a market with open interest that can change what it
+/// owes the LPs (a fill, a close, a liquidation, a deleveraging, backing in or
+/// out, its budget) books the difference here, and a deposit or claim adds
+/// the pool's drift to the checkpoint.
+///
+/// A market that has just lost its open interest takes its drift out of the
+/// pool's, so the pool's always equals the sum over the markets that carry
+/// open interest, which are the markets a checkpoint counts.
+pub fn book_lp_drift(pool: &mut Pool, market: &mut Market, before: i64) -> Result<()> {
+    let delta = lp_owed_now(market)?.wrapping_sub(before);
+    market.aum_drift_usd = market.aum_drift_usd.wrapping_add(delta);
+    pool.aum_drift_usd = pool.aum_drift_usd.wrapping_add(delta);
+    if !market.has_open_interest() {
+        pool.aum_drift_usd = pool.aum_drift_usd.wrapping_sub(market.aum_drift_usd);
+        market.aum_drift_usd = 0;
+    }
+    Ok(())
 }
 
 /// One step of a checkpoint pass: optionally start a new pass, then add the
@@ -144,11 +208,15 @@ pub fn fold_checkpoint<'info>(
             }
             Err(e) => return Err(e),
         };
-        c.pass_pnl_usd = c.pass_pnl_usd.checked_add(deposit_pnl).ok_or(PerpError::MathOverflow)?;
+        // Less the market's drift so far, so that adding the pool's drift
+        // at use counts only what moved in it after this reading. Wrapping:
+        // see `checkpoint_pnl_usd`.
+        c.pass_pnl_usd = c
+            .pass_pnl_usd
+            .wrapping_add(deposit_pnl.wrapping_sub(market.aum_drift_usd));
         c.pass_claim_pnl_usd = c
             .pass_claim_pnl_usd
-            .checked_add(claim_pnl)
-            .ok_or(PerpError::MathOverflow)?;
+            .wrapping_add(claim_pnl.wrapping_sub(market.aum_drift_usd));
         c.pass_counted += 1;
         c.pass_last_market = pair[0].key();
     }
@@ -293,7 +361,8 @@ mod tests {
             num_custodies,
             markets_with_oi,
             oi_version: 0,
-            _reserved: [0; 1],
+            no_points: false,
+            aum_drift_usd: 0,
         }
     }
 
@@ -354,6 +423,124 @@ mod tests {
             done_unpriced: 0,
             _reserved: [0; 12],
         }
+    }
+
+    /// S2-01. A checkpoint taken, then a loser liquidated: the loss moves
+    /// into liquidity, and the checkpoint must stop counting it as owed.
+    /// What a pass adds for `m` when it reads `pnl` there.
+    fn checkpoint_pnl_of(m: &Market, pnl: i64) -> i64 {
+        pnl.wrapping_sub(m.aum_drift_usd)
+    }
+
+    #[test]
+    fn a_loss_realized_after_the_checkpoint_is_not_counted_twice() {
+        use crate::instructions::trade::{book_close, book_open, tests as t};
+        const D: u64 = 1_000_000; // $1
+        let (mut p, mut m) = (t::pool(), t::market());
+        p.liquidity_usd = 1_000_000 * D;
+        m.max_oi_long_usd = 10_000_000 * D;
+        let (mut a, mut b) = (t::position(), t::position());
+        // A: $1m long from $100 on $120k. B: $10k long from $90, still open
+        // after A goes, so the market stays in the open-interest set.
+        book_open(&mut p, &mut m, &mut a, Pubkey::new_unique(), 1, true,
+                  120_000 * D, 0, Pubkey::new_unique(), 1_000_000 * D, t::PX, 0).unwrap();
+        let down = t::PX * 9 / 10;
+        book_open(&mut p, &mut m, &mut b, Pubkey::new_unique(), 1, true,
+                  2_000 * D, 0, Pubkey::new_unique(), 10_000 * D, down, 0).unwrap();
+        // The newest price the market has accepted, as `accept_price` leaves it.
+        m.last_price = down;
+        let (version, set) = (p.oi_version, p.markets_with_oi);
+        // The pass: the longs are $100k down at $90.
+        let owed = m.lp_pnl_usd(down).unwrap();
+        assert!((owed + 100_000 * (D as i64)).abs() < D as i64, "about $100k down: {owed}");
+        let (key, before) = pool_account(&p);
+        let c = done(key, version, set, checkpoint_pnl_of(&m, owed), 5);
+        let then = pool_aum_usd(&before, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap();
+        assert_eq!(then as i64, p.liquidity_usd as i64 - owed);
+
+        // A is closed at $90 (a liquidation books the same way): its $100k
+        // loss moves into liquidity. The set has not changed.
+        book_close(&mut p, &mut m, &mut a, 1_000_000 * D, down, 1).unwrap();
+        assert!(p.liquidity_usd.abs_diff(1_100_000 * D) < D);
+        assert_eq!((p.oi_version, p.markets_with_oi), (version, set));
+        // The pool is worth what it was, about $1.1m, not $1.2m.
+        let truth = (p.liquidity_usd as i64 - m.lp_pnl_usd(down).unwrap()) as u64;
+        assert!(truth.abs_diff(then) < D);
+        let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
+        assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), truth);
+        assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), truth);
+    }
+
+    /// The deposit side of S2-01: a winner paid out of liquidity after the
+    /// checkpoint must leave the pool's value where it was, not lower it twice.
+    /// And a pass counted across two transactions, with a settlement in
+    /// between in a market it had already counted, comes out the same.
+    #[test]
+    fn a_profit_paid_after_the_checkpoint_is_not_counted_twice() {
+        use crate::instructions::trade::{book_close, book_open, tests as t};
+        const D: u64 = 1_000_000;
+        let mut p = t::pool();
+        p.liquidity_usd = 1_000_000 * D;
+        let (mut m1, mut m2) = (t::market(), t::market());
+        let (mut a, mut b, mut c2) = (t::position(), t::position(), t::position());
+        // m1: two longs from $100; m2: one short from $100.
+        book_open(&mut p, &mut m1, &mut a, Pubkey::new_unique(), 1, true,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        book_open(&mut p, &mut m1, &mut b, Pubkey::new_unique(), 1, true,
+                  2_000 * D, 0, Pubkey::new_unique(), 10_000 * D, t::PX, 0).unwrap();
+        book_open(&mut p, &mut m2, &mut c2, Pubkey::new_unique(), 1, false,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        let up = t::PX * 11 / 10;
+        m1.last_price = up;
+        m2.last_price = up;
+        let (version, set) = (p.oi_version, p.markets_with_oi);
+        assert_eq!(set, 2);
+        let true_value = |p: &Pool, m1: &Market, m2: &Market| {
+            p.liquidity_usd as i64 - m1.lp_pnl_usd(up).unwrap() - m2.lp_pnl_usd(up).unwrap()
+        };
+        let worth = true_value(&p, &m1, &m2);
+
+        // The pass counts m1, then A closes $10k up, then the pass counts m2.
+        let first = checkpoint_pnl_of(&m1, m1.lp_pnl_usd(up).unwrap());
+        book_close(&mut p, &mut m1, &mut a, 100_000 * D, up, 1).unwrap();
+        let second = checkpoint_pnl_of(&m2, m2.lp_pnl_usd(up).unwrap());
+        assert_eq!((p.oi_version, p.markets_with_oi), (version, set));
+        // The close paid A's $10k out of liquidity; the pool is worth the same.
+        assert!(true_value(&p, &m1, &m2).abs_diff(worth) < D);
+
+        let (key, _) = pool_account(&p);
+        let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
+        let c = done(key, version, set, first.wrapping_add(second), 5);
+        for side in [Unpriced::Refuse, Unpriced::AtWorst] {
+            let aum = pool_aum_usd(&after, &c, NOW, accounts(vec![]), side).unwrap();
+            assert!((aum as i64).abs_diff(worth) < D, "{side:?}: {aum} vs {worth}");
+        }
+    }
+
+    /// The pool's drift is the sum of the drift of the markets with open
+    /// interest, and a market that loses its open interest takes its part out.
+    #[test]
+    fn a_market_that_goes_flat_takes_its_drift_out_of_the_pool() {
+        use crate::instructions::trade::{book_close, book_open, tests as t};
+        const D: u64 = 1_000_000;
+        let mut p = t::pool();
+        let (mut m1, mut m2) = (t::market(), t::market());
+        let (mut a, mut b) = (t::position(), t::position());
+        book_open(&mut p, &mut m1, &mut a, Pubkey::new_unique(), 1, true,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        book_open(&mut p, &mut m2, &mut b, Pubkey::new_unique(), 1, true,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        let down = t::PX * 95 / 100;
+        m1.last_price = down;
+        m2.last_price = down;
+        book_close(&mut p, &mut m1, &mut a, 50_000 * D, down, 1).unwrap();
+        book_close(&mut p, &mut m2, &mut b, 30_000 * D, down, 1).unwrap();
+        assert_ne!(m1.aum_drift_usd, 0);
+        assert_eq!(p.aum_drift_usd, m1.aum_drift_usd.wrapping_add(m2.aum_drift_usd));
+        book_close(&mut p, &mut m1, &mut a, 50_000 * D, down, 2).unwrap();
+        assert!(!m1.has_open_interest());
+        assert_eq!(m1.aum_drift_usd, 0);
+        assert_eq!(p.aum_drift_usd, m2.aum_drift_usd);
     }
 
     #[test]

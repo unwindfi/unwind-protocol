@@ -241,6 +241,10 @@ pub fn initialize_pool(ctx: Context<InitializePool>, params: PoolParams) -> Resu
     check_pyth_receiver(&params.pyth_receiver, pinned)?;
 
     let pool = &mut ctx.accounts.pool;
+    // Only a devnet build lets anyone else create a pool; theirs earns no
+    // points (see `Pool::no_points`).
+    pool.no_points =
+        ctx.accounts.program_data.upgrade_authority_address != Some(ctx.accounts.authority.key());
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.usdc_vault;
     pool.lp_mint_bump = ctx.bumps.lp_mint;
@@ -383,6 +387,8 @@ pub fn add_market(ctx: Context<AddMarket>, params: MarketParams, generation: u32
 pub struct UpdateMarket<'info> {
     #[account(address = pool.authority @ PerpError::Unauthorized)]
     pub authority: Signer<'info>,
+    /// Mutable for `set_market_budget`, which books AUM drift on it.
+    #[account(mut)]
     pub pool: Account<'info, Pool>,
     #[account(mut, has_one = pool @ PerpError::MarketPoolMismatch)]
     pub market: Account<'info, Market>,
@@ -438,7 +444,9 @@ pub fn set_session(ctx: Context<UpdateMarket>, session: u8) -> Result<()> {
 pub fn set_market_budget(ctx: Context<UpdateMarket>, loss_budget_usd: u64) -> Result<()> {
     let market = &mut ctx.accounts.market;
     require!(loss_budget_usd <= market.loss_budget_usd, PerpError::BudgetOnlyLowers);
+    let owed_before = crate::aum::lp_owed_now(market)?;
     market.loss_budget_usd = loss_budget_usd;
+    crate::aum::book_lp_drift(&mut ctx.accounts.pool, market, owed_before)?;
     emit!(MarketBudgetSet {
         market: market.key(),
         loss_budget_usd,
@@ -771,12 +779,57 @@ pub struct ResizeMarket<'info> {
 /// zero as "nothing recorded yet". A market already at the current size is
 /// left alone.
 pub fn resize_market(ctx: Context<ResizeMarket>) -> Result<()> {
-    let market = ctx.accounts.market.to_account_info();
-    let target = 8 + Market::INIT_SPACE;
+    grow_account(
+        &ctx.accounts.market.to_account_info(),
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        Market::DISCRIMINATOR,
+        8 + Market::INIT_SPACE,
+    )
+}
+
+#[derive(Accounts)]
+pub struct ResizePool<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: Owned by this program and carrying `Pool`'s discriminator, both
+    /// checked in the handler. Not an `Account<Pool>`, for the reason
+    /// `ResizeMarket` gives.
+    #[account(mut, owner = crate::ID)]
+    pub pool: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Grows a pool created before `Pool` gained `aum_drift_usd` to the current
+/// size, zero-filling the new bytes; the payer covers the rent.
+///
+/// Permissionless for the same reason `resize_market` is. Zero is the right
+/// drift for an existing pool: every market's drift starts at zero too, and
+/// the pool's drift only has to equal the sum of theirs.
+pub fn resize_pool(ctx: Context<ResizePool>) -> Result<()> {
+    grow_account(
+        &ctx.accounts.pool.to_account_info(),
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        Pool::DISCRIMINATOR,
+        8 + Pool::INIT_SPACE,
+    )
+}
+
+/// Grows `account`, which must carry `discriminator`, to `target` bytes,
+/// topping its rent up from `payer`. Leaves an account already that size
+/// alone.
+fn grow_account<'info>(
+    account: &AccountInfo<'info>,
+    payer: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    discriminator: &[u8],
+    target: usize,
+) -> Result<()> {
     {
-        let data = market.try_borrow_data()?;
+        let data = account.try_borrow_data()?;
         require!(
-            data.len() >= 8 && data[..8] == *Market::DISCRIMINATOR,
+            data.len() >= 8 && data[..8] == *discriminator,
             PerpError::InvalidParameter
         );
         if data.len() >= target {
@@ -785,20 +838,20 @@ pub fn resize_market(ctx: Context<ResizeMarket>) -> Result<()> {
     }
     let need = Rent::get()?
         .minimum_balance(target)
-        .saturating_sub(market.lamports());
+        .saturating_sub(account.lamports());
     if need > 0 {
         anchor_lang::system_program::transfer(
             CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
+                system_program.clone(),
                 anchor_lang::system_program::Transfer {
-                    from: ctx.accounts.payer.to_account_info(),
-                    to: market.clone(),
+                    from: payer.clone(),
+                    to: account.clone(),
                 },
             ),
             need,
         )?;
     }
-    market.resize(target)?;
+    account.resize(target)?;
     Ok(())
 }
 

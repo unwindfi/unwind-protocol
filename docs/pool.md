@@ -90,6 +90,18 @@ does, so a checkpoint from before a market gained or lost its positions is
 refused. The venue's server runs a pass every twenty seconds, and before
 building a deposit or claim if the last one is older than 45 seconds.
 
+A checkpoint stays exact when positions close after it. A close moves the
+trader's PnL into or out of the pool's liquidity, and the checkpoint still
+counts it as owed, so the same money would be counted twice. Every change to
+what a market owes the LPs (a fill, a close, a liquidation, a deleveraging,
+backing in or out, a budget cut) is added to a running total on the market
+and on the pool, measured at the market's latest oracle price. A pass records
+each market less its total at the time it counted it, and a deposit or claim
+adds the pool's total back. Example: the pool holds $1,000,000 and longs are
+$100,000 down when the checkpoint is taken, so the pool is worth $1,100,000.
+The longs are liquidated and $100,000 moves into liquidity. The pool is still
+worth $1,100,000 to a claim in the same transaction, not $1,200,000.
+
 Each pass keeps two sums from the same readings, because a market's risk
 price (see [Price sources](price-sources.md)) can trail its oracle after a
 move. The deposit sum counts each market at whichever of the two leaves the

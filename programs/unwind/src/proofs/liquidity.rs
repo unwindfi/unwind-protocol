@@ -113,7 +113,8 @@ fn pool_with(liquidity_usd: u64) -> Pool {
         num_custodies: 0,
         markets_with_oi: 0,
         oi_version: 0,
-        _reserved: [0; 1],
+        no_points: false,
+        aum_drift_usd: 0,
     }
 }
 

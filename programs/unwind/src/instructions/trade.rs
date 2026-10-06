@@ -229,6 +229,9 @@ fn book_planned(
         side_oi,
         extra_lock,
     } = plan;
+    // What the market owes the LPs before the fill, so the AUM checkpoint
+    // can be brought up to date with it (`aum::book_lp_drift`).
+    let owed_before = crate::aum::lp_owed_now(market)?;
 
     // Two ceilings: the pool's utilization cap, checked above, and this
     // market's budget, which was applied when the batch cleared. An open
@@ -336,6 +339,7 @@ fn book_planned(
         .checked_add(extra_lock)
         .ok_or(PerpError::MathOverflow)?;
     position.last_update_ts = now;
+    crate::aum::book_lp_drift(pool, market, owed_before)?;
 
     Ok(to_backers)
 }
@@ -518,6 +522,9 @@ pub fn apply_settlement_to_pool(
     close_size: u64,
     is_long: bool,
 ) -> Result<u64> {
+    // Everything below moves PnL between "owed" and liquidity; the AUM
+    // checkpoint hears of it through the drift (`aum::book_lp_drift`).
+    let owed_before = crate::aum::lp_owed_now(market)?;
     pool.unlock(settlement.locked_release);
     market.unlock(settlement.locked_release);
     pool.trader_collateral_usd = pool
@@ -590,6 +597,7 @@ pub fn apply_settlement_to_pool(
     market.collateral_usd = market
         .collateral_usd
         .saturating_sub(settlement.collateral_share);
+    crate::aum::book_lp_drift(pool, market, owed_before)?;
     Ok(to_backers)
 }
 
@@ -906,7 +914,8 @@ pub(crate) mod tests {
             markets_with_oi: 0,
             rewards_usd: 0,
             oi_version: 0,
-            _reserved: [0; 1],
+            no_points: false,
+            aum_drift_usd: 0,
         }
     }
 
@@ -968,7 +977,8 @@ pub(crate) mod tests {
             risk_price: 0,
             risk_slot: 0,
             generation: 0,
-            _reserved: [0; 28],
+            aum_drift_usd: 0,
+            _reserved: [0; 20],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
         };

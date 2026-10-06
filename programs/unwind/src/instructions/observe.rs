@@ -460,7 +460,8 @@ pub struct MarkPushed {
 
 #[derive(Accounts)]
 pub struct DeriveBudget<'info> {
-    #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
+    /// Mutable for its AUM drift: a smaller budget is less owed to winners.
+    #[account(mut, seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
     pub pool: Box<Account<'info, Pool>>,
 
     #[account(mut, has_one = pool @ PerpError::MarketPoolMismatch)]
@@ -497,9 +498,11 @@ pub fn derive_market_budget(ctx: Context<DeriveBudget>) -> Result<()> {
     // Depth that has held, not the last reading: see `budget_depth_usd`.
     let supported = ctx.accounts.observation.budget_depth_usd;
     let market = &mut ctx.accounts.market;
+    let owed_before = crate::aum::lp_owed_now(market)?;
     let before = market.loss_budget_usd;
     market.loss_budget_usd =
         depth_capped_budget(ctx.accounts.observation.is_seasoned(), supported, before)?;
+    crate::aum::book_lp_drift(&mut ctx.accounts.pool, market, owed_before)?;
     emit!(BudgetDerived {
         market: market.key(),
         depth_usd: supported,
@@ -582,17 +585,51 @@ mod tests {
             o.track_depth(K, 1_000 + DEPTH_RISE_MIN_INTERVAL_SEC);
         }
         assert_eq!(o.budget_depth_usd, 90_100 * K / 1_000);
-        // The next honest reading puts it back.
-        o.track_depth(100 * K, 1_000 + DEPTH_RISE_MIN_INTERVAL_SEC + 1);
-        assert_eq!(o.budget_depth_usd, 100 * K);
+        // Honest readings take it back up, a step an interval.
+        o.track_depth(100 * K, 1_000 + 2 * DEPTH_RISE_MIN_INTERVAL_SEC);
+        assert_eq!(o.budget_depth_usd, 90_100 * K / 1_000 + 9_900 * K / 10_000);
+        let mut t = 1_000 + 2 * DEPTH_RISE_MIN_INTERVAL_SEC;
+        for _ in 0..60 {
+            t += DEPTH_RISE_MIN_INTERVAL_SEC;
+            o.track_depth(100 * K, t);
+        }
+        assert!(o.budget_depth_usd > 99 * K);
         // A pool that has really drained gets there: under 10% in 22 steps,
         // about seven minutes.
-        let mut t = 2_000;
+        t += 1_000;
         for _ in 0..22 {
             t += DEPTH_RISE_MIN_INTERVAL_SEC;
             o.track_depth(0, t);
         }
         assert!(o.budget_depth_usd < 10 * K, "{}", o.budget_depth_usd);
+    }
+
+    /// SP-4. Depth parked in the pool for one crank (a flash loan is
+    /// enough) must not lift the depth a budget may be cut to back over the
+    /// budget. Rising to any higher reading at once let one such crank undo
+    /// minutes of decline, so a budget could be held above what the pool
+    /// supports for the price of one transaction every few minutes.
+    #[test]
+    fn one_deep_reading_lifts_budget_depth_by_a_tenth_at_most() {
+        let mut o = depth_state();
+        o.track_depth(100 * K, 1_000);
+        // The pool drains to $20k and the budget depth follows it down.
+        let mut t = 1_000;
+        for _ in 0..30 {
+            t += DEPTH_RISE_MIN_INTERVAL_SEC;
+            o.track_depth(20 * K, t);
+        }
+        let low = o.budget_depth_usd;
+        assert!(low < 24 * K, "{low}");
+        // Then $10m for one crank.
+        t += DEPTH_RISE_MIN_INTERVAL_SEC;
+        o.track_depth(10_000 * K, t);
+        assert!(o.budget_depth_usd <= low + low / 10, "{} from {low}", o.budget_depth_usd);
+        // Inside the same interval a burst moves it no further.
+        for _ in 0..30 {
+            o.track_depth(10_000 * K, t);
+        }
+        assert!(o.budget_depth_usd <= low + low / 10);
     }
 
     #[test]

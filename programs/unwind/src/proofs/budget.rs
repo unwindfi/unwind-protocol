@@ -88,7 +88,8 @@ fn blank_market() -> Market {
         risk_price: 0,
         risk_slot: 0,
         generation: 0,
-        _reserved: [0; 28],
+        aum_drift_usd: 0,
+        _reserved: [0; 20],
         long_moments: SideMoments::default(),
         short_moments: SideMoments::default(),
         volume_usd: 0,
@@ -130,7 +131,8 @@ fn blank_pool() -> Pool {
         num_custodies: 0,
         markets_with_oi: 0,
         oi_version: 0,
-        _reserved: [0; 1],
+        no_points: false,
+        aum_drift_usd: 0,
     }
 }
 

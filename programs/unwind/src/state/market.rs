@@ -192,7 +192,11 @@ pub struct Market {
     /// listed before generations, which sits at the old address. Was the
     /// first four bytes of `_reserved`.
     pub generation: u32,
-    pub _reserved: [u8; 28],
+    /// This market's part of `Pool::aum_drift_usd`: how much what it owes the
+    /// LPs has moved, wrapping, since it last gained open interest. Zero while
+    /// it has none. Was eight bytes of `_reserved`.
+    pub aum_drift_usd: i64,
+    pub _reserved: [u8; 20],
 
     // Added after `_reserved`, which grew the account again; run
     // `resize_market` on a market listed before. Zero reads as "no position
@@ -365,6 +369,18 @@ impl Market {
     /// What one backer's shares are worth right now.
     ///
     /// Rounds down, so the last backer out cannot take more than is there.
+    /// What this market's backing would pay its traders if every position
+    /// closed at `price` now: their PnL net across both sides, where they are
+    /// up, at most the remaining budget. Held back from a backer who leaves,
+    /// so a loss already visible is not left to the winners alone.
+    pub fn backing_owed_usd(&self, price: u64) -> Result<u64> {
+        let pnl = self.trader_pnl_usd(price)?;
+        if pnl <= 0 {
+            return Ok(0);
+        }
+        Ok((pnl as u64).min(self.remaining_budget_usd()))
+    }
+
     pub fn backing_value(&self, shares: u64) -> u64 {
         if self.backing_shares == 0 {
             return 0;
@@ -372,17 +388,22 @@ impl Market {
         ((shares as u128) * (self.backing_usd as u128) / (self.backing_shares as u128)) as u64
     }
 
-    /// Shares `amount` of fresh backing buys.
+    /// Shares `amount` of fresh USDC backing buys, as `back_market` prices it
+    /// (`backing::entry_pot_usd`).
     ///
-    /// The first backer sets the price at one, and everyone after buys at
-    /// whatever the drawdown has left a share worth. A wiped-out pot with
-    /// shares still held refuses the deposit, as `shares_for` does.
+    /// The first backer sets the price at one. Everyone after buys against
+    /// the pot plus what a later gain owes back to it (`backing_drawn_usd`),
+    /// so a repayment of an earlier draw goes to the shares that were drawn
+    /// on rather than being split with whoever bought in just before it. A
+    /// pot with nothing in it and nothing owed back, with shares still held,
+    /// refuses the deposit, as `shares_for` does.
     pub fn backing_shares_for(&self, amount: u64) -> Result<u64> {
         if self.backing_shares == 0 {
             return Ok(amount);
         }
-        require!(self.backing_usd > 0, PerpError::BackingWipedOut);
-        Ok((((amount as u128) * (self.backing_shares as u128)) / (self.backing_usd as u128))
+        let pot = (self.backing_usd as u128) + (self.backing_drawn_usd as u128);
+        require!(pot > 0, PerpError::BackingWipedOut);
+        Ok((((amount as u128) * (self.backing_shares as u128)) / pot)
             .try_into()
             .map_err(|_| PerpError::MathOverflow)?)
     }
@@ -1062,7 +1083,8 @@ mod tests {
             risk_price: 0,
             risk_slot: 0,
             generation: 0,
-            _reserved: [0; 28],
+            aum_drift_usd: 0,
+            _reserved: [0; 20],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
         }
@@ -1147,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn a_drawdown_reprices_shares_rather_than_socialising_it() {
+    fn a_backer_after_a_drawdown_buys_the_claim_on_its_repayment_at_face() {
         let mut m = market();
         m.backing_usd = 1_000;
         m.backing_shares = 1_000;
@@ -1156,15 +1178,40 @@ mod tests {
         m.draw_backing(500);
         assert_eq!(m.backing_value(1_000), 500, "the first backer wears it");
 
-        // Someone arriving now buys at the marked-down price: 500 USD against
-        // 500 of value buys the same 1,000 shares the first backer holds.
+        // Someone arriving now pays for the 500 a gain owes back as well as
+        // the 500 left: 500 USD buys 500 shares, not 1,000.
         let fresh = m.backing_shares_for(500).unwrap();
-        assert_eq!(fresh, 1_000);
-
+        assert_eq!(fresh, 500);
         m.backing_usd += 500;
         m.backing_shares += fresh;
-        assert_eq!(m.backing_value(1_000), 500);
-        assert_eq!(m.backing_value(fresh), 500, "and neither subsidises the other");
+
+        // When the gain comes, each is made whole and neither is paid the
+        // other's money.
+        assert_eq!(m.restore_backing(500), 500);
+        assert_eq!(m.backing_value(1_000), 1_000);
+        assert_eq!(m.backing_value(fresh), 500);
+    }
+
+    #[test]
+    fn a_repayment_never_pays_a_later_backer_past_what_they_posted() {
+        for held in 0..=N {
+            for drawn in 0..=N {
+                if held + drawn == 0 {
+                    continue;
+                }
+                for amount in 0..=N {
+                    let mut m = market();
+                    m.backing_usd = held;
+                    m.backing_shares = held + drawn;
+                    m.backing_drawn_usd = drawn;
+                    let fresh = m.backing_shares_for(amount).unwrap();
+                    m.backing_usd += amount;
+                    m.backing_shares += fresh;
+                    m.restore_backing(drawn);
+                    assert!(m.backing_value(fresh) <= amount, "{held} {drawn} {amount}");
+                }
+            }
+        }
     }
 
     #[test]
