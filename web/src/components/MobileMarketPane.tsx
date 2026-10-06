@@ -44,8 +44,8 @@ export function MobileMarketPane({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-panel">
-      <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-none border-b border-line px-3 py-2.5">
+      <Tabs line defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+        <div className="flex-none border-b border-line px-2">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="trades">Trades</TabsTrigger>

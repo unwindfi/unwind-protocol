@@ -188,7 +188,7 @@ export function ChartPanel({
     <div className={cn("flex min-h-0 min-w-0 flex-col",
       full ? "fixed inset-0 z-50 bg-panel p-3 safe-t safe-b" : "flex-1", className)}>
       <div className="flex flex-none items-center justify-between gap-2 pb-2">
-        <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+        <Tabs line value={view} onValueChange={(v) => setView(v as View)}>
           <TabsList>
             <TabsTrigger value="chart">Chart</TabsTrigger>
             <TabsTrigger value="depth">Depth</TabsTrigger>

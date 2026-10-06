@@ -108,6 +108,9 @@
   --color-up: #2fc46b;
   --color-down: #f04d4d;
   --color-brand: #f2f4f6;
+  /* The logo's violet, for the one mark that wants a colour: the selected
+     tab's underline. Its pale edge here; its body on the light theme. */
+  --color-tab: #a48cfa;
 
   /*
    * The road behind the search on /markets. Its tarmac is painted, not
@@ -175,6 +178,7 @@
   --color-up: #036b33;
   --color-down: #c02828;
   --color-brand: #0b0b0f;
+  --color-tab: #6a45e6;
 
   /* The road inverts with the page: dark tarmac under a pale sky. */
   --color-road-1: #aeb6c6;

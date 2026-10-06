@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
 import { getFills, usePoll } from "@/lib/api";
@@ -170,6 +170,10 @@ export function BottomPanel({
   onCancelOrder?: (o: Order) => void;
 }) {
   const [tab, setTab] = useState("positions");
+  // Where the selected tab sits in the strip, for its underline. Measured
+  // after layout, and again when the strip resizes or a count changes width.
+  const strip = useRef<HTMLDivElement>(null);
+  const [line, setLine] = useState({ x: 0, w: 0 });
   const [bodyRef, bodyH, bodyW] = useSize<HTMLDivElement>();
   // Positions carries the most columns. On a laptop's docked panel they
   // did not fit beside Close, so the table squeezed every column, Market and
@@ -188,6 +192,19 @@ export function BottomPanel({
     () => Object.entries(account?.positions ?? {}).map(([symbol, p]) => ({ ...p, symbol })),
     [account]
   );
+
+  useLayoutEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    const place = () => {
+      const b = el.querySelector<HTMLElement>(`[data-tab="${tab}"]`);
+      if (b) setLine({ x: b.offsetLeft, w: b.offsetWidth });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tab, positions.length, orders.length]);
 
   /*
    * Every tab opens with the same two columns at the same widths, Market and
@@ -371,20 +388,25 @@ export function BottomPanel({
        * terminal's tabs read. They were rounded pills with count chips, which
        * made the panel look like a template rather than a trading screen.
        */}
-      <div role="tablist" aria-label="Account"
-        className="strip-scroll flex flex-none items-stretch gap-1 border-b border-line px-2">
+      <div ref={strip} role="tablist" aria-label="Account"
+        className="strip-scroll relative flex flex-none items-stretch gap-1 border-b border-line px-2">
         {TABS.filter((t) => !mobile || t.phone).map((t) => {
           const n = t.key === "positions" ? positions.length : t.key === "orders" ? orders.length : 0;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key}
-              onClick={() => setTab(t.key)}
-              className="-mb-px h-9 whitespace-nowrap border-b border-transparent px-2.5 text-[12px]
-                         text-muted-foreground transition-colors hover:text-foreground
-                         aria-selected:border-foreground aria-selected:text-foreground">
+              data-tab={t.key} onClick={() => setTab(t.key)}
+              className="h-9 whitespace-nowrap px-2.5 text-[12px] text-muted-foreground transition-colors
+                         hover:text-foreground aria-selected:text-foreground">
               {t.label}{n > 0 && <span className="n"> ({n})</span>}
             </button>
           );
         })}
+        {/* One underline that slides to the selected tab rather than one per
+            tab that blinks: the eye follows it from the old tab to the new. */}
+        <span aria-hidden
+          className="pointer-events-none absolute bottom-[-1px] left-0 h-[2px] rounded-full bg-tab
+                     transition-[transform,width] duration-200 ease-out motion-reduce:transition-none"
+          style={{ width: line.w, transform: `translateX(${line.x}px)`, opacity: line.w ? 1 : 0 }} />
       </div>
 
       <div ref={bodyRef}

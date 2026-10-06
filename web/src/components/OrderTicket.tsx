@@ -424,9 +424,8 @@ export function OrderTicket({
       </div>
 
       <div className="px-5 pt-5">
-        {/* The order type, as the /list tab row: pills, the chosen one
-            inverted, no tray. */}
-        <Tabs value={mode} onValueChange={(v) => setMode(v as "market" | "limit")}>
+        {/* The order type: a tab row like the rest of the terminal's. */}
+        <Tabs line value={mode} onValueChange={(v) => setMode(v as "market" | "limit")}>
           <TabsList>
             <TabsTrigger value="market" className={mobile ? "h-10" : ""}>Market</TabsTrigger>
             <TabsTrigger value="limit" className={mobile ? "h-10" : ""}>Limit</TabsTrigger>

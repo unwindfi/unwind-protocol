@@ -3,7 +3,9 @@ import { BatchClock, useNow } from "@/components/BatchClock";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/motion/tabs";
 
 /// The book's tabs: words on the panel's rule, the open one underlined.
-const TAB = "min-h-[38px] px-3 text-[12.5px] font-medium first:pl-0";
+// The terminal's tab row: 12px text, the selected one underlined in violet.
+const TAB = "min-h-0 h-9 px-2.5 py-0 text-[12px] font-normal";
+const LINE = "bottom-[-1px] h-[2px] rounded-full bg-tab";
 import { Gauge } from "@/components/market/Gauge";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import { useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
@@ -277,11 +279,11 @@ export function BookPanel({
      */
     <section className="flex min-h-0 flex-1 flex-col">
       <Tabs defaultValue="batch" variant="underline" className="flex min-h-0 flex-1 flex-col">
-        <div className={`flex-none border-b border-line ${narrow ? "px-4" : "px-5 sm:px-6"}`}>
-          <TabsList className="-mb-px gap-0 border-0">
-            <TabsTrigger value="batch" className={TAB} indicatorClassName="bg-foreground">Batch</TabsTrigger>
-            <TabsTrigger value="trades" className={TAB} indicatorClassName="bg-foreground">Trades</TabsTrigger>
-            <TabsTrigger value="liquidity" className={TAB} indicatorClassName="bg-foreground">Liquidity</TabsTrigger>
+        <div className="flex-none border-b border-line px-2">
+          <TabsList className="-mb-px gap-1 border-0">
+            <TabsTrigger value="batch" className={TAB} indicatorClassName={LINE}>Batch</TabsTrigger>
+            <TabsTrigger value="trades" className={TAB} indicatorClassName={LINE}>Trades</TabsTrigger>
+            <TabsTrigger value="liquidity" className={TAB} indicatorClassName={LINE}>Liquidity</TabsTrigger>
           </TabsList>
         </div>
 
