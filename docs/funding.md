@@ -96,6 +96,6 @@ Funding and borrow owed count in the pool's value before positions close. See
 ## On the trade screen
 
 The market header shows the 1h funding rate. The Funding tab beside Positions
-lists each open position with its side's rate per hour, what the next hour
+lists each open position with its entry and mark, its side's rate per hour, what the next hour
 costs or pays at that rate, and the funding paid so far. With nothing open, it
 shows the market on screen's current rates for longs and shorts.

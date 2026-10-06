@@ -1919,21 +1919,85 @@ const orderFills: any[] = [];
 /// Fill tape. Only this account trades on a local validator, so it is sparse —
 /// but every entry is a real settled transaction, not a simulated print.
 const trades: any[] = [];
-/// Fills by wallet, for the portfolio page. The shared tape above is cut at
-/// 120 across every market, which one busy wallet would push everyone else
-/// out of. Held in memory like the tape, so a restart starts it again.
+/// Fills by wallet, for the trade panel's history and liquidations. The
+/// shared tape above is cut at 120 across every market, which one busy
+/// wallet would push everyone else out of. Each wallet keeps its last 100,
+/// in .cache so a deploy or restart carries them over.
+///
+/// A fill's fee and closed PnL come from the events its settlement emitted
+/// (`enrichFills`), read back after it lands, so they appear a moment after
+/// the fill itself.
+const FILLS_FILE = path.join(ROOT, ".cache", `${CLUSTER}-fills.json`);
 const fillsByOwner = new Map<string, any[]>();
+try {
+  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(FILLS_FILE, "utf8")))) {
+    fillsByOwner.set(k, v as any[]);
+  }
+} catch { /* none yet */ }
+let fillsDirty = false;
+setInterval(() => {
+  if (!fillsDirty) return;
+  fillsDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(FILLS_FILE), { recursive: true });
+    fs.writeFileSync(FILLS_FILE, JSON.stringify(Object.fromEntries(fillsByOwner)));
+  } catch (e: any) { console.warn(`fills: ${e?.message ?? e}`); }
+}, 30_000).unref();
 function recordTrade({ owner, ...t }: any) {
   trades.unshift({ t: Date.now(), ...t });
   trades.splice(120);
-  if (owner) {
-    const mine = fillsByOwner.get(owner) ?? [];
-    mine.unshift({ t: Date.now(), ...t });
-    mine.splice(50);
-    fillsByOwner.set(owner, mine);
-  }
   const m = rt[t.symbol];
   if (m) m.volume += t.size;
+  if (!owner) return null;
+  const mine = fillsByOwner.get(owner) ?? [];
+  const entry = { t: Date.now(), ...t };
+  mine.unshift(entry);
+  mine.splice(100);
+  fillsByOwner.set(owner, mine);
+  fillsDirty = true;
+  return { owner, entry };
+}
+
+/// Every event a transaction emitted, read back from its logs, as
+/// `recordClear` reads a clear's.
+async function eventsOf(sig: string): Promise<{ name: string; data: any }[]> {
+  const tx = await conn.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+  const out: { name: string; data: any }[] = [];
+  for (const line of tx?.meta?.logMessages ?? []) {
+    if (!line.startsWith("Program data: ")) continue;
+    try {
+      const ev = program.coder.events.decode(line.slice(14));
+      if (ev) out.push({ name: String(ev.name).toLowerCase(), data: ev.data });
+    } catch { /* another program's data */ }
+  }
+  return out;
+}
+
+/// Puts each settled fill's exact fee, and a close's PnL, on its row. A close
+/// says both in `PositionClosed`. An open's fee is the market's rate on what
+/// filled, already on the row, unless a referral or deployer discount
+/// applied, in which case `FeeRewards` carries the fee actually charged.
+/// Closed PnL is the price move less the funding paid, before the fee.
+async function enrichFills(sig: string, recs: ({ owner: string; entry: any } | null)[]) {
+  const events = await eventsOf(sig);
+  const take = (owner: string, kind: string, symbol: string, done: (e: any) => boolean) =>
+    recs.find((r) => r && r.owner === owner && r.entry.kind === kind && r.entry.symbol === symbol && !done(r.entry));
+  for (const ev of events) {
+    const owner = ev.data.owner?.toBase58?.();
+    const symbol = Object.values(rt).find((m) => m.address.equals(ev.data.market))?.symbol;
+    if (!owner || !symbol) continue;
+    if (ev.name === "positionclosed") {
+      const r = take(owner, "close", symbol, (e) => e.pnl != null);
+      if (r) {
+        r.entry.fee = num(ev.data.feeUsd) / 1e6;
+        r.entry.pnl = (num(ev.data.pnlUsd) - num(ev.data.fundingUsd)) / 1e6;
+      }
+    } else if (ev.name === "feerewards") {
+      const r = take(owner, "open", symbol, (e) => e.feeExact);
+      if (r) { r.entry.fee = num(ev.data.feeUsd) / 1e6; r.entry.feeExact = true; }
+    }
+  }
+  fillsDirty = true;
 }
 /*
  * Who has traded each market, for the devnet creator score.
@@ -2093,8 +2157,9 @@ async function liquidationCheck() {
     }
 
     const owner = new PublicKey(String(pos.owner));
+    let liqSig = "";
     try {
-      await program.methods.liquidate().accounts({
+      liqSig = await program.methods.liquidate().accounts({
         liquidator: authority.publicKey,
         pool, market: m.address, position: entry.publicKey,
         owner,
@@ -2114,15 +2179,23 @@ async function liquidationCheck() {
     }
 
     closed.add(owner.toBase58());
-    liquidations.unshift({
-      t: Date.now(), symbol: m.symbol, isLong: d.isLong,
-      size: d.size, price: px(m), returned: d.equity,
-      owner: owner.toBase58(),
-    });
+    // What the program did, from its event; the estimate made before sending
+    // only if the logs cannot be read back.
+    const ev = await eventsOf(liqSig)
+      .then((es) => es.find((e) => e.name === "positionliquidated")?.data)
+      .catch(() => null);
+    const liq = {
+      isLong: d.isLong,
+      size: ev ? num(ev.sizeUsd) / 1e6 : d.size,
+      price: ev ? num(ev.fillPrice) / 1e6 : px(m),
+      returned: ev ? num(ev.returnedUsd) / 1e6 : d.equity,
+      // The loss before the liquidator's bounty, and the bounty itself.
+      ...(ev ? { pnl: (num(ev.pnlUsd) - num(ev.fundingUsd)) / 1e6, fee: num(ev.bountyUsd) / 1e6 } : {}),
+    };
+    liquidations.unshift({ t: Date.now(), symbol: m.symbol, ...liq, owner: owner.toBase58() });
     liquidations.splice(20);
     recordTrade({
-      symbol: m.symbol, side: d.isLong ? "sell" : "buy",
-      size: d.size, price: px(m), kind: "liquidation", owner: owner.toBase58(),
+      symbol: m.symbol, side: d.isLong ? "sell" : "buy", kind: "liquidation", owner: owner.toBase58(), ...liq,
     });
     console.log(`liquidated ${m.symbol} (${owner.toBase58().slice(0, 4)}…) at ${px(m)}`);
   }
@@ -3363,9 +3436,13 @@ async function accountView(owner: PublicKey) {
       equity: Number(usdc.amount) / 1e6 + margin + unrealized + (held + escrowed) * lpPrice,
       positions,
       orders,
-      liquidations,
-      deleverages,
-      orderFills,
+      // This wallet's own. These were every wallet's last twenty, so a
+      // trader's Liquidations tab listed other people's.
+      liquidations: (fillsByOwner.get(me) ?? []).filter((f) => f.kind === "liquidation")
+        .map(({ t, symbol, isLong, size, price, returned, pnl, fee }) =>
+          ({ t, symbol, isLong: isLong ?? true, size, price, returned: returned ?? 0, pnl, fee })),
+      deleverages: deleverages.filter((x) => x.owner === me),
+      orderFills: orderFills.filter((x) => x.owner === me),
       lp: { held, price: lpPrice, value: held * lpPrice, pending, owed },
       pool: {
         aum, liquidity, locked, free: liquidity - locked,
@@ -3759,6 +3836,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
 
       const sealed: any = await program.account.batch.fetch(batch);
       if (Number(sealed.clearedTs) === 0) return;
+      const openFeeBps = num((await marketAccount(m)).openFeeBps);
 
       // Settled several to a transaction: a full batch one by one was 64
       // round trips to an RPC that throttles.
@@ -3780,13 +3858,17 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       }
       const settled = (o: any) => {
         settledOwners.add(new PublicKey(o.owner).toBase58());
-        if (Number(o.filledUsd) > 0) {
+        if (!(Number(o.filledUsd) > 0)) return null;
+        {
           // A fill opened or resized a position the liquidation check holds.
           positionsChanged(new PublicKey(o.owner).toBase58());
-          recordTrade({
+          const size = Number(o.filledUsd) / 1e6;
+          const rec = recordTrade({
             symbol: m.symbol,
             side: o.isBid ? "buy" : "sell",
-            size: Number(o.filledUsd) / 1e6,
+            size,
+            // An open's fee at the market's rate; a close's comes from its event.
+            ...(o.reduceOnly ? {} : { fee: (size * openFeeBps) / 10_000 }),
             // Its own flow's price: the batch cleared twice.
             price: Number(flowOf({ isBid: !!o.isBid, isMaker: !!o.isMaker }) === "buy"
               ? sealed.buyPrice : sealed.sellPrice) / 1e6,
@@ -3796,8 +3878,13 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
             owner: new PublicKey(o.owner).toBase58(),
           });
           noteFill(m.address.toBase58(), new PublicKey(o.owner).toBase58(), Number(o.filledUsd) / 1e6);
+          return rec;
         }
       };
+      // Best effort, after the fact: a fill is on the tape whether or not its
+      // logs can be read back.
+      const enrich = (sig: string, recs: ReturnType<typeof settled>[]) =>
+        void enrichFills(sig, recs).catch((e: any) => console.warn(`fill log ${m.symbol}: ${e?.message ?? e}`));
       const send = (ixs: TransactionInstruction[]) =>
         provider.sendAndConfirm(new Transaction().add(...withComputeLimit(ixs)));
       // The groups go out together, up to SETTLE_PARALLEL at a time, rather
@@ -3816,7 +3903,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       await Promise.all(Array.from({ length: Math.min(SETTLE_PARALLEL, groups.length) }, async () => {
         while (nextGroup < groups.length) {
           const { group, members } = groups[nextGroup++];
-          try { await send(group); members.forEach((d) => settled(d.o)); }
+          try { const sig = await send(group); enrich(sig, members.map((d) => settled(d.o))); }
           catch { failed.push(...members); }
         }
       }));
@@ -3829,7 +3916,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         const now: any = await program.account.batch.fetch(batch).catch(() => null);
         for (const d of failed) {
           if (now && !now.orders[d.i]?.active) { settled(d.o); continue; }
-          try { await send([d.ix]); settled(d.o); }
+          try { const sig = await send([d.ix]); enrich(sig, [settled(d.o)]); }
           catch (e: any) { console.warn(`settle ${m.symbol}#${d.i}: ${e?.message ?? e}`); }
         }
       }

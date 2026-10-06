@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { getFills, usePoll } from "@/lib/api";
 import type { Account, Market, Position, Trade } from "@/lib/api";
 import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
@@ -28,6 +27,19 @@ const FILL_ACTION: Record<string, string> = {
   open: "Open", close: "Close", liquidation: "Liquidated",
 };
 const NO_FILLS: Trade[] = [];
+/// The phone keeps three of them.
+const TABS = [
+  { key: "positions", label: "Positions", phone: true },
+  { key: "orders", label: "Open orders", phone: false },
+  { key: "funding", label: "Funding", phone: false },
+  // The wallet's own fills. The market's tape, every trader's fills, is the
+  // book's Trades tab; shown here it listed each buy twice, once as a sell.
+  { key: "history", label: "Trade history", phone: true },
+  { key: "liqs", label: "Liquidations", phone: true },
+];
+const DASH = <span className="text-muted-foreground">–</span>;
+/// A row at the 12px type: a terminal's density, not a list's.
+const ROW = 36;
 
 /// The size a box has been given: its height for the table, which
 /// virtualises its rows and so needs a number rather than a flex rule, and
@@ -184,30 +196,15 @@ export function BottomPanel({
    * history tabs led with Time, so the first columns jumped on every switch.
    * Time now closes those tabs.
    *
-   * The figures get widths too, when the panel has room for them. Left to
-   * share a wide panel, three of them sat hundreds of pixels apart; packed,
-   * they sit together and the table's empty last column takes what is left.
-   * On a laptop's panel they do not fit at those widths, and the table
-   * cannot narrow a column below the width it was given, so there they share
-   * the space as before.
+   * The figures share the rest of the width. Every tab carries seven to
+   * nine columns (fees, closed PnL, entry and mark included), so they stretch
+   * to about the same widths in each and the panel has no empty band. Packed
+   * at fixed widths instead, a wide screen left a third of it blank.
    */
   const W = { market: "108px", side: "52px", kind: "112px", time: "96px", act: "76px" };
   const sideCell = (isLong: boolean) => (
     <span className={isLong ? "text-up" : "text-down"}>{isLong ? "Long" : "Short"}</span>);
-  // Two sizes to try, roomiest first: a narrower window (the stacked layout
-  // under 1024px, which adds a Funding column) fits Positions only at the
-  // second, and fell back to spreading the figures across the panel.
-  const TIERS = [{ num: 112, pnl: 150 }, { num: 96, pnl: 128 }];
-  const pack = <R,>(cols: TableColumn<R>[]): TableColumn<R>[] => {
-    const px = (w?: string) => (w ? parseInt(w, 10) || 0 : 0);
-    const figure = (c: TableColumn<R>) => !c.width && c.align === "right";
-    const fits = TIERS.find((t) =>
-      cols.reduce((sum, c) => sum + (figure(c) ? (c.key === "pnl" ? t.pnl : t.num) : px(c.width)), 16) <= bodyW);
-    return fits
-      ? cols.map((c) => (figure(c) ? { ...c, width: `${c.key === "pnl" ? fits.pnl : fits.num}px` } : c))
-      : cols;
-  };
-  const timeCol = { key: "t", header: "Time", width: W.time, align: "right" as const,
+  const timeCol = { key: "t", header: "Time", width: W.time,
     cell: (r: { t: number }) => <span className="text-muted-foreground">{hhmmss(r.t)}</span> };
 
   const posCols: TableColumn<PosRow>[] = [
@@ -215,12 +212,12 @@ export function BottomPanel({
       cell: (r) => (<span><b>{r.symbol}</b>{" "}
         <span className="text-muted-foreground">{r.leverage.toFixed(1)}x</span></span>) },
     { key: "side", header: "Side", width: W.side, cell: (r) => sideCell(r.isLong) },
-    { key: "size", header: "Value", align: "right", sortable: true,
+    { key: "size", header: "Value",
       cell: (r) => money(r.size, 0) },
-    { key: "entry", header: "Entry", align: "right", cell: (r) => pnum(r.entry) },
-    ...(narrow ? [] : [{ key: "mark", header: "Mark", align: "right" as const,
+    { key: "entry", header: "Entry", cell: (r) => pnum(r.entry) },
+    ...(narrow ? [] : [{ key: "mark", header: "Mark",
       cell: (r: PosRow) => <span title={`Closes at ${pnum(r.exit)}`}>{pnum(r.mark)}</span> }]),
-    { key: "pnl", header: "PnL (ROE)", align: "right", sortable: true,
+    { key: "pnl", header: "PnL (ROE)",
       cell: (r) => {
         // A winner in a market that cannot cover every winner is paid a
         // fair share of its profit on close; say so beside the figure.
@@ -233,18 +230,18 @@ export function BottomPanel({
             </span>
           )}</span>);
       } },
-    { key: "liqPrice", header: "Liq. price", align: "right",
+    { key: "liqPrice", header: "Liq. price",
       cell: (r) => <span className="text-down">{r.liqPrice ? pnum(r.liqPrice) : "–"}</span> },
-    { key: "collateral", header: "Margin", align: "right", cell: (r) => money(r.collateral) },
+    { key: "collateral", header: "Margin", cell: (r) => money(r.collateral) },
     // Funding paid so far has a tab of its own; in the docked table it was
     // the column that pushed Close off the panel's edge.
-    ...(docked ? [] : [{ key: "funding", header: "Funding", align: "right" as const,
+    ...(docked ? [] : [{ key: "funding", header: "Funding",
       cell: (r: PosRow) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> }]),
     { key: "act", header: "", width: W.act,
       cell: (r) => (
         <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
-          className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
-                     transition-colors hover:border-foreground/40 disabled:opacity-35" />) },
+          className="press text-[12px] font-medium text-foreground transition-opacity
+                     hover:opacity-70 disabled:opacity-35" />) },
   ];
 
 
@@ -252,9 +249,12 @@ export function BottomPanel({
   const liqCols: TableColumn<(typeof liqs)[number]>[] = [
     { key: "symbol", header: "Market", width: W.market, cell: (r) => <b>{r.symbol}</b> },
     { key: "isLong", header: "Side", width: W.side, cell: (r) => sideCell(r.isLong) },
-    { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
-    { key: "returned", header: "Returned", align: "right", cell: (r) => money(r.returned) },
+    { key: "size", header: "Size", cell: (r) => money(r.size, 0) },
+    { key: "price", header: "Price", cell: (r) => pnum(r.price) },
+    { key: "pnl", header: "Loss",
+      cell: (r) => (r.pnl == null ? DASH : <span className={tone(r.pnl)}>{money(r.pnl)}</span>) },
+    { key: "fee", header: "Fee", cell: (r) => (r.fee == null ? DASH : money(r.fee)) },
+    { key: "returned", header: "Returned", cell: (r) => money(r.returned) },
     timeCol,
   ];
 
@@ -262,26 +262,26 @@ export function BottomPanel({
     { key: "symbol", header: "Market", width: W.market, cell: (r) => <b>{r.symbol}</b> },
     { key: "isLong", header: "Side", width: W.side, cell: (r) => sideCell(r.isLong) },
     { key: "kind", header: "Type", width: W.kind, cell: (r) => orderKind(r) },
-    { key: "triggerPrice", header: "Trigger", align: "right",
+    { key: "triggerPrice", header: "Trigger",
       cell: (r) => `${r.triggerAbove ? "≥" : "≤"} ${price(r.triggerPrice)}` },
     // A take profit or stop with no size closes the whole position.
     // "All" of a position that is gone (liquidated, say) is nothing; said
     // so, since it would otherwise fire against the next one opened here.
-    { key: "sizeUsd", header: "Size", align: "right",
+    { key: "sizeUsd", header: "Size",
       cell: (r) => (r.sizeUsd > 0 ? money(r.sizeUsd, 0)
         : r.kind === 0 && !positions.some((p) => p.symbol === r.symbol)
           ? <span className="text-down">No position</span>
           : <span className="text-muted-foreground">All</span>) },
-    { key: "collateralUsd", header: "Margin", align: "right",
+    { key: "collateralUsd", header: "Margin",
       cell: (r) => (r.collateralUsd > 0 ? money(r.collateralUsd) : "–") },
-    { key: "expiryTs", header: "Expires", align: "right",
+    { key: "expiryTs", header: "Expires",
       cell: (r) => <span className="text-muted-foreground">
         {r.expiryTs > 0 ? hhmmss(r.expiryTs * 1000) : "GTC"}</span> },
     { key: "act", header: "", width: W.act,
       cell: (r) => onCancelOrder && (
         <button disabled={busy} onClick={() => onCancelOrder(r)}
-          className="press h-7 rounded-full border border-line px-3 text-[12px] font-medium
-                     transition-colors hover:border-foreground/40 disabled:opacity-35">
+          className="press text-[12px] font-medium text-foreground transition-opacity
+                     hover:opacity-70 disabled:opacity-35">
           Cancel
         </button>) },
   ];
@@ -294,18 +294,20 @@ export function BottomPanel({
   const fundCols: TableColumn<PosRow>[] = [
     { key: "symbol", header: "Market", width: W.market, cell: (r) => <b>{r.symbol}</b> },
     { key: "side", header: "Side", width: W.side, cell: (r) => sideCell(r.isLong) },
-    { key: "size", header: "Value", align: "right", cell: (r) => money(r.size, 0) },
-    { key: "rate", header: "Rate / 1h", align: "right",
+    { key: "size", header: "Value", cell: (r) => money(r.size, 0) },
+    { key: "entry", header: "Entry", cell: (r) => pnum(r.entry) },
+    { key: "mark", header: "Mark", cell: (r) => pnum(r.mark) },
+    { key: "rate", header: "Rate / 1h",
       cell: (r) => {
         const v = rateOf(bySymbol.get(r.symbol), r.isLong);
         return v == null ? "–" : <span className={tone(-v)}>{signedPct(v)}</span>;
       } },
-    { key: "hour", header: "Next 1h", align: "right",
+    { key: "hour", header: "Next 1h",
       cell: (r) => {
         const v = rateOf(bySymbol.get(r.symbol), r.isLong);
         return v == null ? "–" : <span className={tone(-v)}>{money(-(r.size * v) / 100)}</span>;
       } },
-    { key: "funding", header: "Paid so far", align: "right",
+    { key: "funding", header: "Paid so far",
       cell: (r) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> },
   ];
 
@@ -315,8 +317,12 @@ export function BottomPanel({
       cell: (r) => (<span className={r.side === "buy" ? "text-up" : "text-down"}>
         {r.side === "buy" ? "Buy" : "Sell"}</span>) },
     { key: "kind", header: "Action", width: W.kind, cell: (r) => FILL_ACTION[r.kind] ?? r.kind },
-    { key: "size", header: "Size", align: "right", cell: (r) => money(r.size, 0) },
-    { key: "price", header: "Price", align: "right", cell: (r) => pnum(r.price) },
+    { key: "size", header: "Size", cell: (r) => money(r.size, 0) },
+    { key: "price", header: "Price", cell: (r) => pnum(r.price) },
+    { key: "fee", header: "Fee", cell: (r) => (r.fee == null ? DASH : money(r.fee)) },
+    // An open has no PnL to show; a close's arrives a moment after the fill.
+    { key: "pnl", header: "Closed PnL",
+      cell: (r) => (r.pnl == null ? DASH : <span className={tone(r.pnl)}>{money(r.pnl)}</span>) },
     timeCol,
   ];
 
@@ -327,8 +333,8 @@ export function BottomPanel({
    * as tall as the panel's body, so there is one scroller rather than a
    * table scrolling inside a box that also scrolls.
    */
-  const flat = "border-0 bg-transparent px-2 [&_th]:bg-panel [&_th]:text-[12.5px] " +
-    "[&_th]:font-normal [&_th]:text-dim [&_td]:text-[13px] " +
+  const flat = "border-0 bg-transparent px-2 [&_th]:bg-panel [&_th]:text-[12px] " +
+    "[&_th]:font-normal [&_th]:text-muted-foreground [&_td]:text-[12px] " +
     // The widths above are hints to a table sized by its content: a crowded
     // one (Positions on a laptop) squeezed Market and Side with the rest, so
     // they still moved. As minimums they hold, and the figures give way.
@@ -337,14 +343,13 @@ export function BottomPanel({
   /// As tall as its rows, up to a cap: a fixed height left one position
   /// floating in a panel of blank rows, and none floating in more.
   const tableH = (n: number) => (docked ? Math.max(120, bodyH)
-    : n === 0 ? 200 : Math.min(300, 48 * (n + 1) + 2));
+    : n === 0 ? 200 : Math.min(300, ROW * (n + 1) + 2));
 
   const empty = (s: string) => <div className="p-6 text-center text-[12.5px] text-dim">{s}</div>;
   // A connected wallet whose account has not been read yet has nothing to
   // say about its positions: "None" there would be a guess.
   const mine = (s: string, nobody: string) => empty(!owner ? nobody : account ? s : "Loading");
 
-  const count = (n: number) => n > 0 && <span className="n ml-1 text-dim">{n}</span>;
   const nowRates = market && (
     <div className="p-6 text-center text-[12.5px] text-dim">
       No open positions. {market.symbol} now:{" "}
@@ -361,28 +366,31 @@ export function BottomPanel({
       // as tall as its table, inside a panel that already draws the edge.
       ? "flex min-h-0 flex-1 flex-col bg-panel"
       : "flex flex-none flex-col bg-panel"}>
-      <Tabs value={tab} onValueChange={setTab}
-        className={mobile ? "flex-none border-b border-line px-3 py-2.5"
-          : docked ? "strip-scroll flex-none border-b border-line px-3 py-2"
-          : "flex-none border-b border-line px-5 py-3 sm:px-6"}>
-        <TabsList soft={!mobile}>
-          <TabsTrigger soft={!mobile} value="positions">
-            Positions{!mobile && count(positions.length)}
-          </TabsTrigger>
-          {!mobile && <TabsTrigger soft value="orders">Open orders{count(orders.length)}</TabsTrigger>}
-          {!mobile && <TabsTrigger soft value="funding">Funding</TabsTrigger>}
-          {/* One history, the wallet's own fills. The market's tape, every
-              trader's fills and the maker's other side of them, is the book's
-              Trades tab; shown here it listed each buy twice, once as a sell. */}
-          <TabsTrigger soft={!mobile} value="history">Trade history</TabsTrigger>
-          <TabsTrigger soft={!mobile} value="liqs">Liquidations</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {/*
+       * Text on one hairline, the active tab brighter and underlined, as a
+       * terminal's tabs read. They were rounded pills with count chips, which
+       * made the panel look like a template rather than a trading screen.
+       */}
+      <div role="tablist" aria-label="Account"
+        className="strip-scroll flex flex-none items-stretch gap-1 border-b border-line px-2">
+        {TABS.filter((t) => !mobile || t.phone).map((t) => {
+          const n = t.key === "positions" ? positions.length : t.key === "orders" ? orders.length : 0;
+          return (
+            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key}
+              onClick={() => setTab(t.key)}
+              className="-mb-px h-9 whitespace-nowrap border-b border-transparent px-2.5 text-[12px]
+                         text-muted-foreground transition-colors hover:text-foreground
+                         aria-selected:border-foreground aria-selected:text-foreground">
+              {t.label}{n > 0 && <span className="n"> ({n})</span>}
+            </button>
+          );
+        })}
+      </div>
 
       <div ref={bodyRef}
         className={mobile ? "pane-scroll min-h-0 flex-1" : docked ? "min-h-0 flex-1 overflow-hidden" : ""}>
         {tab === "orders" && (
-          <Table data={orders} columns={pack(orderCols)} getRowId={(r) => r.address}
+          <Table data={orders} columns={orderCols} getRowId={(r) => r.address} rowHeight={ROW}
             className={flat} height={tableH(orders.length)}
             emptyState={mine("No take profits, stops or limit orders", "Connect a wallet to see its orders")} />
         )}
@@ -390,7 +398,7 @@ export function BottomPanel({
             fill the body: swapping the table for a line of text changed the
             panel's shape on every switch to this tab. */}
         {tab === "funding" && (
-          <Table data={positions} columns={pack(fundCols)} getRowId={(r) => r.symbol}
+          <Table data={positions} columns={fundCols} getRowId={(r) => r.symbol} rowHeight={ROW}
             className={flat} height={tableH(positions.length)}
             emptyState={account && nowRates ? nowRates
               : mine("No open positions", "Connect a wallet to see its positions")} />
@@ -402,7 +410,7 @@ export function BottomPanel({
               ? mine("No open positions", "Connect a wallet to see its positions")
               : positions.map((r) => (
                   <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} />))
-            : <Table data={positions} columns={pack(posCols)} getRowId={(r) => r.symbol}
+            : <Table data={positions} columns={posCols} getRowId={(r) => r.symbol} rowHeight={ROW}
                 className={flat} height={tableH(positions.length)}
                 emptyState={mine("No open positions", "Connect a wallet to see its positions")} />
         )}
@@ -415,14 +423,14 @@ export function BottomPanel({
          */}
         {tab === "history" && (
           <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[560px]" : ""}>
-            <Table data={fills} columns={pack(fillCols)} getRowId={(_, i) => String(i)}
+            <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)} rowHeight={ROW}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(fills.length)}
               emptyState={mine("No fills yet", "Connect a wallet to see its fills")} />
           </div>
         )}
         {tab === "liqs" && (
           <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[620px]" : ""}>
-            <Table data={liqs} columns={pack(liqCols)} getRowId={(_, i) => String(i)}
+            <Table data={liqs} columns={liqCols} getRowId={(_, i) => String(i)} rowHeight={ROW}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(liqs.length)}
               emptyState={empty("No liquidations")} />
           </div>

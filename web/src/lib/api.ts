@@ -104,7 +104,10 @@ export interface Account {
   sol?: number | null;
   margin: number; unrealized: number; equity: number;
   positions: Record<string, Position>;
-  liquidations: { t: number; symbol: string; isLong: boolean; size: number; price: number; returned: number }[];
+  /// `pnl` is the loss before the bounty and `fee` the liquidator's bounty;
+  /// both absent on rows from before they were recorded.
+  liquidations: { t: number; symbol: string; isLong: boolean; size: number; price: number; returned: number;
+    pnl?: number; fee?: number }[];
   /// Closed because profit outgrew the pool's reserve, not because the trader
   /// ran out of margin.
   deleverages: { t: number; symbol: string; owner: string; size: number; price: number }[];
@@ -174,6 +177,9 @@ export interface Batch {
 
 export interface Trade {
   t: number; symbol: string; side: "buy" | "sell"; size: number; price: number; kind: string;
+  /// A wallet's own fills only: the fee charged, and for a close (or a
+  /// liquidation) the PnL less funding, before the fee. Absent on older rows.
+  fee?: number; pnl?: number;
 }
 
 /*

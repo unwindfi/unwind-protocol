@@ -492,7 +492,7 @@ function HoldCard({ title, rows, owner, loaded, empty }: {
 }
 
 const HIST = "grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 " +
-  "md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]";
+  "md:grid-cols-[90px_repeat(7,minmax(0,1fr))]";
 
 const ACTION: Record<string, string> = {
   open: "Open", close: "Close", liquidation: "Liquidated", trigger: "Trigger fired", expired: "Expired",
@@ -508,6 +508,7 @@ function History({ fills, account, owner, loaded }: {
   const fired = (account?.orderFills ?? []).filter((f) => f.owner === owner).map((f) => ({
     t: f.t, symbol: f.symbol, kind: f.expired ? "expired" : "trigger",
     side: null as "buy" | "sell" | null, size: null as number | null, price: f.price,
+    fee: undefined as number | undefined, pnl: undefined as number | undefined,
   }));
   const rows = [...fills.map((f) => ({ ...f, side: f.side as "buy" | "sell" | null,
     size: f.size as number | null })), ...fired].sort((a, b) => b.t - a.t);
@@ -515,7 +516,7 @@ function History({ fills, account, owner, loaded }: {
   return (
     <Card title="History">
       {!loaded ? (owner ? <Skeleton /> : <Empty>{waiting(owner)}</Empty>) : rows.length === 0 ? (
-        <Empty>No fills since the server last started.</Empty>
+        <Empty>No fills yet.</Empty>
       ) : (
         <>
           <Head cols={HIST}>
@@ -525,6 +526,8 @@ function History({ fills, account, owner, loaded }: {
             <span className="hidden md:block">Side</span>
             <span>Size</span>
             <span className="text-right md:text-left">Price</span>
+            <span className="hidden md:block">Fee</span>
+            <span className="hidden md:block">Closed PnL</span>
           </Head>
           {rows.map((r, i) => (
             <div key={`${r.t}-${i}`} className={`${HIST} ${ROW}`}>
@@ -539,6 +542,9 @@ function History({ fills, account, owner, loaded }: {
               <span className="hidden capitalize text-muted-foreground md:block">{r.side ?? DASH}</span>
               <span className="n">{r.size == null ? DASH : money(r.size, 0)}</span>
               <span className="n text-right md:text-left">{price(r.price)}</span>
+              <span className="n hidden md:block">{r.fee == null ? DASH : money(r.fee)}</span>
+              <span className={`n hidden md:block ${r.pnl == null ? "" : r.pnl >= 0 ? "text-up" : "text-down"}`}>
+                {r.pnl == null ? DASH : money(r.pnl)}</span>
             </div>
           ))}
         </>
@@ -546,7 +552,8 @@ function History({ fills, account, owner, loaded }: {
       {loaded && (
         <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">
           The chain keeps positions, not a fill log. This is what the server has settled for
-          this wallet since it last started, up to 50.
+          this wallet, up to the last 100. Fees and closed PnL come from each settlement's own
+          record, a moment after the fill; rows from before October 7, 2026 have neither.
         </p>
       )}
     </Card>

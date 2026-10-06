@@ -53,6 +53,17 @@ Positions. Both are changed on [Earn](https://unwindfi.xyz/earn).
 ## History
 
 The program keeps positions, not a log of fills. History is what the server
-has settled for the wallet since it last started: fills, liquidations and
-triggers that fired, the latest 50. A restart clears it. Every fill is still
-a transaction on chain, findable from the wallet's address on an explorer.
+has settled for the wallet: fills, liquidations and triggers that fired, the
+latest 100, kept across restarts. Every fill is still a transaction on chain,
+findable from the wallet's address on an explorer.
+
+Each fill shows its fee and, for a close, its closed PnL: the price move less
+the funding paid, before the fee. Both come from the events the settlement
+emitted, read back after it lands, so they appear a moment after the fill. An
+open's fee is the market's open fee on the filled size, or the discounted fee
+when a referral discount applied. A liquidation shows its loss and the
+liquidator's bounty, from the liquidation's own event. Rows recorded before
+October 7, 2026 have neither.
+
+The trade screen's Trade history and Liquidations tabs show the same rows, and
+only the connected wallet's.
