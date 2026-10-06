@@ -139,6 +139,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
           {/* At 320px the bar cannot fit the word, the wallet, the theme and
               the menu; the mark alone still says whose page this is. */}
           <Wordmark height={18} className="max-[359px]:hidden" />
+          <span className="translate-y-px text-[13px] font-medium leading-none text-muted-foreground max-[359px]:hidden">Beta</span>
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
