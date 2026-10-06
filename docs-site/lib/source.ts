@@ -1,4 +1,6 @@
 import { llms, loader } from 'fumadocs-core/source';
+import { createElement } from 'react';
+import { icons } from 'lucide-react';
 import { docsRoute } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { applyMdxPreset } from 'fumadocs-mdx/config';
@@ -29,6 +31,11 @@ const docs = defineDocs({
 export const source = loader({
   baseUrl: docsRoute,
   source: docs.toFumadocsSource(),
+  icon(name) {
+    if (!name) return;
+    if (!(name in icons)) throw new Error(`Unknown sidebar icon: ${name}`);
+    return createElement(icons[name as keyof typeof icons]);
+  },
   plugins: [
     {
       name: 'unwind:sidebar-title',

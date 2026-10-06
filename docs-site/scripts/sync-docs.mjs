@@ -87,9 +87,37 @@ function parse(file) {
   return { meta, title: h1[1].trim(), body };
 }
 
+
+// One Lucide icon per page in the sidebar, by source file. Names are
+// lucide-react exports; an unknown name fails the build in lib/source.ts.
+const ICONS = {
+  'README.md': 'House',
+  'about.md': 'Info',
+  '101.md': 'GraduationCap',
+  'risks.md': 'TriangleAlert',
+  'how-to-open-a-market.md': 'CirclePlus',
+  'how-to-underwrite-a-market.md': 'ShieldCheck',
+  'devnet.md': 'FlaskConical',
+  'auction.md': 'Gavel',
+  'pool.md': 'Droplets',
+  'price-sources.md': 'Radio',
+  'loss-budget.md': 'Wallet',
+  'verification.md': 'BadgeCheck',
+  'fees.md': 'Receipt',
+  'rewards.md': 'Gift',
+  'order-types.md': 'ListOrdered',
+  'portfolio.md': 'ChartPie',
+  'margining.md': 'Scale',
+  'liquidations.md': 'Flame',
+  'auto-deleveraging.md': 'Scissors',
+  'funding.md': 'ArrowLeftRight',
+  'sessions.md': 'Clock',
+  'corporate-actions.md': 'Landmark',
+};
+
 function write(file, dest, extra = {}) {
   const { meta, title, body } = parse(file);
-  const frontmatter = { title, description: firstParagraph(body), ...extra };
+  const frontmatter = { title, description: firstParagraph(body), icon: ICONS[file], ...extra };
   if (meta.cover) frontmatter.cover = `/assets/${path.basename(meta.cover)}`;
   const yaml = Object.entries(frontmatter)
     .filter(([, v]) => v !== undefined)
