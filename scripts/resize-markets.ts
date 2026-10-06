@@ -3,7 +3,7 @@
  * market listed before `Market` gained its price-ordering and risk-price
  * fields, to the current size.
  *
- *   CLUSTER=devnet npx ts-node scripts/resize-markets.ts
+ *   CLUSTER=devnet [RPC=https://...] npx ts-node scripts/resize-markets.ts
  *
  * Run once, right after deploying a build that grew either account: until a
  * pool or market is grown, every instruction that reads it fails to
@@ -22,7 +22,8 @@ const STATE = path.join(ROOT, `.${CLUSTER}-state.json`);
 (async () => {
   const st = JSON.parse(fs.readFileSync(STATE, "utf8"));
   const authority = Keypair.fromSecretKey(Uint8Array.from(st.keys.authority));
-  const conn = new Connection(st.rpc, "confirmed");
+  // RPC overrides the state file's endpoint, which may be rate limited.
+  const conn = new Connection(process.env.RPC ?? st.rpc, "confirmed");
   const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(authority), {
     commitment: "confirmed",
   });
@@ -31,7 +32,7 @@ const STATE = path.join(ROOT, `.${CLUSTER}-state.json`);
 
   // Pools first: nothing that reads a market works until its pool reads.
   const poolDisc = Buffer.from(idl.accounts.find((a: any) => a.name === "Pool").discriminator);
-  const poolTarget = program.coder.accounts.size("Pool");
+  const poolTarget = program.account.pool.size;
   const pools = await conn.getProgramAccounts(program.programId, {
     filters: [{ memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(poolDisc) } }],
     dataSlice: { offset: 0, length: 0 },
@@ -47,7 +48,7 @@ const STATE = path.join(ROOT, `.${CLUSTER}-state.json`);
 
   const disc = Buffer.from(idl.accounts.find((a: any) => a.name === "Market").discriminator);
   // A fresh market's size: the discriminator plus the fields, all fixed width.
-  const target = program.coder.accounts.size("Market");
+  const target = program.account.market.size;
   const found = await conn.getProgramAccounts(program.programId, {
     filters: [{ memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(disc) } }],
     dataSlice: { offset: 0, length: 0 },
