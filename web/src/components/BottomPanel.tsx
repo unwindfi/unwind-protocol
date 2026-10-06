@@ -1,13 +1,13 @@
-import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { phaseOf, useNow } from "@/components/BatchClock";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
 import { getFills, poolFill, usePoll } from "@/lib/api";
 import { createPortal } from "react-dom";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
+import { TickerLogo } from "@/components/TickerLogo";
 import { solscanTx } from "@/lib/tx";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
-import type { Account, Batch, Market, Position, Trade } from "@/lib/api";
+import type { Account, Market, Position, Trade } from "@/lib/api";
 import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
 
 type PosRow = Position & { symbol: string };
@@ -81,44 +81,20 @@ function useSize<T extends HTMLElement>() {
  * everything left. A position larger than the pool fills in one batch may
  * close in part, so the dialog says so before, not the toast after.
  */
-/// The page's batch poll, for the market it polls. A position in another
-/// market has no countdown here, only "the next batch".
-const BatchCtx = createContext<{ symbol: string; batch: Batch | null } | null>(null);
-
 /// The smallest reduce-only order the program takes, unless it closes all
 /// that is left. The site lists every market at this floor; the API does not
 /// send a market's own.
 const MIN_CLOSE_USD = 10;
 const STEPS = [25, 50, 75, 100];
 
-/// A label and its figure on one line, for the close dialog.
-function DRow({ k, sub, children }: { k: string; sub?: React.ReactNode; children: React.ReactNode }) {
+/// A label and its figure on one line, ruled like the Earn dialog's summary.
+function DRow({ k, children }: { k: string; children: React.ReactNode }) {
   return (
-    <div className="py-1.5">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="text-muted-foreground">{k}</span>
-        <span className="n text-right font-medium">{children}</span>
-      </div>
-      {sub && <p className="text-pretty mt-0.5 text-[12px] leading-snug text-dim">{sub}</p>}
+    <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
+      <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
+      <span className="n text-right text-[13.5px] font-semibold">{children}</span>
     </div>
   );
-}
-
-/// When the close lands, from the batch countdown when the page polls this
-/// market's batch.
-function WhenRow({ symbol }: { symbol: string }) {
-  const ctx = useContext(BatchCtx);
-  const now = useNow(250);
-  const b = ctx?.symbol === symbol ? ctx.batch : null;
-  let text = "Next batch";
-  if (b?.exists) {
-    const { phase, left } = phaseOf(b, now);
-    text = phase === "collecting" ? `Next batch, in ${Math.max(0.1, left / 1000).toFixed(1)}s`
-      : phase === "idle" ? "Next batch, which opens on this order"
-      : phase === "opening" ? "When the opening auction clears"
-      : "Next batch, in about a second";
-  }
-  return <DRow k="Clears">{text}</DRow>;
 }
 
 function CloseButton({
@@ -129,8 +105,8 @@ function CloseButton({
 }) {
   const [open, setOpen] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
-  const confirm = useRef<HTMLButtonElement>(null);
-  useModalFocus(panel, open, () => setOpen(false), confirm);
+  const field = useRef<HTMLInputElement>(null);
+  useModalFocus(panel, open, () => setOpen(false), field);
   const titleId = useId();
   const [amount, setAmount] = useState("");
   const start = () => { setAmount(row.size.toFixed(2)); setOpen(true); };
@@ -139,7 +115,6 @@ function CloseButton({
   const full = amt >= row.size - 0.005;
   const size = full ? row.size : amt;
   const share = row.size > 0 ? size / row.size : 0;
-  const pctOf = Math.round(share * 100);
   const problem = !(amt > 0) ? "Enter an amount to close."
     : amt > row.size + 0.005 ? `The position is ${money(row.size)}.`
     : !full && amt < MIN_CLOSE_USD ? `At least ${money(MIN_CLOSE_USD, 0)}, unless it closes the whole position.`
@@ -177,83 +152,84 @@ function CloseButton({
           <button type="button" aria-label="Cancel" tabIndex={-1} onClick={() => setOpen(false)}
             className="absolute inset-0 cursor-default bg-black/60" />
           <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId}
-            className="relative max-h-[100dvh] w-full overflow-y-auto rounded-t-[12px] border border-line bg-panel
-                       sm:max-w-[420px] sm:rounded-[12px]">
-            <div className="border-b border-line px-5 py-4">
-              <h2 id={titleId} className="text-[16px] font-medium">Close {row.symbol}</h2>
-              <p className="n mt-0.5 text-[12.5px] text-muted-foreground">
-                <span className={row.isLong ? "text-up" : "text-down"}>{side}</span>
-                {" "}{money(row.size, 0)} at {row.leverage.toFixed(1)}x, entry {pnum(row.entry)}
-              </p>
-            </div>
+            className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[24px] border border-line
+                       bg-panel safe-b sm:max-w-[460px] sm:rounded-[24px]">
+            <div className="px-5 pb-5 pt-5 sm:px-6">
+              <header className="flex items-center gap-3">
+                {market && <TickerLogo m={market} size={40} />}
+                <span className="min-w-0 flex-1">
+                  <h2 id={titleId} className="truncate text-[16px] font-medium">Close {row.symbol}</h2>
+                  <span className="n block truncate text-[12.5px] text-muted-foreground">
+                    <span className={row.isLong ? "text-up" : "text-down"}>{side}</span>
+                    {" "}· {money(row.size, 0)} · {row.leverage.toFixed(1)}x
+                  </span>
+                </span>
+                <button type="button" onClick={() => setOpen(false)} aria-label="Cancel"
+                  className="press grid size-9 place-items-center rounded-full text-muted-foreground
+                             transition-colors hover:bg-panel2 hover:text-foreground">
+                  <X size={16} strokeWidth={1.75} />
+                </button>
+              </header>
 
-            <div className="border-b border-line px-5 py-4">
-              <div className="flex items-baseline justify-between">
-                <label htmlFor={`${titleId}-amt`} className="text-[13px] text-muted-foreground">Amount to close</label>
-                <span className="n text-[12px] text-dim">{pctOf}% of position</span>
+              <div className="mt-5">
+                <div className="mb-2 flex items-baseline justify-between gap-3">
+                  <label htmlFor={`${titleId}-amt`} className="text-[13px] text-foreground">Amount</label>
+                  <button type="button" onClick={() => setAmount(row.size.toFixed(2))}
+                    className="n text-[12px] text-dim transition-colors hover:text-foreground">
+                    Position {money(row.size)}
+                    <span className="ml-1.5 font-medium text-foreground">MAX</span>
+                  </button>
+                </div>
+                <div className="relative">
+                  <input id={`${titleId}-amt`} ref={field} inputMode="decimal" autoComplete="off" value={amount}
+                    placeholder="0.00"
+                    aria-invalid={!!problem} aria-describedby={problem ? `${titleId}-err` : undefined}
+                    onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
+                    className="n h-[52px] w-full rounded-[12px] border border-line bg-panel2 pl-4 pr-16
+                               text-[20px] font-medium transition-colors placeholder:text-dim focus:border-brand" />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[13px] text-dim">
+                    USD
+                  </span>
+                </div>
+                <div role="group" aria-label="Share of the position" className="mt-2 grid grid-cols-4 gap-1.5">
+                  {STEPS.map((p) => {
+                    const on = Math.abs(share * 100 - p) < 0.5 && !problem;
+                    return (
+                      <button key={p} type="button" aria-pressed={on}
+                        onClick={() => setAmount(p === 100 ? row.size.toFixed(2)
+                          : (Math.floor(row.size * p) / 100).toFixed(2))}
+                        className={`press n h-8 rounded-full text-[12.5px] transition-colors ${on
+                          ? "bg-panel3 text-foreground"
+                          : "bg-panel2 text-muted-foreground hover:text-foreground"}`}>
+                        {p}%
+                      </button>
+                    );
+                  })}
+                </div>
+                {problem && amount !== "" && (
+                  <p id={`${titleId}-err`} className="mt-2 text-[12px] text-down">{problem}</p>
+                )}
               </div>
-              <div className="field-ring mt-2 flex h-10 items-center rounded-[8px] border border-line px-3">
-                <input id={`${titleId}-amt`} inputMode="decimal" autoComplete="off" value={amount}
-                  aria-invalid={!!problem} aria-describedby={problem ? `${titleId}-err` : undefined}
-                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
-                  className="n min-w-0 flex-1 bg-transparent text-[14px] outline-none" />
-                <span className="text-[12px] text-dim">USD</span>
-              </div>
-              <div role="group" aria-label="Share of the position" className="mt-2 grid grid-cols-4 gap-1.5">
-                {STEPS.map((p) => {
-                  const on = Math.abs(share * 100 - p) < 0.5 && !problem;
-                  return (
-                    <button key={p} type="button" aria-pressed={on}
-                      onClick={() => setAmount(p === 100 ? row.size.toFixed(2)
-                        : (Math.floor(row.size * p) / 100).toFixed(2))}
-                      className={`h-8 rounded-[8px] border text-[12.5px] font-medium transition-colors ${on
-                        ? "border-foreground/50 bg-panel3 text-foreground"
-                        : "border-line text-muted-foreground hover:border-foreground/30 hover:text-foreground"}`}>
-                      {p}%
-                    </button>
-                  );
-                })}
-              </div>
-              {problem && <p id={`${titleId}-err`} className="mt-2 text-[12px] text-down">{problem}</p>}
-            </div>
 
-            <div className="px-5 py-3 text-[13.5px]">
-              <DRow k="Estimated fill" sub={`Mark now ${pnum(row.mark)}. The batch clears every order at one price inside its band, so the fill can differ a little.`}>
-                {pnum(row.exit)}
-              </DRow>
-              <DRow k="Estimated PnL">
-                <span className={tone(pnl)}>{money(pnl)} <span className="text-[12px]">({pct(pnlPct)})</span></span>
-              </DRow>
-              {fee != null && (
-                <DRow k="Close fee" sub={`${(feeBps! / 100).toFixed(2)}% of the amount closed, less any discount you have.`}>
-                  {money(fee)}
-                </DRow>
-              )}
-              {payout != null && payout < 100 && (
-                <DRow k="Profit paid" sub="The market's backing cannot cover every winner right now, so profit is paid as a fair share. Losses are not cut.">
-                  {payout.toFixed(0)}%
-                </DRow>
-              )}
-              <WhenRow symbol={row.symbol} />
-            </div>
-            {partly && (
-              <p className="text-pretty border-t border-line px-5 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
-                This market fills up to {money(fill!, 0)} a batch, so part of this close may stay open; close the rest after.
-              </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-2.5 border-t border-line px-5 py-4 safe-b">
-              <button type="button" onClick={() => setOpen(false)}
-                className="press h-11 rounded-[8px] border border-line text-[14px] font-medium
-                           transition-colors hover:border-foreground/40">
-                Cancel
+              <button type="button" disabled={busy || !!problem} onClick={go}
+                className="press mt-5 h-[48px] w-full rounded-full bg-foreground text-[14px] font-medium
+                           text-background transition-opacity hover:opacity-90
+                           disabled:pointer-events-none disabled:opacity-35">
+                {full ? "Close position" : `Close ${money(size)}`}
               </button>
-              <button ref={confirm} type="button" disabled={busy || !!problem} onClick={go}
-                className="press h-11 rounded-[8px] bg-down text-[14px] font-medium text-background
-                           transition-opacity hover:opacity-90 disabled:opacity-35">
-                {full ? "Close position" : `Close ${pctOf}%`}
-              </button>
+            </div>
+
+            <div className="border-t border-line bg-panel2 px-5 pb-5 pt-2 sm:px-6">
+              <DRow k="Est. fill">{pnum(row.exit)}</DRow>
+              <DRow k="Est. PnL"><span className={tone(pnl)}>{money(pnl)} ({pct(pnlPct)})</span></DRow>
+              {fee != null && <DRow k="Fee">{money(fee)}</DRow>}
+              {payout != null && payout < 100 && <DRow k="Profit paid">{payout.toFixed(0)}%</DRow>}
+              {partly && (
+                <p className="text-pretty border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
+                  Fills up to {money(fill!, 0)} per batch; the rest stays open.
+                </p>
+              )}
             </div>
           </div>
         </div>,
@@ -321,16 +297,13 @@ function PositionCard({
 
 export function BottomPanel({
   account, busy, onClose, mobile = false, docked = false,
-  markets = [], market, owner, onCancelOrder, batch,
+  markets = [], market, owner, onCancelOrder,
 }: {
   account: Account | null;
   trades: Trade[];
   busy: boolean;
   /// Closes a position: all of it with no size, that many USD of it with one.
   onClose: (symbol: string, size?: number) => void;
-  /// The page's batch poll and the market it is for, so the close dialog can
-  /// say when the close lands.
-  batch?: { symbol: string; batch: Batch | null };
   mobile?: boolean;
   /// Fills a fixed-height box in the terminal, scrolling inside it, rather
   /// than being as tall as its rows.
@@ -560,7 +533,6 @@ export function BottomPanel({
   );
 
   return (
-    <BatchCtx.Provider value={batch ?? null}>
     <section className={mobile || docked
       // As a tab pane or a docked panel it owns its box; on the page it is
       // as tall as its table, inside a panel that already draws the edge.
@@ -642,6 +614,5 @@ export function BottomPanel({
         )}
       </div>
     </section>
-    </BatchCtx.Provider>
   );
 }
