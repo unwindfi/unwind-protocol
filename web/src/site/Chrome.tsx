@@ -4,11 +4,10 @@ import { GlassMark } from "@/components/GlassMark";
 import {
   ArrowUpRight, Menu, Search, X,
 } from "lucide-react";
-import { SiGithub, SiX } from "@icons-pack/react-simple-icons";
+import { SiX } from "@icons-pack/react-simple-icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavIcon } from "@/components/NavIcon";
 
-export const REPO = "https://github.com/prarimz/unwind";
 
 /// The two button looks, after the /list card: an inverted pill for the one
 /// thing a page wants you to do, and an outlined pill for everything else.
@@ -249,12 +248,10 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
     { title: "Resources", links: [
       { label: "Documentation", href: DOCS, out: true },
       { label: "Risks", href: RISKS, out: true },
-      { label: "Source", href: REPO, out: true },
     ] },
     // Brand marks come from simple-icons; lucide carries none.
     { title: "Community", links: [
       { label: "X", href: X_URL, out: true, Icon: SiX },
-      { label: "GitHub", href: REPO, out: true, Icon: SiGithub },
       { label: "Superteam Nepal", href: SUPERTEAM_NP, out: true, logo: true },
     ] },
   ];
