@@ -48,6 +48,50 @@ fn no_message(_: &PerpError, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Res
 
 fn no_log(_: &[&[u8]]) {}
 
+/// Stands in for the moment bound on a side's winners
+/// (`Market::side_winners_bound_usd`), which these harnesses never reach:
+/// it runs only for a side whose open size is all tracked in its moment sums
+/// and is not zero, and every market here has empty sums
+/// (`SideMoments::default`) and every position an untracked `q_epoch`. So
+/// each side counts at its net profit, the rule for a side the sums do not
+/// track. The real bound takes a Newton square root, a loop the model checker
+/// unwinds over symbolic values even on a path it cannot take, which is what
+/// kept these harnesses from finishing. The stand-in asserts it is never
+/// called, so if it were, the harness would fail rather than pass on a
+/// wrong value.
+fn winners_bound_unreached(_: u128, _: u128, _: u128, _: u128, _: bool) -> Option<u64> {
+    kani::assert(false, "a side's moment bound is never reached here");
+    None
+}
+
+/// Stands in for `Market::close_side`, which takes a close off its side's
+/// open interest, moment sums and average entry. The size comes off here
+/// exactly as there; the average entry is left as any value, since nothing
+/// these harnesses assert reads it, and the moment sums are left alone, as
+/// the real function leaves them for a position they do not track (every
+/// position here). The stand-in never fails, and neither can the real one in
+/// these harnesses: its entry adjustment is the one `settle` already made
+/// without error, and its average recomputation divides only by an average,
+/// entry or unit count it checks is nonzero, with products under 2^80 that
+/// fit in u128. That recomputation is a 128-step long division the model
+/// checker unwinds over symbolic values even where it is never taken, and it
+/// is what ran `every_close_books_inside_the_budget` out of memory.
+fn close_side_sizes_only(
+    m: &mut Market,
+    is_long: bool,
+    _: &Position,
+    close_size: u64,
+) -> anchor_lang::Result<()> {
+    if is_long {
+        m.long_size_usd = m.long_size_usd.saturating_sub(close_size);
+        m.long_avg_entry_price = kani::any();
+    } else {
+        m.short_size_usd = m.short_size_usd.saturating_sub(close_size);
+        m.short_avg_entry_price = kani::any();
+    }
+    Ok(())
+}
+
 /// Balances up to about a dollar. The properties are about which line money
 /// moves between, not how much of it there is.
 const MAX_BAL: u64 = 1 << 20;
@@ -495,6 +539,7 @@ fn close_cost(pos: &Position, m: &Market, size: u64, fill: u64) -> u64 {
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::stub(crate::state::market::winners_bound, winners_bound_unreached)]
 #[kani::solver(cadical)]
 fn a_haircut_pays_no_more_than_the_market_can() {
     let p = documented_pool();
@@ -525,10 +570,18 @@ fn a_haircut_pays_no_more_than_the_market_can() {
 /// the market can, so it never fails and never takes the market past its
 /// budget. This is what replaced filling a winning close only as far as the
 /// budget reached, which left winners in a spent market unable to leave.
+///
+/// It covers what `a_close_the_market_can_pay_always_books` asserted, that a
+/// close whose cost fits the remaining budget and the cash always books
+/// inside the budget: that harness ran the same setup and checked the same
+/// two conclusions under one more assumption, and it was retired when that
+/// extra assumption kept it from finishing in half an hour.
 #[kani::proof]
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::stub(crate::state::market::winners_bound, winners_bound_unreached)]
+#[kani::stub(Market::close_side, close_side_sizes_only)]
 #[kani::solver(cadical)]
 fn every_close_books_inside_the_budget() {
     let mut p = documented_pool();
@@ -557,6 +610,8 @@ fn every_close_books_inside_the_budget() {
 #[kani::stub(PerpError::name, no_name)]
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
+#[kani::stub(crate::state::market::winners_bound, winners_bound_unreached)]
+#[kani::stub(Market::close_side, close_side_sizes_only)]
 #[kani::solver(cadical)]
 fn a_close_that_costs_the_pool_nothing_is_never_haircut() {
     let mut p = documented_pool();
@@ -591,33 +646,6 @@ fn no_position_is_ever_due_for_deleveraging() {
     let fill = any_fill();
     let whole = settle(&pos, &m, pos.size_usd, fill).unwrap();
     assert!(!deleverage_due(&pos, &m, &whole));
-}
-
-/// Any close whose cost fits the remaining budget and the money there is to
-/// pay it with books: `book_close` does not fail, and the market's net loss
-/// stays inside its budget.
-#[kani::proof]
-#[kani::stub(PerpError::name, no_name)]
-#[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
-#[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
-#[kani::solver(cadical)]
-fn a_close_the_market_can_pay_always_books() {
-    let mut p = documented_pool();
-    let mut m = any_market();
-    let mut pos = any_open_position(&mut m, -2);
-    assume_small_books(&p, &m);
-    assume_books_consistent(&p, &m);
-    // The position's own lines are inside the pool's and the market's.
-    kani::assume(p.trader_collateral_usd >= pos.collateral_usd);
-    kani::assume(m.collateral_usd >= pos.collateral_usd);
-    let size = small(7);
-    kani::assume(size >= 1 && size <= pos.size_usd);
-    let fill = any_fill();
-    let cash = m.backing_usd + p.liquidity_usd + p.insurance_usd;
-    kani::assume(close_cost(&pos, &m, size, fill) <= m.remaining_budget_usd().min(cash));
-
-    assert!(book_close(&mut p, &mut m, &mut pos, size, fill, 1).is_ok());
-    assert!(m.net_loss_usd <= m.loss_budget_usd as i64);
 }
 
 // Close reservations.

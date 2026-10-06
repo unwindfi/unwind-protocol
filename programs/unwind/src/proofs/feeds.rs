@@ -512,24 +512,33 @@ fn conf_bps_is_the_floor_of_the_true_ratio() {
     assert!(r * price <= conf * BPS && conf * BPS < (r + 1) * price);
 }
 
-// Left off: a full-width symbolic division does not finish. This failed
-// before `conf_bps` saturated instead of wrapping: price 1, conf 1 read
-// 10,000 bps while price 1, conf 1,844,674,407,370,956 read 8,384, so a wild
-// confidence passed a `max_conf_bps` check that a sane one failed. The unit
-// test `a_wider_confidence_never_reads_as_narrower` in src/oracle.rs pins the
-// fix on that counterexample.
-#[cfg(any())]
-/// A wider confidence never reads as narrower.
+/// A wider confidence never reads as narrower: at the same price, `conf_bps`
+/// is monotone in the confidence, through the saturation at u64::MAX. Before
+/// `conf_bps` saturated instead of wrapping, price 1, conf 1 read 10,000 bps
+/// while price 1, conf 1,844,674,407,370,956 read 8,384, so a wild confidence
+/// passed a `max_conf_bps` check that a sane one failed; the unit test of the
+/// same name in src/oracle.rs pins that counterexample.
+///
+/// Two regimes, since a symbolic price against a full-width confidence does
+/// not finish: any price from 1 to 255 with confidences below 2^8, where the
+/// rounding is (the bounds of `conf_bps_is_the_floor_of_the_true_ratio`), and
+/// a price of 1 with confidences anywhere in u64, which is where the reading
+/// saturates (any confidence past about 1.8e15).
 #[kani::proof]
+#[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
 #[kani::solver(cadical)]
 fn a_wider_confidence_never_reads_as_narrower() {
-    let price: u64 = kani::any();
+    let read = |price: u64, conf: u64| OraclePrice { price, conf, published_ts: 0 }.conf_bps().unwrap();
+
+    let price = kani::any::<u8>() as u64;
     kani::assume(price > 0);
+    let (narrow, wide) = (kani::any::<u8>() as u64, kani::any::<u8>() as u64);
+    kani::assume(narrow <= wide);
+    assert!(read(price, narrow) <= read(price, wide));
+
     let (narrow, wide): (u64, u64) = (kani::any(), kani::any());
     kani::assume(narrow <= wide);
-    let a = OraclePrice { price, conf: narrow, published_ts: 0 }.conf_bps().unwrap();
-    let b = OraclePrice { price, conf: wide, published_ts: 0 }.conf_bps().unwrap();
-    assert!(a <= b);
+    assert!(read(1, narrow) <= read(1, wide));
 }
 
 // Risk price

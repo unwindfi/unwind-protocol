@@ -55,6 +55,7 @@ Around the auction, with the bounds each harness states:
 | Pyth readings are rescaled exactly (up) or truncated (down), or refused; never wrapped or served as zero | `scaling_a_reading_up_is_exact_or_refused`, `scaling_a_reading_down_truncates_or_refuses` |
 | A step of the risk price lands between where it was and the oracle, never at zero, and moves no more than its cap | `the_risk_price_never_overshoots_or_passes_its_cap` |
 | For a confidence inside the price, `conf_bps` is the floor of the true ratio | `conf_bps_is_the_floor_of_the_true_ratio` |
+| A wider confidence never reads as narrower, through the saturation at the top of the range | `a_wider_confidence_never_reads_as_narrower` |
 
 Money math, with the bounds each harness states:
 
@@ -89,7 +90,7 @@ Settlement and fees:
 | Fee cuts never exceed the fee, move money without creating any, and each line gets its documented share | `fee_cuts_never_exceed_the_fee`, `fee_cuts_move_money_without_creating_any`, `each_fee_line_gets_its_documented_share` |
 | A forced close pays what is owed up to the budget, settles inside it, and moves exactly the payout out of the vault | `a_forced_close_pays_what_is_owed_up_to_the_budget`, `a_forced_close_settles_inside_the_budget`, `a_forced_close_moves_exactly_the_payout_out_of_the_vault` |
 | A haircut never pays more than the profit owed or than the market can cover, and pays in full when it covers every winner | `a_haircut_pays_no_more_than_the_market_can` |
-| Every close books inside the budget whatever it costs, a close the market can pay always books, and a close that costs the pool nothing is never haircut | `every_close_books_inside_the_budget`, `a_close_the_market_can_pay_always_books`, `a_close_that_costs_the_pool_nothing_is_never_haircut` |
+| Every close books inside the budget whatever it costs (so a close the market can pay always books), and a close that costs the pool nothing is never haircut | `every_close_books_inside_the_budget`, `a_close_that_costs_the_pool_nothing_is_never_haircut` |
 | Deleveraging is retired: no position is ever due | `no_position_is_ever_due_for_deleveraging` |
 | Close reservations never promise more than a position holds, and a release gives back exactly what was reserved | `reservations_never_promise_more_than_the_position_holds`, `a_release_gives_back_exactly_what_was_reserved`, `a_settling_close_takes_only_what_is_there_on_its_own_side` |
 

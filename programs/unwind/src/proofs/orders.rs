@@ -44,6 +44,32 @@ fn cheap_error(e: PerpError) -> anchor_lang::error::Error {
     )
 }
 
+/// Stand-ins for the side tracking an open updates on the market: the moment
+/// sums (`Market::retrack`), the funding sums (`Market::retrack_funding`) and
+/// the side average recomputed from them (`Market::side_avg_from_moments`).
+/// The booking harnesses assert on the reserve, size, collateral, entry,
+/// funding index and fee lines, none of which these write or which read
+/// what they write: the only reader of the sums in `book_open` is the AUM
+/// drift, which prices at `drift_price` and is zero here (`market()` has no
+/// last or risk price). Each stand-in returns any value its type holds, so
+/// what it decides (the position's `q_epoch` and `f_epoch`, the side's
+/// average entry) is over-approximated, never pinned. None of the three can
+/// fail or panic: their arithmetic is checked, saturating or wrapping, and
+/// they divide only by an entry, size or sum they have checked is nonzero.
+/// The real sums cost u128 divisions by symbolic entries, which is what ran
+/// these harnesses out of memory.
+fn any_retrack(_: &mut Market, _: bool, _: Option<(u64, u64)>, _: u64, _: u64) -> bool {
+    kani::any()
+}
+
+fn any_retrack_funding(_: &mut Market, _: bool, _: Option<(u64, i128)>, _: Option<FundingTerm>) -> bool {
+    kani::any()
+}
+
+fn any_side_avg(_: &Market, _: bool) -> Option<u64> {
+    kani::any()
+}
+
 /// A symbolic amount from 0 to 255, widened so the high bits are constant.
 fn byte() -> u64 {
     kani::any::<u8>() as u64
@@ -433,6 +459,9 @@ fn assert_open_booked(
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
 #[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
+#[kani::stub(Market::retrack, any_retrack)]
+#[kani::stub(Market::retrack_funding, any_retrack_funding)]
+#[kani::stub(Market::side_avg_from_moments, any_side_avg)]
 #[kani::solver(cadical)]
 fn an_accepted_open_always_books_exactly() {
     let mut p = pool();
@@ -463,6 +492,9 @@ fn an_accepted_open_always_books_exactly() {
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
 #[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
+#[kani::stub(Market::retrack, any_retrack)]
+#[kani::stub(Market::retrack_funding, any_retrack_funding)]
+#[kani::stub(Market::side_avg_from_moments, any_side_avg)]
 #[kani::solver(cadical)]
 fn an_add_books_exactly_and_blends_between() {
     let mut p = pool();
@@ -498,6 +530,9 @@ fn an_add_books_exactly_and_blends_between() {
 #[kani::stub(<PerpError as core::fmt::Display>::fmt, no_message)]
 #[kani::stub(anchor_lang::solana_program::log::sol_log_data, no_log)]
 #[kani::stub(<anchor_lang::error::Error as core::convert::From<crate::errors::PerpError>>::from, cheap_error)]
+#[kani::stub(Market::retrack, any_retrack)]
+#[kani::stub(Market::retrack_funding, any_retrack_funding)]
+#[kani::stub(Market::side_avg_from_moments, any_side_avg)]
 #[kani::solver(cadical)]
 fn an_open_fee_is_booked_exactly_once() {
     let mut p = pool();
