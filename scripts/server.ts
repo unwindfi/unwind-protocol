@@ -247,18 +247,51 @@ const rpcCalls = new Map<string, number>();
 /// Which loop or route a call was made for, carried through its awaits.
 const rpcWho = new AsyncLocalStorage<string>();
 const rpcBy = new Map<string, number>();
+/// The caller's address for a request's RPC calls, carried like `rpcWho`, so
+/// the rate limit can charge each address for what it costs (see `limits`).
+const rpcIp = new AsyncLocalStorage<string>();
 const countCall = (body: unknown) => {
   if (typeof body !== "string") return;
   try {
     const j = JSON.parse(body);
     const who = rpcWho.getStore() ?? "other";
+    const ip = rpcIp.getStore();
     for (const c of Array.isArray(j) ? j : [j]) {
       const m = String(c?.method ?? "?");
       rpcCalls.set(m, (rpcCalls.get(m) ?? 0) + 1);
       rpcBy.set(who, (rpcBy.get(who) ?? 0) + 1);
+      if (ip) chargeRpc(ip);
     }
   } catch { /* not JSON-RPC */ }
 };
+/*
+ * Per-address limits on the API.
+ *
+ * Every route is public, and most reads are served from cache for nothing,
+ * but a read that misses the cache, and every transaction built, costs RPC
+ * calls from a budget the crank shares. So an address is charged for the RPC
+ * calls its requests make, not for the requests themselves: an open trade
+ * page polls twice a second and costs almost nothing, while a script asking
+ * for a fresh wallet's account in a loop costs a call each time. Past either
+ * limit in a minute, the address gets 429 until the minute is up.
+ */
+// A trade costs about ten calls to build, send and confirm.
+const RATE_RPC_PER_MIN = Number(process.env.RATE_RPC_PER_MIN ?? 100);
+const RATE_REQ_PER_MIN = Number(process.env.RATE_REQ_PER_MIN ?? 1200);
+const limits = new Map<string, { start: number; req: number; rpc: number; told?: boolean }>();
+/// Routes with their own daily limits per address, and costly by design.
+const OWN_LIMITS = new Set(["/api/faucet", "/api/devnet-copy"]);
+const windowOf = (ip: string) => {
+  const now = Date.now();
+  let w = limits.get(ip);
+  if (!w || now - w.start >= 60_000) { w = { start: now, req: 0, rpc: 0 }; limits.set(ip, w); }
+  return w;
+};
+const chargeRpc = (ip: string) => { windowOf(ip).rpc++; };
+setInterval(() => {
+  for (const [ip, w] of limits) if (Date.now() - w.start >= 60_000) limits.delete(ip);
+}, 60_000).unref();
+
 const RPC_REPORT_MS = 10 * 60_000;
 setInterval(() => {
   const total = [...rpcCalls.values()].reduce((a, b) => a + b, 0);
@@ -2728,6 +2761,21 @@ app.use((req, res, next) => {
   }
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
+});
+// After CORS, so a page refused here can read why.
+app.use((req, res, next) => {
+  if (IS_LOCAL || !req.path.startsWith("/api/")) return next();
+  const ip = clientIp(req);
+  const w = windowOf(ip);
+  w.req++;
+  if (w.req > RATE_REQ_PER_MIN || w.rpc > RATE_RPC_PER_MIN) {
+    // Once a minute per address, so a real user being refused shows in the log.
+    if (!w.told) { w.told = true; console.warn(`rate limit: ${ip} (${w.req} requests, ${w.rpc} rpc calls this minute)`); }
+    res.set("Retry-After", String(Math.max(1, Math.ceil((w.start + 60_000 - Date.now()) / 1000))));
+    return res.status(429).json({ ok: false, error: "Too many requests. Try again in a minute." });
+  }
+  if (OWN_LIMITS.has(req.path)) return next();
+  rpcIp.run(ip, next);
 });
 app.use(express.static(path.join(ROOT, "app"), { etag: false, lastModified: false }));
 app.use("/vendor", express.static(path.join(ROOT, "node_modules/lightweight-charts/dist")));

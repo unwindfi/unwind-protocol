@@ -143,6 +143,21 @@ the wallet's key. One caller can add at most 10 unsigned wallets a day.
 `GET /api/wallets` returns the counts: `connected`, `signed`, `active24h`,
 `active7d`, and `since`, the time of the first record.
 
+## The API
+
+The site reads and builds every transaction through
+`https://api.unwindfi.xyz`, and anyone can call it: every route is public,
+and nothing it does can move funds without the wallet's own signature.
+
+Each address is limited per minute:
+
+1. 100 RPC calls caused by its requests. Reads served from the server's
+   cache cost none; a trade costs about ten to build, send and confirm.
+2. 1,200 requests of any kind.
+
+Past either, the API answers `429` with `Retry-After` until the minute is
+up. The faucet and devnet copies keep their own daily limits instead.
+
 ## Points on devnet
 
 Devnet USDC comes from a faucet, so trading fees cost nothing real and a
