@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
@@ -32,16 +32,22 @@ const NO_FILLS: Trade[] = [];
 /// The size a box has been given: its height for the table, which
 /// virtualises its rows and so needs a number rather than a flex rule, and
 /// its width for which columns fit.
+///
+/// Watched from a callback ref, which runs whenever the element appears. A
+/// mount-time effect found no element on a page's first load in production
+/// (development runs effects twice, which hid it), so the size stayed 0: the
+/// docked table sat at its 120px floor and the figure columns never packed.
 function useSize<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = ref.current;
+  const watcher = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((el: T | null) => {
+    watcher.current?.disconnect();
+    watcher.current = null;
     if (!el) return;
     const ro = new ResizeObserver(([e]) => setSize({
       w: Math.floor(e.contentRect.width), h: Math.floor(e.contentRect.height) }));
     ro.observe(el);
-    return () => ro.disconnect();
+    watcher.current = ro;
   }, []);
   return [ref, size.h, size.w] as const;
 }
