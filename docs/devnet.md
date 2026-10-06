@@ -14,8 +14,10 @@ the devnet server. Set your wallet to devnet to connect.
 Connect a devnet wallet. With nothing to trade with, the order ticket shows
 **Get test funds**, and the list and earn pages show it above the form when
 the wallet has no test USDC or too little SOL for rent. It sends 10,000 test
-USDC and, when the wallet holds under 0.025 SOL, 0.05 devnet SOL: enough to
-list one market and trade about ten. Each wallet can use it once a day.
+USDC and, when the wallet holds under 0.1 SOL, 0.2 devnet SOL: enough to
+list a few markets and trade for a day. Each wallet can use it once a day. The
+faucet gives out 10 SOL a day in all; past that it still sends USDC, and SOL
+comes from devnet's own faucet.
 
 ## Markets
 

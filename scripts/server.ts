@@ -4488,8 +4488,8 @@ async function watchBalance() {
 /// limit is soft, since the caller can set the header; the daily SOL cap is
 /// what bounds the cost.
 const FAUCET_USDC = Number(process.env.FAUCET_USDC ?? (IS_LOCAL ? 250_000 : 10_000));
-const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? (IS_LOCAL ? 2 : 0.05));
-const FAUCET_SOL_PER_DAY = Number(process.env.FAUCET_SOL_PER_DAY ?? 5);
+const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? (IS_LOCAL ? 2 : 0.2));
+const FAUCET_SOL_PER_DAY = Number(process.env.FAUCET_SOL_PER_DAY ?? 10);
 const FAUCET_PER_IP_PER_DAY = 3;
 const DAY_MS = 86_400_000;
 const FAUCET_FILE = path.join(ROOT, `.${CLUSTER}-faucet.json`);
