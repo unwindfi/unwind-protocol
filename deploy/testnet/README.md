@@ -83,6 +83,27 @@ npx ts-node --transpile-only scripts/list-devnet-pools.ts
 It leaves WIND, KITE and YAK for testers, and skips anything already listed.
 The markets season on their own and open for trading about 15 minutes later.
 
+A new pool needs a new test USDC (the pool's address comes from its mint),
+and a market can only be priced from a pool quoted in that mint, so the
+seeded DLMM pairs are made again too. To keep the same authority, LP and
+demo keys, so the box's configuration and the wallets the rankings hide stay
+the same:
+
+```bash
+FRESH=1 KEYS_FROM=<old state file> CHAIN_FEE_DESTINATION=<address> \
+  RPC_URL=<rpc> npx ts-node --transpile-only scripts/bootstrap-localnet.ts
+RPC_URL=<rpc> ONLY=WIND,KITE,YAK,SOL,... npx ts-node --transpile-only scripts/seed-devnet-pools.ts
+# then the listing above, against a server already running on the new state
+```
+
+On the box, beside the new `.devnet-state.json`: empty `.devnet-copies.json`
+(`[]`; the mirrors are quoted in the old USDC), and remove
+`.devnet-faucet.json`, `.cache/devnet-lookup-table.json`,
+`.cache/devnet-market-traders.json` and `.cache/vault-tape.json`, which
+describe the old pool. The first run against a new pool starts a points
+season: it writes every wallet's totals to `.cache/devnet-season.json` and
+shows points from there on.
+
 ## Expose it
 
 Vercel has to reach the server over HTTPS. Point a DNS name at the box, put

@@ -3889,6 +3889,7 @@ async function syncRewards() {
   const ixs: TransactionInstruction[] = [];
   tradersMemo = null;
   const traders = await allTraders();
+  await seasonReady().catch((e: any) => console.warn(`season: ${explain(e)}`));
   rollWeek(traders);
   const known = new Set(traders.map((t) => t.owner.toBase58()));
   for (const t of traders) {
@@ -3935,15 +3936,100 @@ const livePoints = (t: any, now = Math.floor(Date.now() / 1000)) =>
   pendingStakePoints(num(t.lpUsd) / 1e6, 1, num(t.lpTs), now);
 
 /*
+ * Seasons.
+ *
+ * Points are an all-time total on chain, in a `Trader` account per wallet
+ * that no pool owns, so a new pool cannot start them from zero. A season is
+ * a view over them instead: the first time this server runs against a pool
+ * it stores every wallet's totals as the season's baseline, and everything
+ * shown (the rewards page, the leaderboard, the week) is the distance from
+ * it. Kept in .cache, which a deploy carries over; a restart against the
+ * same pool keeps the season, and a new pool starts the next one.
+ */
+const SEASON_FILE = path.join(ROOT, ".cache", `${CLUSTER}-season.json`);
+type SeasonBase = {
+  points: number; trading: number; referrals: number; listing: number;
+  volume: number; given: number; backingUsd: number; lpUsd: number;
+};
+type Season = { season: number; pool: string; start: number; base: Record<string, SeasonBase> };
+let season: Season | null = null;
+let priorSeason: Season | null = null;
+try {
+  const s: Season = JSON.parse(fs.readFileSync(SEASON_FILE, "utf8"));
+  if (s.pool === pool.toBase58()) season = s; else priorSeason = s;
+} catch { /* none yet */ }
+let seasonWork: Promise<void> | null = null;
+/// Resolves once the season is known, taking its baseline if this pool has
+/// none. Points are never served without one: raw totals would show the
+/// last season's standings as this one's.
+function seasonReady(): Promise<void> {
+  if (season) return Promise.resolve();
+  seasonWork ??= (async () => {
+    const traders = (await program.account.trader.all()).map((r: any) => r.account);
+    const now = Math.floor(Date.now() / 1000);
+    const next: Season = {
+      season: (priorSeason?.season ?? 1) + 1,
+      pool: pool.toBase58(),
+      start: now,
+      base: Object.fromEntries(traders.map((t: any) => [t.owner.toBase58(), {
+        points: livePoints(t, now),
+        trading: num(t.tradingPoints) / 1e6,
+        referrals: num(t.referralPoints) / 1e6,
+        listing: num(t.listingPoints) / 1e6,
+        volume: num(t.volumeUsd) / 1e6,
+        given: num(t.givenToReferrerPoints) / 1e6,
+        backingUsd: num(t.backingUsd) / 1e6,
+        lpUsd: num(t.lpUsd) / 1e6,
+      }])),
+    };
+    fs.mkdirSync(path.dirname(SEASON_FILE), { recursive: true });
+    fs.writeFileSync(SEASON_FILE, JSON.stringify(next));
+    season = next;
+    console.log(`season ${next.season} started for pool ${next.pool}: ${traders.length} wallets at their baseline`);
+  })().finally(() => { seasonWork = null; });
+  return seasonWork;
+}
+
+/// A wallet's standing this season. Backing and LP placed before the season
+/// keep earning on chain (in pools this server no longer serves), so what
+/// that stake has earned since the season began is taken off as well, at the
+/// smaller of the stake then and now.
+function seasonOf(t: any, now = Math.floor(Date.now() / 1000)) {
+  const b = season?.base[t.owner.toBase58()];
+  const live = livePoints(t, now);
+  const raw = {
+    trading: num(t.tradingPoints) / 1e6,
+    referrals: num(t.referralPoints) / 1e6,
+    listing: num(t.listingPoints) / 1e6,
+    volume: num(t.volumeUsd) / 1e6,
+    given: num(t.givenToReferrerPoints) / 1e6,
+  };
+  if (!b || !season) return { points: live, ...raw };
+  const since = Math.max(0, now - season.start);
+  const carried = (Math.min(b.backingUsd, num(t.backingUsd) / 1e6) * 2
+    + Math.min(b.lpUsd, num(t.lpUsd) / 1e6)) * since / 86_400;
+  // Below a millionth is float residue from the subtraction, not a point.
+  const over = (x: number) => (x > 1e-6 ? x : 0);
+  return {
+    points: over(live - b.points - carried),
+    trading: over(raw.trading - b.trading),
+    referrals: over(raw.referrals - b.referrals),
+    listing: over(raw.listing - b.listing),
+    volume: over(raw.volume - b.volume),
+    given: over(raw.given - b.given),
+  };
+}
+
+/*
  * Weekly standings.
  *
- * Points are an all-time total on chain; a week is a view over it. The first
- * read after Monday 00:00 UTC stores every wallet's total as the week's
- * baseline, and "this week" is the distance from it. Kept on disk so a
- * restart mid-week does not reset the week.
+ * A week is a view over the season. The first read after Monday 00:00 UTC
+ * stores every wallet's season points as the week's baseline, and "this
+ * week" is the distance from it. Kept on disk so a restart mid-week does not
+ * reset the week.
  */
 const WEEK_FILE = path.join(__dirname, "..", ".cache", "points-week.json");
-let week: { start: number; base: Record<string, number> } = { start: 0, base: {} };
+let week: { start: number; base: Record<string, number>; season?: number } = { start: 0, base: {} };
 try { week = JSON.parse(fs.readFileSync(WEEK_FILE, "utf8")); } catch { /* first run */ }
 const weekStart = (ms = Date.now()) => {
   const d = new Date(ms);
@@ -3952,26 +4038,35 @@ const weekStart = (ms = Date.now()) => {
 };
 function rollWeek(traders: any[]) {
   const start = weekStart();
-  if (week.start === start) return;
-  // With no week on record at all, everything so far counts as this week:
-  // on a fresh pool it was all earned in it, and a baseline taken now would
-  // zero out whoever arrived before the first read.
-  if (week.start === 0) {
-    week = { start, base: {} };
+  if (!season) return;
+  const saveWeek = () => {
+    try {
+      fs.mkdirSync(path.dirname(WEEK_FILE), { recursive: true });
+      fs.writeFileSync(WEEK_FILE, JSON.stringify(week));
+    } catch (e: any) { console.warn(`points week: ${e?.message ?? e}`); }
+  };
+  // A week begun in an earlier season is that season's: everything since
+  // this one started counts as this week, as on a first run.
+  if (week.season !== season.start) {
+    week = { start, base: {}, season: season.start };
+    saveWeek();
     return;
   }
+  if (week.start === start) return;
   const now = Math.floor(Date.now() / 1000);
   week = {
     start,
-    base: Object.fromEntries(traders.map((t) => [t.owner.toBase58(), livePoints(t, now)])),
+    base: Object.fromEntries(traders.map((t) => [t.owner.toBase58(), seasonOf(t, now).points])),
+    season: season.start,
   };
-  try {
-    fs.mkdirSync(path.dirname(WEEK_FILE), { recursive: true });
-    fs.writeFileSync(WEEK_FILE, JSON.stringify(week));
-  } catch (e: any) { console.warn(`points week: ${e?.message ?? e}`); }
+  saveWeek();
 }
 
-const HOUSE = new Set([authority, lp, trader].map((k) => k.publicKey.toBase58()));
+/// The server's own wallets: the pool authority (which also runs the flow
+/// that moves the seeded pools and pays the faucet), the LP key the market
+/// maker trades from, the demo trader, and the price relay. They keep the
+/// venue running and are never ranked or counted.
+const HOUSE = new Set([authority, lp, trader, poster].map((k) => k.publicKey.toBase58()));
 
 const shortKey = (k: string) => `${k.slice(0, 4)}…${k.slice(-4)}`;
 
@@ -3979,6 +4074,7 @@ const shortKey = (k: string) => `${k.slice(0, 4)}…${k.slice(-4)}`;
 app.get("/api/rewards", async (req, res) => {
   try {
     const owner = ownerOf(req);
+    await seasonReady();
     const now = Math.floor(Date.now() / 1000);
     const t: any = await program.account.trader.fetchNullable(traderPda(owner));
 
@@ -4014,8 +4110,8 @@ app.get("/api/rewards", async (req, res) => {
       .map((r) => ({
         wallet: r.owner.toBase58(),
         code: r.code[0] ? codeText(r.code) : null,
-        volume: num(r.volumeUsd) / 1e6,
-        points: num(r.givenToReferrerPoints) / 1e6,
+        volume: seasonOf(r, now).volume,
+        points: seasonOf(r, now).given,
         usdc: num(r.givenToReferrerUsd) / 1e6,
         since: num(r.createdTs),
       }))
@@ -4040,13 +4136,15 @@ app.get("/api/rewards", async (req, res) => {
       const r: any = await program.account.trader.fetchNullable(traderPda(t.referrer));
       referrerCode = r && r.code[0] ? codeText(r.code) : null;
     }
-    const points = livePoints(t, now) + listingPendingPoints;
+    // This season's, not the all-time totals the program keeps.
+    const mine = seasonOf(t, now);
+    const points = mine.points + listingPendingPoints;
     // Where the total came from, as the program counts it: trading points
     // after the hold rule and the daily cap, referral and listing points as
     // synced, plus listing points still waiting. The stakes are the rest.
-    const trading = num(t.tradingPoints) / 1e6;
-    const referrals = num(t.referralPoints) / 1e6;
-    const listing = num(t.listingPoints) / 1e6 + listingPendingPoints;
+    const trading = mine.trading;
+    const referrals = mine.referrals;
+    const listing = mine.listing + listingPendingPoints;
     res.json({
       ...base,
       exists: true,
@@ -4062,7 +4160,7 @@ app.get("/api/rewards", async (req, res) => {
         trading, referrals, listing,
         stakes: Math.max(0, points - trading - referrals - listing),
       },
-      volume: num(t.volumeUsd) / 1e6,
+      volume: mine.volume,
       referredVolume: num(t.referredVolumeUsd) / 1e6,
       feesSaved: num(t.feesSavedUsd) / 1e6,
       claimable: num(t.rewardsUsd) / 1e6 + listingPending,
@@ -4087,6 +4185,7 @@ app.get("/api/rewards", async (req, res) => {
 app.get("/api/leaderboard", async (req, res) => {
   try {
     const traders = await allTraders();
+    await seasonReady();
     rollWeek(traders);
     const now = Math.floor(Date.now() / 1000);
     const rows = traders
@@ -4097,11 +4196,11 @@ app.get("/api/leaderboard", async (req, res) => {
       .filter((t) => !HOUSE.has(t.owner.toBase58()))
       .map((t) => {
         const wallet = t.owner.toBase58();
-        const points = livePoints(t, now);
+        const { points, volume } = seasonOf(t, now);
         return {
           wallet, short: shortKey(wallet), code: t.code[0] ? codeText(t.code) : null,
           points, week: Math.max(0, points - (week.base[wallet] ?? 0)),
-          volume: num(t.volumeUsd) / 1e6,
+          volume,
         };
       })
       .filter((r) => r.points > 0);
@@ -4115,7 +4214,9 @@ app.get("/api/leaderboard", async (req, res) => {
     const paidUsd =
       traders.reduce((a, t) => a + num(t.givenToReferrerUsd), 0) / 1e6 +
       markets.reduce((a, m) => a + num(m.deployerEarnedUsd), 0) / 1e6;
-    const allPoints = traders.reduce((a, t) => a + livePoints(t, now), 0);
+    const allPoints = traders
+      .filter((t) => !HOUSE.has(t.owner.toBase58()))
+      .reduce((a, t) => a + seasonOf(t, now).points, 0);
     const by = req.query.period === "week" ? "week" : "points";
     rows.sort((a, b) => b[by] - a[by]);
     const total = rows.reduce((a, r) => a + r[by], 0);
@@ -4125,6 +4226,8 @@ app.get("/api/leaderboard", async (req, res) => {
     res.json({
       period: by === "week" ? "week" : "all",
       weekStart: week.start,
+      season: season?.season ?? null,
+      seasonStart: season?.start ?? null,
       paidUsd,
       allPoints,
       wallets: rows.length,

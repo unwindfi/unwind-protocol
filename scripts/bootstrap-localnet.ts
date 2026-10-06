@@ -90,13 +90,23 @@ function priorRun() {
   catch { return null; }
 }
 
+/// The keys of an earlier state file, for a fresh pool run by the same
+/// wallets: `FRESH=1 KEYS_FROM=<state file>` mints a new USDC and so a new
+/// pool, but keeps the authority, LP and demo keys, so the server's
+/// configuration and the house wallets it hides stay what they were.
+function keptKeys(): { authority: number[]; lp: number[]; trader: number[] } | null {
+  const from = process.env.KEYS_FROM;
+  return from ? JSON.parse(fs.readFileSync(from, "utf8")).keys : null;
+}
+
 async function main() {
   const conn = new Connection(RPC, "confirmed");
   const prior = priorRun();
+  const keys = prior?.keys ?? keptKeys();
   const kp = (a: number[]) => Keypair.fromSecretKey(Uint8Array.from(a));
-  const authority = prior ? kp(prior.keys.authority) : Keypair.generate();
-  const lp = prior ? kp(prior.keys.lp) : Keypair.generate();
-  const trader = prior ? kp(prior.keys.trader) : Keypair.generate();
+  const authority = keys ? kp(keys.authority) : Keypair.generate();
+  const lp = keys ? kp(keys.lp) : Keypair.generate();
+  const trader = keys ? kp(keys.trader) : Keypair.generate();
   if (prior) console.log(`resuming ${STATE_PATH.split("/").pop()}`);
   // The key that deployed the program, and so its upgrade authority
   // (scripts/localnet.sh on localnet).

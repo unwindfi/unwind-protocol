@@ -9,6 +9,17 @@ mainnet will use. Everything settles in test USDC, which has no value.
 The site shows a Devnet label beside the wordmark while it is connected to
 the devnet server. Set your wallet to devnet to connect.
 
+## Season 2
+
+Season 2 started 6 October 2026: new pool, points from zero.
+
+The new pool settles in a new test USDC, so balances, positions and markets
+from the old pool do not carry over. The venue relisted its own markets on
+it; anything else has to be listed again. Points on chain are an all-time
+total per wallet, so the leaderboard, the weekly view, the rewards page and
+the creator ranking count only what each wallet has earned since the season
+began. Backing or LP left in the old pool earns nothing this season.
+
 ## Getting test funds
 
 Connect a devnet wallet. With nothing to trade with, the order ticket shows
@@ -28,11 +39,9 @@ oldest claim of the last 24 hours is a day old.
   chain in Pyth's format. On
   weekends and outside US trading hours they run in their closed session at
   lower leverage (see [Sessions](sessions.md)).
-- **Popular Solana tokens.** 47 of them: SOL, JUP, BONK, WIF, JTO, PYTH, RAY,
-  TRUMP, PENGU, FARTCOIN, POPCAT, RENDER, HNT, ORCA, DRIFT, PUMP, STONK, ZEC,
-  cbBTC, HYPE, USELESS, BP, wNEAR, ETH, CARDS, ANSEM, MET, JLP, CATE, JitoSOL,
-  GRASS, ORE, ANTFUN, ZCAT, KMNO, GEOD, NOS, MPLX, neet, DBR, BOME and ZBCN,
-  plus the xStocks SPCXx, NVDAx, GLDx, TSLAx and AAPLx. These are test copies:
+- **Popular Solana tokens.** 15 of them: SOL, JUP, BONK (traded per million
+  as 1MBONK), WIF, JTO, PYTH, RAY, TRUMP, PENGU (per thousand as 1KPENGU),
+  FARTCOIN, POPCAT, RENDER, HNT, ORCA and DRIFT. These are test copies:
   devnet tokens under the real tickers, each in a Meteora DLMM pool against
   test USDC. They are listed through the ordinary permissionless path, but
   on devnet their mark is the real token's price on mainnet (Jupiter), pushed
