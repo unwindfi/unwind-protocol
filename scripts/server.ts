@@ -3195,7 +3195,8 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         // The chain's clock runs a little behind this one; a batch the
         // program says is not due yet is simply early, and is tried again
         // next second.
-        if (!/BatchNotDue/.test(String(e?.message ?? e))) {
+        // "Already processed" is a resend of a clear that landed: done, not failed.
+        if (!/BatchNotDue|already been processed/.test(String(e?.message ?? e))) {
           // The reason a failed simulation carries is in its last log lines.
           // "Simulation failed." keeps its reason on later lines of the
           // message, which explain() drops.
