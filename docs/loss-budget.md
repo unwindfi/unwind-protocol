@@ -45,6 +45,12 @@ the market's remaining budget. As the budget is consumed by losses, that per
 window cap falls with it, and a market whose budget is exhausted stops
 quoting rather than quoting into exposure it cannot fund.
 
+The cap covers only exposure the pool adds. Trades that bring the pool back
+toward flat, takers selling while traders are net long or buying while they
+are net short, it also takes up to that imbalance, so exits from a market
+with little or no budget left are not throttled to a few percent of it a
+batch.
+
 Nothing is reserved against an open position. The budget is enforced on what
 winners are paid instead:
 

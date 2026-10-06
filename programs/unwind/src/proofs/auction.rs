@@ -29,7 +29,7 @@ fn any_book() -> [AuctionOrder; N] {
 }
 
 fn any_quote() -> PoolQuote {
-    let q = PoolQuote { bid: kani::any(), ask: kani::any(), size: kani::any() };
+    let q = PoolQuote { bid: kani::any(), ask: kani::any(), size: kani::any(), reducing_buy_flow: 0, reducing_sell_flow: 0 };
     kani::assume(q.bid >= 1 && q.bid <= q.ask && q.ask <= MAX_PRICE);
     kani::assume(q.size <= MAX_SIZE);
     q

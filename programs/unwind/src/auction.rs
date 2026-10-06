@@ -303,6 +303,14 @@ pub struct PoolQuote {
     pub ask: u64,
     /// Most it will take on either side, out of the market's loss budget.
     pub size: u64,
+    /// More it will take in the buy flow (where it sells) or the sell flow
+    /// (where it buys) because doing so only shrinks the position it holds
+    /// against traders: up to the side imbalance of open interest. A trade
+    /// that brings the pool back toward flat costs it no budget, and capping
+    /// it by the budget throttled exits from a thinly backed market to a few
+    /// percent of its budget a batch.
+    pub reducing_buy_flow: u64,
+    pub reducing_sell_flow: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -548,10 +556,11 @@ impl DualBook {
 /// takes in the other, and its net position from a batch is never more than
 /// the size it quoted.
 pub fn clear_dual(book: &DualBook, quote: &PoolQuote, reference: u64) -> Result<DualOutcome> {
+    let on = |extra: u64| PoolQuote { size: quote.size.saturating_add(extra), ..*quote };
     Ok(DualOutcome {
         // The takers in the buy flow are bidding, so the pool may only sell.
-        buy: clear_with_pool_on(&book.buy, quote, reference, false, true)?,
-        sell: clear_with_pool_on(&book.sell, quote, reference, true, false)?,
+        buy: clear_with_pool_on(&book.buy, &on(quote.reducing_buy_flow), reference, false, true)?,
+        sell: clear_with_pool_on(&book.sell, &on(quote.reducing_sell_flow), reference, true, false)?,
     })
 }
 
@@ -606,11 +615,31 @@ mod tests {
         // 300 of bids against one ask of 100 resting at the clearing price;
         // the pool sells the 200 left over. The ask trades its 100, not 300.
         let book = [bid(110_000_000, 300), ask(100_000_000, 100)];
-        let quote = PoolQuote { bid: 99_000_000, ask: 100_000_000, size: 1_000 };
+        let quote = PoolQuote { bid: 99_000_000, ask: 100_000_000, size: 1_000, reducing_buy_flow: 0, reducing_sell_flow: 0 };
         let out = clear_with_pool(&book, &quote, REF).unwrap().unwrap();
         assert_eq!(out.pool_sold, 200);
         assert_eq!(fill_for(&book[0], &book, &out.side(true)).unwrap(), 300);
         assert_eq!(fill_for(&book[1], &book, &out.side(false)).unwrap(), 100);
+    }
+
+    #[test]
+    fn the_pool_takes_exits_past_its_budget_only_as_far_as_they_flatten_it() {
+        // Takers selling 5,000 (longs closing) with the pool's budget share at
+        // 100. Traders are net long 3,000, so the pool may buy 100 + 3,000;
+        // nothing more in this flow, and the buy flow gets nothing extra.
+        let book = DualBook::split(&[ask(99_000_000, 5_000)]);
+        let mut quote = PoolQuote {
+            bid: 100_000_000, ask: 101_000_000, size: 100,
+            reducing_buy_flow: 0, reducing_sell_flow: 3_000,
+        };
+        let out = clear_dual(&book, &quote, REF).unwrap();
+        assert_eq!(out.sell.unwrap().pool_bought, 3_100);
+        // Without the allowance it was throttled to the budget share alone.
+        quote.reducing_sell_flow = 0;
+        assert_eq!(clear_dual(&book, &quote, REF).unwrap().sell.unwrap().pool_bought, 100);
+        // An allowance on the other side does nothing for these sellers.
+        quote.reducing_buy_flow = 3_000;
+        assert_eq!(clear_dual(&book, &quote, REF).unwrap().sell.unwrap().pool_bought, 100);
     }
 
     #[test]
@@ -756,7 +785,7 @@ mod tests {
     }
 
     fn quote(bid: u64, ask: u64, size: u64) -> PoolQuote {
-        PoolQuote { bid, ask, size }
+        PoolQuote { bid, ask, size, reducing_buy_flow: 0, reducing_sell_flow: 0 }
     }
 
     #[test]

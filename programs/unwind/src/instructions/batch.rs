@@ -594,10 +594,15 @@ pub fn clear_batch(ctx: Context<ClearBatch>) -> Result<()> {
     // never already past its own liquidation.
     let (lo, hi) = ctx.accounts.market.price_band(oracle.price)?;
     band(&mut book, lo, hi);
+    // Traders net long leave the pool net short, so the sell flow (where the
+    // pool buys) shrinks it, by up to that imbalance; and the other way round.
+    let (long_oi, short_oi) = (ctx.accounts.market.long_size_usd, ctx.accounts.market.short_size_usd);
     let quote = PoolQuote {
         bid: ctx.accounts.market.fill_price(&oracle, false)?.max(lo),
         ask: ctx.accounts.market.fill_price(&oracle, true)?.min(hi),
         size: quote_size,
+        reducing_buy_flow: short_oi.saturating_sub(long_oi),
+        reducing_sell_flow: long_oi.saturating_sub(short_oi),
     };
     let flows = DualBook::split(&book);
     let cleared = clear_dual(&flows, &quote, oracle.price)?;

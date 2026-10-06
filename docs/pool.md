@@ -24,6 +24,10 @@ the market's remaining loss budget. Flow in excess of that cap must find a
 maker or wait for a subsequent batch. Each flow may use the whole cap: the
 pool sells in one flow and buys in the other, so what it takes in one offsets
 the other, and its net position from a batch never exceeds the cap.
+On top of the cap, the pool takes trades that shrink the position it already
+holds against traders, up to the imbalance between longs and shorts: those
+cost it no budget, and capping them made exits from a thinly backed market
+wait batch after batch.
 
 The cap serves two purposes. It prevents the pool from becoming the effective
 price for large orders, which would make the venue pool priced in practice
