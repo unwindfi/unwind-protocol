@@ -333,7 +333,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
               listing risks are described in the{" "}
               <a href={DOCS} {...out} className="underline underline-offset-2 hover:text-foreground">documentation</a>.
               A market being listed is not an endorsement. Devnet settles in test USDC against devnet copies of
-              tokens marked at Jupiter prices, and carries no real value. Tokenised stocks (xStocks) are not
+              tokens marked at Jupiter prices, and carries no real value. Tokenized stocks (xStocks) are not
               available to US persons. unwind is not affiliated with Backed, Jupiter, Pyth or the issuers of
               the assets its markets track.
             </p>

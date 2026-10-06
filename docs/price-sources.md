@@ -34,7 +34,7 @@ used. Three rules follow:
 
 1. A price older than the newest the market has acted on is refused. A price
    stays valid for a while after it is published, and without this the
-   sender could pick the most favourable one in that window, for example a
+   sender could pick the most favorable one in that window, for example a
    liquidator picking the one that liquidates.
 2. A second, different price under a publish time already used is refused.
    The same price may be used again.

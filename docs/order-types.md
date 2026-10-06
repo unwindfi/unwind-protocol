@@ -124,13 +124,13 @@ narrow enough that a stop in a dislocation is not filled at any price.
   that is left.
 
 A trigger that fails when fired never reaches the batch, so it never moves a
-clearing price. It stays in place until it fires, expires or is cancelled. A
+clearing price. It stays in place until it fires, expires or is canceled. A
 trigger that fires is spent: its account closes. If the batch it lands in
 cannot fill it, it lapses with that batch, and a fired open's collateral comes
 back at settlement.
 
 An expired trigger is closed by the next attempt to fire it, and its escrow is
-refunded. A cancelled trigger's escrow is paid back from the vault of the pool
+refunded. A canceled trigger's escrow is paid back from the vault of the pool
 its market belongs to, and from no other.
 
 ### On the site

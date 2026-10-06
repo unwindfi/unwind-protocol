@@ -24,7 +24,7 @@ export async function GET(req: Request) {
     return r;
   };
   const url = new URL(req.url);
-  if (url.searchParams.get("denied")) return back("error=You+cancelled+on+X");
+  if (url.searchParams.get("denied")) return back("error=You+canceled+on+X");
   const token = url.searchParams.get("oauth_token");
   const verifier = url.searchParams.get("oauth_verifier");
   const cookie = readCookie(req);

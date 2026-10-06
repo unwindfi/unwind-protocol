@@ -255,7 +255,7 @@ export default function App() {
               done: `${t.kind === "tp" ? "Take profit" : "Stop"} set at ${t.triggerPrice}`,
             })}
           onCancelTrigger={(slot) => act("/order/cancel",
-            { symbol: market.symbol, slot }, { label: `Cancel ${market.symbol} order`, done: "Order cancelled" })}
+            { symbol: market.symbol, slot }, { label: `Cancel ${market.symbol} order`, done: "Order canceled" })}
           onReduce={({ size }) => act("/close", { symbol: market.symbol, size }, {
             label: `Reduce ${market.symbol} by ${money(size, 0)}`,
             done: `Reduce ${market.symbol} by ${money(size, 0)} queued`,
@@ -381,7 +381,7 @@ export default function App() {
       markets={markets} market={market} owner={owner}
       onClose={onCloseAll}
       onCancelOrder={(o) => act("/order/cancel", { symbol: o.symbol, slot: o.slot },
-        { label: `Cancel ${o.symbol} order`, done: "Order cancelled" })} />
+        { label: `Cancel ${o.symbol} order`, done: "Order canceled" })} />
   );
   const chart = (
     <ChartPanel market={market} tf={tf} onTf={setTf} account={account} batch={batch} />

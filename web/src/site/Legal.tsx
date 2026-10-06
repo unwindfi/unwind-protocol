@@ -12,7 +12,7 @@ import { DOCS, LEGAL, RISKS, SiteHeader, X_URL } from "@/site/Chrome";
  * user signs, and that devnet carries no value. There is no company behind
  * unwind yet, so nothing here names one; when there is, these name it.
  */
-const UPDATED = "7 October 2026";
+const UPDATED = "October 7, 2026";
 
 type Doc = { title: string; lede: ReactNode; sections: { h: string; body: ReactNode[] }[] };
 
@@ -119,8 +119,8 @@ const DOCS_BY_PATH: Record<string, Doc> = {
       ] },
       { h: "Who can use it", body: [
         <>You must be at least 18 and able to agree to these terms. You may not use unwind if you
-          are subject to sanctions, or located, resident or organised in a country or region
-          under comprehensive sanctions, or anywhere using it is against the law. Tokenised
+          are subject to sanctions, or located, resident or organized in a country or region
+          under comprehensive sanctions, or anywhere using it is against the law. Tokenized
           stocks are not offered to US persons. You are responsible for following the laws that
           apply to you, including on taxes.</>,
       ] },
@@ -223,8 +223,8 @@ const DOCS_BY_PATH: Record<string, Doc> = {
           orders resting and positions unmarked until one runs again. Solana itself can slow,
           halt or reorder transactions.</>,
       ] },
-      { h: "Tokenised stocks", body: [
-        <>Markets on tokenised stocks (such as xStocks) track tokens issued by third parties,
+      { h: "Tokenized stocks", body: [
+        <>Markets on tokenized stocks (such as xStocks) track tokens issued by third parties,
           not the shares themselves, and are not offered to US persons. unwind is not
           affiliated with their issuers, or with Jupiter, Pyth, Meteora, Raydium or the
           issuers of any asset its markets track.</>,

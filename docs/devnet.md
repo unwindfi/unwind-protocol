@@ -11,7 +11,7 @@ the devnet server. Set your wallet to devnet to connect.
 
 ## Season 2
 
-Season 2 started 6 October 2026 on a new pool.
+Season 2 started October 6, 2026, on a new pool.
 
 1. **New pool, new test USDC.** Balances, positions and markets from the old
    pool do not carry over. The venue relisted its own markets; anything else

@@ -261,7 +261,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     try {
       const r = await signAndSend(wallet, `withdraw-${how}`, {}, undefined, how === "claim"
         ? { label: "Claim withdrawal", done: "Withdrawal claimed" }
-        : { label: "Cancel withdrawal", done: "Withdrawal cancelled", note: "The xLP is back in your wallet." });
+        : { label: "Cancel withdrawal", done: "Withdrawal canceled", note: "The xLP is back in your wallet." });
       if (r.ok) onDone();
     } catch { /* the toast has said so */ } finally { setBusy(false); }
   };
@@ -784,7 +784,7 @@ export default function Earn() {
             <span>Vault</span>
             <span>TVL</span>
             <span className="hidden md:block">APY</span>
-            <span className="hidden md:block">Utilisation</span>
+            <span className="hidden md:block">Utilization</span>
             <span className="hidden md:block">Your backing</span>
             <span />
           </div>

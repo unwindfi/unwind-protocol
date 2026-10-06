@@ -67,7 +67,7 @@ notional of closes held 10 minutes or more) on its `Trader`.
 1. xLP can move between wallets without the program seeing it. Tokens sent
    away stop earning at the next update and do not start again if they come
    back. Tokens received from someone else earn nothing.
-2. xLP in a pending withdrawal earns nothing. A cancelled withdrawal earns
+2. xLP in a pending withdrawal earns nothing. A canceled withdrawal earns
    again from the cancel.
 
 ## Referrals
@@ -180,7 +180,7 @@ deployer key, so it earns points.
 The on-chain total is all-time. A season is a view over it, kept by the
 server: when it starts on a new pool it stores every wallet's totals, and
 the Rewards page, leaderboard, weekly view and creator ranking show what was
-earned since. Season 2 started 6 October 2026 on devnet's new pool (see
+earned since. Season 2 started October 6, 2026, on devnet's new pool (see
 [Devnet](devnet.md)).
 
 ## Numerical example

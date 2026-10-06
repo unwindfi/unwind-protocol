@@ -34,7 +34,7 @@ at, half the spread from the mark; hover the mark to see it. A row opens the
 market on the trade screen.
 
 **Orders.** Take profits, stops and limit orders still waiting to fire. The
-owner can cancel any of them from here. A cancelled limit order's escrowed
+owner can cancel any of them from here. A canceled limit order's escrowed
 collateral comes back. Orders resting in a collecting batch are not listed;
 they clear within the 1 second window.
 

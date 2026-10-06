@@ -101,8 +101,8 @@ put up for every other market. One mispriced or manipulated market could drain
 liquidity that never underwrote it.
 
 Holding capital against every open position was the other way, and it froze
-backing a balanced book never needed. The haircut puts the risk on unrealised
-profit instead. Capital is committed only once a loss is realised.
+backing a balanced book never needed. The haircut puts the risk on unrealized
+profit instead. Capital is committed only once a loss is realized.
 
 A close is never shrunk by the haircut. It fills what the auction gives it,
 and only the profit it is paid is cut. A winner in a market that has spent its

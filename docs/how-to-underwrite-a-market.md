@@ -121,7 +121,7 @@ backing to where the books already say it belongs.
 
 Every row on Earn opens a page of its own: `/vault/<symbol>` for a market's
 backing, `/vault/pool` for the pool. It shows what the vault holds, its APY
-and utilisation, your share, a chart of value per share (one point every 2
+and utilization, your share, a chart of value per share (one point every 2
 minutes, from `/api/apy?series=1`), and the market it stands behind with that
 market's leverage, maintenance margin and budget. Deposit and withdraw from
 there or from the row.
@@ -138,7 +138,7 @@ market's traders are up right now.
    more than the pot.
 2. **If the price cannot be read,** the whole remaining budget is held.
 3. **It stays in the pot** for the backers who stay. They pay it if the loss
-   is realised and keep it if the price turns.
+   is realized and keep it if the price turns.
 4. **A balanced book holds nothing back.** Only the visible loss is held, not
    the positions' size.
 

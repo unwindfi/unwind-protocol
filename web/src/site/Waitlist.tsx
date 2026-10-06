@@ -121,7 +121,7 @@ function Join() {
 
 /// The three answers the explainer gives, in the order a visitor asks them.
 const WHAT: [string, string][] = [
-  ["What", "Memecoins, majors, tokenised equities."],
+  ["What", "Memecoins, majors, tokenized equities."],
   ["How", "Price is set by two-sided flow, not by a pool."],
   ["Who", "Anyone can list a market."],
 ];

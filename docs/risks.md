@@ -140,6 +140,6 @@ parameters, pools and markets can change or be reset. See [Devnet](devnet.md).
 
 ## Assets and jurisdictions
 
-Tokenised stocks (xStocks) are not available to US persons. unwind is not
+Tokenized stocks (xStocks) are not available to US persons. unwind is not
 affiliated with Backed, Jupiter, Pyth, Raydium, Meteora or the issuers of the
 assets its markets track. You are responsible for the rules where you live.

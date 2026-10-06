@@ -48,7 +48,7 @@ const when = (t: number) => {
   const d = new Date(t);
   return d.toDateString() === new Date().toDateString()
     ? d.toLocaleTimeString("en-GB")
-    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
 type Order = Account["orders"][number];
@@ -88,7 +88,7 @@ export default function PortfolioPage() {
     setBusy(`${o.symbol}:${o.slot}`);
     try {
       const res = await signAndSend(wallet, "order/cancel", { symbol: o.symbol, slot: o.slot }, undefined,
-        { label: `Cancel ${o.symbol} order`, done: "Order cancelled" });
+        { label: `Cancel ${o.symbol} order`, done: "Order canceled" });
       if (res.ok) setTick((t) => t + 1);
     } catch { /* the toast has said so */ } finally { setBusy(null); }
   };
@@ -398,7 +398,7 @@ function Orders({ orders, owner, loaded, canAct, busy, onCancel }: {
                 <span className="text-right">
                   {canAct || busy === key ? (
                     <button type="button" disabled={!!busy} onClick={() => onCancel(o)} className={SMALL}>
-                      {busy === key ? "Cancelling" : "Cancel"}
+                      {busy === key ? "Canceling" : "Cancel"}
                     </button>
                   ) : null}
                 </span>

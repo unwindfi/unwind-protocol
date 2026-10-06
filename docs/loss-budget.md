@@ -24,7 +24,7 @@ remaining = loss_budget - net_loss       when net_loss > 0
 remaining = loss_budget                  otherwise
 ```
 
-`net_loss` is what the market has cost the LPs so far, realised. A gain
+`net_loss` is what the market has cost the LPs so far, realized. A gain
 unwinds earlier losses first. It never grows the budget past what was
 underwritten: a market cannot bank profit into a larger allowance.
 

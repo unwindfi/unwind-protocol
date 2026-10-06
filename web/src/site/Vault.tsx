@@ -95,7 +95,7 @@ export default function VaultPage() {
                 <Tile k="TVL" v={<AnimatedNumber value={v.tvl} duration={0.9} format={compact} />} sub={v.tvlNote} />
                 <Tile k="APY" tone={v.apy.tone}
                   v={v.apy.value != null ? `${v.apy.value.toFixed(2)}%` : v.apy.text} sub={v.apy.note} />
-                <Tile k="Utilisation" v={v.util.pct != null ? `${v.util.pct.toFixed(1)}%` : "–"} sub={v.util.note} />
+                <Tile k="Utilization" v={v.util.pct != null ? `${v.util.pct.toFixed(1)}%` : "–"} sub={v.util.note} />
                 <Tile k={v.kind === "pool" ? "Your deposit" : "Your backing"} v={v.yours > 0 ? money(v.yours) : DASH}
                   sub={backing ? `${money(backing.deposited)} posted` : v.kind === "pool" && account ? `${compact(account.lp.value)} in xLP` : owner ? "Nothing here yet" : "Not connected"} />
               </div>

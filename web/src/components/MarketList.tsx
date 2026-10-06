@@ -21,7 +21,7 @@ const COLLAPSED = "unwind.trade.list";
 
 const GROUPS: { key: string; label: string; of: (m: Market, saved: string[]) => boolean }[] = [
   { key: "all", label: "All", of: () => true },
-  { key: "fav", label: "Favourites", of: (m, saved) => saved.includes(m.symbol) },
+  { key: "fav", label: "Favorites", of: (m, saved) => saved.includes(m.symbol) },
   // The tokenised equities carry the x suffix their issuer gives them, the
   // same rule /markets groups by.
   { key: "equities", label: "Stocks", of: (m) => /x$/.test(m.symbol) },
@@ -131,7 +131,7 @@ export function MarketList({ markets, current, onPick, onPalette }: {
         {GROUPS.map((g) => (
           <button key={g.key} type="button" onClick={() => { setGroup(g.key); setQuery(""); }}
             aria-pressed={g.key === group && !query}
-            aria-label={g.key === "fav" ? "Favourites" : undefined} title={g.key === "fav" ? "Favourites" : undefined}
+            aria-label={g.key === "fav" ? "Favorites" : undefined} title={g.key === "fav" ? "Favorites" : undefined}
             className={cn("flex h-7 flex-none items-center rounded-full px-2.5 text-[12.5px] transition-colors",
               g.key === group && !query ? "bg-panel3 font-medium text-foreground"
                 : "text-muted-foreground hover:text-foreground")}>
@@ -162,7 +162,7 @@ export function MarketList({ markets, current, onPick, onPalette }: {
               {/* Out of the Tab order, so the list is one stop per market;
                   F on a focused row does the same thing. */}
               <button type="button" onClick={() => toggleSaved(m.symbol)} tabIndex={-1}
-                aria-label={fav ? `Remove ${m.symbol} from favourites` : `Add ${m.symbol} to favourites`}
+                aria-label={fav ? `Remove ${m.symbol} from favorites` : `Add ${m.symbol} to favorites`}
                 aria-pressed={fav}
                 className={cn("grid size-6 flex-none place-items-center rounded-full transition-colors",
                   fav ? "text-foreground" : "text-dim opacity-60 hover:text-foreground group-hover:opacity-100")}>

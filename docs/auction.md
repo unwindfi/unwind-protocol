@@ -80,7 +80,7 @@ past its own liquidation.
    sides of one batch. Positions do not flip, so only one side could ever
    book, and the wallet could choose by settlement order which leg went home.
 2. **No clear in the slot the book last changed.** Every order placed or
-   cancelled records its slot. `clear_batch` is refused in that slot. Whoever
+   canceled records its slot. `clear_batch` is refused in that slot. Whoever
    clears cannot also be the last to change the book, in the same
    transaction, with the book and the oracle in view.
 3. **Opens are checked at submit.** Side, leverage and the open interest cap
