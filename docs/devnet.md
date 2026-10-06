@@ -47,6 +47,12 @@ list one market and trade about ten. Each wallet can use it once a day.
   testers to list and back. They follow the percentage moves of BONK, JUP and
   WIF.
 
+Real tokens' devnet pools are quoted in Circle's devnet USDC
+(`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`), not in the venue's test
+USDC, and devnet accepts it as a listing's quote: paste a Raydium CLMM or
+Meteora DLMM pool address on the list page to list one. It prices the market
+like any USDC; the market still settles in test USDC.
+
 A token listed on devnet is not the mainnet token. Its mint is a devnet
 test mint and the listing does not carry over.
 

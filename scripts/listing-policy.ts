@@ -80,6 +80,10 @@ export const LISTING_ROUND_TRIP_FEE_BPS = 20;
 export const QUOTE_MINTS: Record<string, string> = {
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: "USDC",
   Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: "USDT",
+  // Circle's devnet USDC, which real tokens' devnet pools are quoted in. The
+  // mint does not exist on mainnet, so listing it here changes nothing there;
+  // the program accepts it on devnet builds only (`DEVNET_QUOTE_MINTS`).
+  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "USDC",
 };
 
 /// Largest unit a market may be quoted in: a billion tokens.

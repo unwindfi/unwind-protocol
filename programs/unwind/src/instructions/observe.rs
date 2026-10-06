@@ -169,6 +169,15 @@ pub const QUOTE_MINTS: [Pubkey; 2] = [
     pubkey!("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"),
 ];
 
+/// Circle's devnet USDC. Real tokens' devnet pools are quoted in it, not in
+/// the test USDC a devnet pool settles in, so without it no existing devnet
+/// token could be listed, only ones somebody minted against the test mint.
+/// A dollar like the others for pricing; accepted on devnet builds only.
+#[cfg(feature = "devnet")]
+pub const DEVNET_QUOTE_MINTS: [Pubkey; 1] = [pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")];
+#[cfg(not(feature = "devnet"))]
+pub const DEVNET_QUOTE_MINTS: [Pubkey; 0] = [];
+
 /// The side `quote_is_token_0` names must be a dollar. Every reading counts
 /// the quote token as a dollar at its own decimals, so a pool quoted in a
 /// token the lister minted would give the market whatever depth, confidence
@@ -182,7 +191,7 @@ pub fn check_quote_side(
 ) -> Result<()> {
     let quote = if quote_is_token_0 { mint_0 } else { mint_1 };
     require!(
-        quote == settle_mint || QUOTE_MINTS.contains(quote),
+        quote == settle_mint || QUOTE_MINTS.contains(quote) || DEVNET_QUOTE_MINTS.contains(quote),
         PerpError::InvalidOracleAccount
     );
     Ok(())
@@ -533,6 +542,16 @@ pub struct BudgetDerived {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn circle_devnet_usdc_quotes_a_listing_on_devnet_builds_only() {
+        let (token, settle) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let circle = pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+        let accepted = check_quote_side(&token, &circle, false, &settle).is_ok();
+        assert_eq!(accepted, cfg!(feature = "devnet"));
+        // A mint the lister made is never a dollar, on any build.
+        assert!(check_quote_side(&token, &Pubkey::new_unique(), false, &settle).is_err());
+    }
+
     use super::*;
 
     #[test]
