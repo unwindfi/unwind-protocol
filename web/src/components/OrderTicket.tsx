@@ -8,7 +8,7 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { NumberTicker } from "@/components/motion/number-ticker";
 import { EASE_OUT } from "@/lib/ease";
-import type { Account, Market } from "@/lib/api";
+import { poolFill, type Account, type Market } from "@/lib/api";
 import { money, pnum, price, tone } from "@/lib/format";
 import { faucetWaitHours } from "@/lib/tx";
 
@@ -335,6 +335,17 @@ export function OrderTicket({
     ? (side === "long" ? lp / mid - 1 : 1 - lp / mid) : 0;
   const limitNote = through > 0.1
     ? `${Math.round(through * 100)}% ${side === "long" ? "above" : "below"} the market. It fills at the batch price, at most this.`
+    : "";
+
+  /*
+   * What one batch fills here without makers: the pool's quote, a slice of the
+   * market's loss budget. A $2,000 market fills $100 however large its caps
+   * read, and the rest of a bigger order is refunded, so say so before it is
+   * placed rather than after.
+   */
+  const fillCap = poolFill(m);
+  const fillNote = !maker && !reduceOnly && size > fillCap
+    ? `This market fills up to ${money(fillCap, 0)} a batch. The rest of this order is refunded unless makers take it.`
     : "";
 
   const cta = onConnect ? "Connect wallet"
@@ -672,8 +683,8 @@ export function OrderTicket({
                       ${onConnect ? "bg-foreground" : side === "long" ? "bg-up" : "bg-down"}`}>
           {cta}
         </button>
-        {!onConnect && (warn || limitNote) && (
-          <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
+        {!onConnect && (warn || limitNote || fillNote) && (
+          <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote || fillNote}</p>
         )}
       </div>
 
@@ -686,7 +697,7 @@ export function OrderTicket({
         {/* A listed market still seasoning holds every order for its opening
             batch, so "within a second" would be the wrong promise. */}
         <KV k="Fill">{maker ? "This batch, if a taker crosses"
-          : m.observed && !m.observed.seasoned ? "Opening auction" : "Next batch, in a few seconds"}</KV>
+          : m.observed && !m.observed.seasoned ? "Opening auction" : `Next batch, up to ${money(fillCap, 0)}`}</KV>
         <KV k="Fees">{(m.openFeeBps / 100).toFixed(4)}% / {money(calc.fee)}</KV>
       </div>
 

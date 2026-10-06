@@ -1,5 +1,5 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/Tabs";
-import type { Market, Trade } from "@/lib/api";
+import { poolFill, type Market, type Trade } from "@/lib/api";
 import { compact, hhmmss, pct, pmove, pnum, priceDecimals, tone } from "@/lib/format";
 import { fundingPct } from "@/components/market/MarketHead";
 
@@ -93,6 +93,8 @@ export function MobileMarketPane({
                 <span className="text-down">short {compact(maxShort)}</span>
               </div>
             </div>
+            {/* The most one batch fills a side with no makers: below the caps. */}
+            <Row k="Per batch">{compact(poolFill(m))}</Row>
             <Row k="Pool free">{compact(m.freeLiquidity)}</Row>
             <Row k="Utilization">{utilization != null ? `${utilization.toFixed(2)}%` : "–"}</Row>
             <Row k="Long / short">

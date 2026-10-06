@@ -2926,6 +2926,9 @@ function payoutPct(ma: any, p: any, price: number): number {
   return winners <= available ? 100 : (available / winners) * 100;
 }
 
+/// The program's POOL_QUOTE_BUDGET_BPS (500, in state/batch.rs) as a share.
+const POOL_QUOTE_SHARE = 0.05;
+
 async function marketsView() {
   {
     void loadIcons([...(await shadowMintMap()).values()]);
@@ -3005,6 +3008,12 @@ async function marketsView() {
         payoutPct: payoutPct(ma, p, price),
         backingInKind: books[m.address.toBase58()]?.amounts ?? {},
         lossBudgetUsd: num(ma.lossBudgetUsd) / 1e6,
+        // The most the pool fills on each side of one batch: its quote is
+        // POOL_QUOTE_BUDGET_BPS of what is left of the budget (`clear_batch`).
+        // With no makers in the book this is all an order gets; the rest of
+        // it is refunded. The caps above are what open interest may reach.
+        poolFillUsd: Math.max(0, num(ma.lossBudgetUsd) / 1e6 - Math.max(0, num(ma.netLossUsd) / 1e6))
+          * POOL_QUOTE_SHARE,
         // Null for a market with a feed behind it. For one listed against a
         // pool this is the whole of its status: what it is watching, how far
         // through seasoning it is, and whether anyone has underwritten it yet.

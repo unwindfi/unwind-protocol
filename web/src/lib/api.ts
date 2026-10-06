@@ -25,6 +25,9 @@ export interface Market {
   /// First-loss capital behind this market, and the budget it is held to.
   /// Any market can be backed, whatever prices it.
   backingUsd: number; lossBudgetUsd: number;
+  /// The most the pool fills on each side of one batch; absent from an older
+  /// server, where `poolFill` works it out from the budget.
+  poolFillUsd?: number;
   /// What of the backing open positions hold; absent from an older server.
   /// The share of their profit winners would be paid if they all closed now:
   /// what the market can still pay over what every winning side is up. 100
@@ -558,3 +561,12 @@ export const getFills = async (owner?: string) => {
   if (!(await hasBackend()) || !owner) return [] as Trade[];
   return get<Trade[]>(`/api/fills?owner=${owner}`);
 };
+
+/*
+ * What one batch can fill on each side of a market with no makers in it: the
+ * pool's quote, 5% of what is left of the market's loss budget. A $2,000
+ * market fills $100 a batch however large its caps read, so this is the
+ * figure a trader sizing an order needs, not the caps.
+ */
+export const poolFill = (m: Pick<Market, "poolFillUsd" | "lossBudgetUsd">) =>
+  m.poolFillUsd ?? Math.max(0, m.lossBudgetUsd) * 0.05;

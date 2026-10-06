@@ -21,7 +21,7 @@ import { Track } from "@/components/Track";
 import { TickerLogo } from "@/components/TickerLogo";
 import { MarketPeek } from "@/components/MarketPeek";
 import { NavIcon } from "@/components/NavIcon";
-import { getMarkets, usePollState, type Market } from "@/lib/api";
+import { getMarkets, poolFill, usePollState, type Market } from "@/lib/api";
 import { compact, pct, price, tone } from "@/lib/format";
 import { listHref, tradeHref } from "@/lib/urls";
 
@@ -106,8 +106,10 @@ const GROUPS: Group[] = [
   },
 ];
 
-/// Room to open on a market: what its long and short sides can still take.
-const roomOf = (m: Market) => Math.max(0, m.capLong) + Math.max(0, m.capShort);
+/// What a market can fill on each side of one batch. Its caps (what open
+/// interest may reach) read $100K on a $2,000 market that fills $100 a
+/// batch, which is depth no order can reach.
+const roomOf = (m: Market) => poolFill(m);
 
 /// What the table can be sorted by, and how each column reads a market.
 const COLUMNS = [
@@ -115,10 +117,10 @@ const COLUMNS = [
   { key: "oi", label: "Open interest", get: (m: Market) => m.oi },
   { key: "change", label: "24h change", get: (m: Market) => m.changePct },
   { key: "volume", label: "24h volume", get: (m: Market) => m.volume24h },
-  // What this market can still take, both sides together, rather than the
-  // pool's free liquidity, which is one figure shared by every market and
-  // printed the same $9.98M on every row.
-  { key: "liquidity", label: "Liquidity", get: (m: Market) => roomOf(m) },
+  // What one batch fills on each side, rather than the caps (open interest
+  // room, which no single order can reach) or the pool's free liquidity,
+  // which is one figure shared by every market.
+  { key: "liquidity", label: "Per batch", get: (m: Market) => roomOf(m) },
 ] as const;
 
 type SortKey = (typeof COLUMNS)[number]["key"] | "name";

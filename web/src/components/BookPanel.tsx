@@ -8,7 +8,7 @@ const TAB = "min-h-0 h-9 px-2.5 py-0 text-[12px] font-normal";
 const LINE = "bottom-[-1px] h-[2px] rounded-full bg-tab";
 import { Gauge } from "@/components/market/Gauge";
 import { Ripeness, statusOf } from "@/components/Ripeness";
-import { useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
+import { poolFill, useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
 import { compact, hhmmss, pnum } from "@/lib/format";
 
 /// Caption over figure, the stat tiles' manner without the tile: the wide
@@ -358,6 +358,8 @@ export function BookPanel({
             <Stat k="Spread" v={`${(m.spreadBps / 50).toFixed(3)}%`} />
             <Stat k="Max long" v={compact(maxLong)} />
             <Stat k="Max short" v={compact(maxShort)} />
+            {/* The most one batch fills a side with no makers: below the caps. */}
+            <Stat k="Per batch" v={compact(poolFill(m))} />
             <Stat k="Pool free" v={compact(m.freeLiquidity)} />
             <Stat k="Utilization" v={utilization != null ? `${utilization.toFixed(2)}%` : "–"} />
           </div>
