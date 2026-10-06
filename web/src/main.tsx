@@ -129,6 +129,10 @@ const ROUTES: Record<string, Loader> = UNLOCKED
         ]);
         return { default: () => <WalletRoot><Page /></WalletRoot> };
       },
+      // The privacy policy, terms and risk disclosures: one page, by path.
+      "/privacy": () => import("./site/Legal"),
+      "/terms": () => import("./site/Legal"),
+      "/disclosures": () => import("./site/Legal"),
       // The Risk Hub page moved into the docs; vercel.json redirects it too.
       "/risk": async () => {
         const { RISKS } = await import("./site/Chrome");

@@ -7,8 +7,10 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { SiX } from "@icons-pack/react-simple-icons";
 import { useNow } from "@/components/BatchClock";
 import { cn } from "@/lib/utils";
+import { LEGAL, X_URL } from "@/site/Chrome";
 
 /// Bumped when the items change, so a new set shows again to someone who
 /// dismissed the last one.
@@ -42,13 +44,29 @@ export function StatusBar({ lastOk, readOnly, cluster }: {
   return (
     <footer className="flex h-7 flex-none items-center justify-between gap-3 px-3 text-[11.5px]
                        text-muted-foreground">
-      <span className="flex items-center gap-2" role="status" aria-live="polite">
-        <span className={cn("size-1.5 rounded-full",
-          state === "online" ? "bg-up"
-            : state === "reconnecting" ? "animate-pulse bg-down" : "bg-dim")} />
-        {label}
-      </span>
-      <News />
+      <div className="flex min-w-0 items-center gap-4">
+        <span className="flex flex-none items-center gap-2" role="status" aria-live="polite">
+          <span className={cn("size-1.5 rounded-full",
+            state === "online" ? "bg-up"
+              : state === "reconnecting" ? "animate-pulse bg-down" : "bg-dim")} />
+          {label}
+        </span>
+        {/* The legal pages, as on the site's footer, which the terminal has none of. */}
+        <nav aria-label="Legal" className="flex min-w-0 items-center gap-4 overflow-hidden border-l border-line pl-4">
+          {LEGAL.map((l) => (
+            <a key={l.href} href={l.href} className="whitespace-nowrap transition-colors hover:text-foreground">
+              {l.label}
+            </a>
+          ))}
+        </nav>
+      </div>
+      <div className="flex flex-none items-center gap-3">
+        <News />
+        <a href={X_URL} target="_blank" rel="noreferrer" aria-label="unwind on X" title="unwind on X"
+          className="grid size-5 place-items-center transition-colors hover:text-foreground">
+          <SiX size={11} aria-hidden />
+        </a>
+      </div>
     </footer>
   );
 }

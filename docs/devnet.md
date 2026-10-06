@@ -41,6 +41,11 @@ is told how much is placed there instead. After a claim, the button is
 replaced by when the next claim opens. The faucet also stops sending SOL when
 the venue's own wallet falls under 1 SOL, which it needs to clear batches.
 
+A claim is kept with the caller's IP address for a day, to count it toward
+the limits, then dropped; a devnet copy keeps its requester's address for a
+day too. The site's [Privacy Policy](https://www.unwindfi.xyz/privacy) lists
+everything the site and server keep.
+
 ## Markets
 
 1. **Equities.** SPYx, CRCLx and COINx. A relay posts Jupiter quotes on

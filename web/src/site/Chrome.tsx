@@ -49,6 +49,12 @@ export const DOCS = "https://unwind.gitbook.io/unwind-docs";
 export const X_URL = "https://x.com/unwindfi";
 
 export const RISKS = `${DOCS}/about-unwind/risks`;
+/// The privacy policy, terms and risk disclosures (site/Legal.tsx).
+export const LEGAL = [
+  { href: "/privacy", label: "Privacy Policy" },
+  { href: "/terms", label: "Terms of Service" },
+  { href: "/disclosures", label: "Disclosures" },
+];
 
 export const SUPERTEAM_NP = "https://np.superteam.fun";
 
@@ -313,8 +319,11 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
 
         <div className="mt-9 flex flex-col gap-5 border-t border-line pt-5 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-pretty max-w-[90ch] text-[12px] leading-relaxed text-muted-foreground">
-              &copy; {new Date().getFullYear()} unwind.
+            <p className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] leading-relaxed text-muted-foreground">
+              <span>&copy; {new Date().getFullYear()} unwind.</span>
+              {LEGAL.map((l) => (
+                <a key={l.href} href={l.href} className="transition-colors hover:text-foreground">{l.label}</a>
+              ))}
             </p>
             <p className="text-pretty mt-2 max-w-[110ch] text-[12px] leading-relaxed text-muted-foreground">
               unwind runs perpetual futures markets on Solana that anyone can open, each cleared by batch

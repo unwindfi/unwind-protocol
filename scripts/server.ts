@@ -1463,6 +1463,9 @@ type SeededPool = { symbol: string; name: string; mint: string; pair: string; re
 const COPIES_FILE = path.join(ROOT, `.${CLUSTER}-copies.json`);
 let copies: SeededPool[] = [];
 try { copies = JSON.parse(fs.readFileSync(COPIES_FILE, "utf8")); } catch { copies = []; }
+// Addresses older than a day are dropped at start too (DAY_MS is defined
+// further down), so the file never keeps one past the policy's day.
+for (const c of copies) if (c.ip && Date.now() - (c.t ?? 0) >= 86_400_000) delete c.ip;
 const seeded: SeededPool[] = [...(st.seededPools ?? []), ...copies];
 
 const KNOWN_TOKENS: Record<string, { symbol: string; name: string }> = {
@@ -4028,6 +4031,9 @@ app.post("/api/devnet-copy", async (req, res) => {
         real, sideUsd, t: Date.now(), ip,
       };
       copies.push(copy); seeded.push(copy);
+      // The address is kept only while it counts toward the daily limit; the
+      // privacy policy says a day.
+      for (const c of copies) if (c.ip && Date.now() - (c.t ?? 0) >= DAY_MS) delete c.ip;
       fs.writeFileSync(COPIES_FILE, JSON.stringify(copies, null, 2));
       shadowMints = null; shadowNames = null;
       console.log(`devnet mirror ${symbol} of ${source}: pool ${copy.pair}, $${sideUsd} a side for $${Math.round(depthUsd)} depth`);
@@ -5448,6 +5454,22 @@ app.get("/api/wallets", (_req, res) => {
 type Claim = { owner: string; ip: string; t: number; sol: number; usdc?: number };
 let claims: Claim[] = [];
 try { claims = JSON.parse(fs.readFileSync(FAUCET_FILE, "utf8")); } catch { claims = []; }
+// Only the last day counts toward a limit, and the privacy policy keeps an
+// address no longer than that.
+claims = claims.filter((c) => Date.now() - c.t < DAY_MS);
+setInterval(() => {
+  const kept = claims.filter((c) => Date.now() - c.t < DAY_MS);
+  if (kept.length !== claims.length) {
+    claims = kept;
+    if (!IS_LOCAL) fs.writeFileSync(FAUCET_FILE, JSON.stringify(claims));
+  }
+  // Devnet copies stay, but not the address that asked for one.
+  const old = copies.filter((c) => c.ip && Date.now() - (c.t ?? 0) >= DAY_MS);
+  if (old.length) {
+    for (const c of old) delete c.ip;
+    fs.writeFileSync(COPIES_FILE, JSON.stringify(copies, null, 2));
+  }
+}, 60 * 60_000).unref();
 
 app.post("/api/faucet", async (req, res) => {
   let held: Claim | null = null;
