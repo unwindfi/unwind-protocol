@@ -111,7 +111,7 @@ export default function PortfolioPage() {
       <Shell main className="pb-14 pt-4 sm:pt-8">
         {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
-                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
+                        lg:min-h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
           <section className="relative min-h-[260px] overflow-hidden bg-gradient-to-br from-panel to-panel2 dark:from-transparent dark:to-transparent">
             {/* The same violet field /rewards carries, without the mark: this
                 page is a statement, not a pitch. */}
