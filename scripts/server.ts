@@ -3197,8 +3197,11 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         // next second.
         if (!/BatchNotDue/.test(String(e?.message ?? e))) {
           // The reason a failed simulation carries is in its last log lines.
+          // "Simulation failed." keeps its reason on later lines of the
+          // message, which explain() drops.
           const logs: string[] = e?.logs ?? e?.transactionLogs ?? [];
-          console.warn(`auction ${m.symbol}: ${explain(e)}${logs.length ? ` | ${logs.slice(-3).join(" | ")}` : ""}`);
+          const rest = String(e?.message ?? "").split("\n").slice(1).join(" ").replace(/\s+/g, " ").slice(0, 300);
+          console.warn(`auction ${m.symbol}: ${explain(e)}${logs.length ? ` | ${logs.slice(-3).join(" | ")}` : rest ? ` | ${rest}` : ""}`);
         }
       }
     };
