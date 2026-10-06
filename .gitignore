@@ -27,3 +27,7 @@ test-ledger
 
 # Brand work (images, video, audio, render scripts) is kept outside the repo.
 /brand/
+
+# The docs site (docs-site/) builds on its own.
+docs-site/node_modules
+docs-site/.next

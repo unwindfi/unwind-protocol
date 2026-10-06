@@ -1,0 +1,28 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* The brand violet is the one colour; everything else stays neutral, as on
+   the app. Lighter in dark mode so links keep their contrast. */
+@theme {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --color-fd-primary: #6a4df4;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #6a4df4;
+}
+
+.dark {
+  --color-fd-primary: #a593ff;
+  --color-fd-primary-foreground: #0b0b0f;
+  --color-fd-ring: #a593ff;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
