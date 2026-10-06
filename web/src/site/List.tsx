@@ -234,7 +234,9 @@ export default function List() {
   const [prices, setPrices] = useState<Record<PayWith, number> | null>(null);
 
   const markets = usePoll(getMarkets, 5000) ?? NONE;
-  const listed = useMemo(() => markets.filter((m) => m.observed), [markets]);
+  /// Markets that take backing: a paused one refuses it, so it is left off
+  /// (it still shows on Markets, where its positions can exit).
+  const listed = useMemo(() => markets.filter((m) => m.observed && !m.paused), [markets]);
 
   useEffect(() => { void canSign().then(setSignable); }, []);
   useEffect(() => { void usdPrices().then(setPrices).catch(() => {}); }, []);

@@ -5,7 +5,8 @@
 A market cannot be traded against until it has a loss budget, and that budget
 is collateral posted by somebody rather than an allowance granted by an
 administrator. Posting it is called underwriting, or backing, and any account
-may do it for any market.
+may do it for any market that is not paused. A paused market takes no new
+backing, so the list page's Back tab leaves it off.
 
 Backing stands in front of the liquidity pool on the market's losses, and is
 paid in front of the pool on the market's fees.
