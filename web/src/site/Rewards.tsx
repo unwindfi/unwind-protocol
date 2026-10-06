@@ -171,7 +171,7 @@ export default function RewardsPage() {
                 (brand/x/3d/herosuite.py rewards). */}
             <img src="/earn/hero-rewards.webp" alt="" aria-hidden width={831} height={776}
               draggable={false}
-              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[82%] w-auto
+              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[74%] w-auto
                          max-w-[42%] -translate-y-1/2 select-none object-contain
                          drop-shadow-[0_24px_40px_rgba(0,0,0,.35)] sm:block" />
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r

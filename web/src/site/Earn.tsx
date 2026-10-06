@@ -623,8 +623,8 @@ export default function Earn() {
                 on a transparent ground, so one render serves both themes. */}
             <img src="/earn/coins.webp" alt="" aria-hidden width={900} height={707}
               draggable={false}
-              className="pointer-events-none absolute right-4 top-1/2 hidden h-auto
-                         w-[min(44%,340px)] -translate-y-1/2 select-none drop-shadow-[0_24px_40px_rgba(0,0,0,.35)]
+              className="pointer-events-none absolute right-8 top-1/2 hidden h-[74%] w-auto
+                         max-w-[42%] -translate-y-1/2 select-none object-contain drop-shadow-[0_24px_40px_rgba(0,0,0,.35)]
                          sm:block" />
             {/* Keeps the copy legible where the render's glow reaches under
                 it, and stops short of the coins themselves. */}

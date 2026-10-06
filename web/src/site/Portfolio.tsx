@@ -113,7 +113,7 @@ export default function PortfolioPage() {
       <Shell main className="pb-14 pt-4 sm:pt-8">
         {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
-                        lg:min-h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
+                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
           <section className="relative min-h-[260px] overflow-hidden bg-gradient-to-br from-panel to-panel2 dark:from-transparent dark:to-transparent">
             {/* The same violet field /rewards carries, without the mark: this
                 page is a statement, not a pitch. */}
@@ -122,13 +122,16 @@ export default function PortfolioPage() {
                          opacity-45 dark:block" />
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r
                                         from-panel via-panel/75 via-45% to-transparent to-70%" />
-            {/* A pearl wallet with two cards up out of it, the front one violet, in
+            {/* Sized and placed as the Earn and Rewards renders are, and the
+                hero held at their height, so moving between the three pages
+                does not resize the box or the art.
+                A pearl wallet with two cards up out of it, the front one violet, in
                 the same kit as the Earn coins (brand/x/3d/herosuite.py wallet).
                 One render for both themes. */}
             <img src="/earn/wallet.webp" alt="" aria-hidden width={806} height={741}
               draggable={false}
-              className="pointer-events-none absolute right-10 top-1/2 z-[1] hidden h-auto
-                         w-[min(34%,256px)] -translate-y-1/2 select-none
+              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[74%] w-auto
+                         max-w-[42%] -translate-y-1/2 select-none object-contain
                          drop-shadow-[0_24px_40px_rgba(0,0,0,.35)] sm:block" />
 
             <div className="relative flex h-full flex-col justify-center px-5 py-9
@@ -175,7 +178,7 @@ export default function PortfolioPage() {
           </section>
 
           <aside className="flex min-w-0 flex-col border-t border-line bg-panel2 px-5 py-7
-                            sm:px-9 sm:py-9 lg:border-l lg:border-t-0">
+                            sm:px-9 sm:py-9 lg:border-l lg:border-t-0 lg:py-7">
             <div className={CAPS}>Account value</div>
             <div className="n mt-2 text-[40px] font-semibold leading-none tracking-[-.02em]">
               {ready ? <AnimatedNumber value={total} duration={0.9} format={(n) => money(n)} />
