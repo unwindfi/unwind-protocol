@@ -111,9 +111,12 @@ export default function PortfolioPage() {
       <SiteHeader here="/portfolio" actions={<WalletActions />} />
 
       <Shell main className="pb-14 pt-4 sm:pt-8">
-        {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
+        {/* Earn, Portfolio and Rewards share one hero height (Earn's). The
+            row is held to it too: left to size itself, it grew with the
+            figures when they arrived, the art moved with it and the frame
+            cut off the foot. */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
-                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
+                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px] lg:grid-rows-[minmax(0,1fr)]">
           <section className="relative min-h-[260px] overflow-hidden bg-gradient-to-br from-panel to-panel2 dark:from-transparent dark:to-transparent">
             {/* The same violet field /rewards carries, without the mark: this
                 page is a statement, not a pitch. */}
@@ -130,7 +133,7 @@ export default function PortfolioPage() {
                 One render for both themes. */}
             <img src="/earn/wallet.webp" alt="" aria-hidden width={806} height={741}
               draggable={false}
-              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[74%] w-auto
+              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[200px] w-auto lg:h-[246px]
                          max-w-[42%] -translate-y-1/2 select-none object-contain
                          drop-shadow-[0_24px_40px_rgba(0,0,0,.35)] sm:block" />
 
@@ -178,7 +181,7 @@ export default function PortfolioPage() {
           </section>
 
           <aside className="flex min-w-0 flex-col border-t border-line bg-panel2 px-5 py-7
-                            sm:px-9 sm:py-9 lg:border-l lg:border-t-0 lg:py-7">
+                            sm:px-9 sm:py-9 lg:border-l lg:border-t-0 lg:py-6">
             <div className={CAPS}>Account value</div>
             <div className="n mt-2 text-[40px] font-semibold leading-none tracking-[-.02em]">
               {ready ? <AnimatedNumber value={total} duration={0.9} format={(n) => money(n)} />
@@ -202,18 +205,21 @@ export default function PortfolioPage() {
               <Stat k="Volume">{rewards ? money(rewards.volume, 0) : DASH}</Stat>
             </div>
 
+            {/* One line whatever the wallet holds: a claim button here made
+                the column taller than the hero, and the hero grew to fit. */}
             <div className="mt-auto pt-4">
-              {rewards && rewards.claimable > 0 && self ? (
-                <a href="/rewards" className={`${BTN} flex w-full items-center justify-center`}>
-                  Claim on Rewards
-                </a>
-              ) : owner ? (
+              {owner && (
                 <p className="text-center text-[12px] text-muted-foreground">
+                  {rewards && rewards.claimable > 0 && self && (
+                    <><a href="/rewards" className={`${LINK} font-medium text-foreground`}>
+                      Claim {money(rewards.claimable)} on Rewards
+                    </a>{" · "}</>
+                  )}
                   <a href={explorer(owner)} target="_blank" rel="noreferrer" className={LINK}>
                     Verify on Solscan
                   </a>
                 </p>
-              ) : null}
+              )}
             </div>
           </aside>
         </div>

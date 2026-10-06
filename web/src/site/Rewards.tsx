@@ -158,9 +158,12 @@ export default function RewardsPage() {
       <SiteHeader here="/rewards" actions={<WalletActions />} />
 
       <Shell main className="pb-14 pt-4 sm:pt-8">
-        {/* Earn, Portfolio and Rewards share one hero height (Earn's). */}
+        {/* Earn, Portfolio and Rewards share one hero height (Earn's). The
+            row is held to it too: left to size itself, it grew with the
+            figures when they arrived, the art moved with it and the frame
+            cut off the foot. */}
         <div className="grid overflow-hidden rounded-[24px] border border-line bg-panel
-                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px]">
+                        lg:h-[334px] lg:grid-cols-[minmax(0,1fr)_440px] lg:grid-rows-[minmax(0,1fr)]">
           <section className="relative min-h-[280px] overflow-hidden bg-gradient-to-br from-panel to-panel2 dark:from-transparent dark:to-transparent">
             {/* The front page's violet light and the glass mark, as /earn
                 carries its coins. Hidden on a phone. */}
@@ -171,7 +174,7 @@ export default function RewardsPage() {
                 (brand/x/3d/herosuite.py rewards). */}
             <img src="/earn/hero-rewards.webp" alt="" aria-hidden width={831} height={776}
               draggable={false}
-              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[74%] w-auto
+              className="pointer-events-none absolute right-8 top-1/2 z-[1] hidden h-[200px] w-auto lg:h-[246px]
                          max-w-[42%] -translate-y-1/2 select-none object-contain
                          drop-shadow-[0_24px_40px_rgba(0,0,0,.35)] sm:block" />
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r
