@@ -9,7 +9,7 @@
  *
  * Three choices: light, dark, or the system's. "System" follows the OS and
  * keeps following it; an explicit light or dark does not. Without a choice
- * the page is light.
+ * the page is dark.
  */
 import { useCallback, useSyncExternalStore } from "react";
 
@@ -29,13 +29,13 @@ const media = () => (typeof window !== "undefined" && window.matchMedia
   ? window.matchMedia("(prefers-color-scheme: dark)") : null);
 
 const read = (): Theme =>
-  document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
 export const readChoice = (): Choice => {
   try {
     const v = localStorage.getItem(KEY);
-    return v === "dark" || v === "light" || v === "system" ? v : "light";
-  } catch { return "light"; }
+    return v === "dark" || v === "light" || v === "system" ? v : "dark";
+  } catch { return "dark"; }
 };
 
 const resolve = (c: Choice): Theme => (c === "system" ? (media()?.matches ? "dark" : "light") : c);
@@ -74,8 +74,8 @@ media()?.addEventListener?.("change", () => { if (readChoice() === "system") app
 
 /// The current theme, the choice behind it, and the ways to change them.
 export function useTheme() {
-  const theme = useSyncExternalStore(subscribe, read, () => "light" as Theme);
-  const choice = useSyncExternalStore(subscribe, readChoice, () => "light" as Choice);
+  const theme = useSyncExternalStore(subscribe, read, () => "dark" as Theme);
+  const choice = useSyncExternalStore(subscribe, readChoice, () => "dark" as Choice);
   const toggle = useCallback(() => setChoice(read() === "dark" ? "light" : "dark"), []);
   return { theme, choice, toggle, setChoice };
 }
