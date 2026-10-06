@@ -1,10 +1,9 @@
 /*
- * Devnet is open, the waitlist stays the front door.
+ * Devnet is open to everyone, front page included.
  *
- * `/` is the waitlist for everyone without the cookie from `/code`. Every
- * other page is answered by the full build under `/unlocked/`, at its own
- * address, so the router in the app never learns it was moved. With the
- * cookie, `/` is the full build too.
+ * Every page, `/` too, is answered by the full build under `/unlocked/`, at
+ * its own address, so the router in the app never learns it was moved. `/`
+ * was the waitlist until devnet opened; it is the market list now.
  */
 import { unlocked } from "./api/_code";
 
@@ -37,8 +36,7 @@ export default async function middleware(req: Request) {
   }
   // Files at the root -- the favicon, robots, the manifest -- are the same either way.
   if (/\.[^/]*$/.test(path)) return next();
-  if (open || path !== "/") return rewrite(new URL("/unlocked/index.html", url));
-  return next();
+  return rewrite(new URL("/unlocked/index.html", url));
 }
 
 const page = (wrong: boolean) => `<!doctype html>

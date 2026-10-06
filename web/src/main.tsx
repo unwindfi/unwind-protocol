@@ -66,7 +66,15 @@ const WAITLIST: Loader = async () => ({ default: WaitlistPage });
  */
 const ROUTES: Record<string, Loader> = UNLOCKED
   ? {
-      "/": WAITLIST,
+      // The waitlist was the front page until devnet opened; the market
+      // list is now. `/markets` stays its own address for links already out.
+      "/": async () => {
+        const [{ default: Page }, { WalletRoot }] = await Promise.all([
+          import("./site/Markets"),
+          import("./lib/wallet"),
+        ]);
+        return { default: () => <WalletRoot><Page /></WalletRoot> };
+      },
       /*
        * The market list carries the wallet too.
        *
@@ -251,7 +259,7 @@ function Site() {
     <>
       <Page key={url} />
       {/* Its own boundary, so loading it never holds the page back. */}
-      {ToastHost && path !== "/" && <Suspense fallback={null}><ToastHost /></Suspense>}
+      {ToastHost && routeFor(path) !== WAITLIST && <Suspense fallback={null}><ToastHost /></Suspense>}
     </>
   );
 }
