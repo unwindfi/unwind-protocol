@@ -10,6 +10,10 @@
       "destination": "/api/[...path]?__path=:first/:rest*"
     },
     {
+      "source": "/trade/:symbol",
+      "destination": "/index.html"
+    },
+    {
       "source": "/((?!api/|assets/|logos/|.*\\.).*)",
       "destination": "/index.html"
     }

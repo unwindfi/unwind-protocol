@@ -11,6 +11,7 @@ import "@fontsource/inter/700.css";
 import "./index.css";
 import WaitlistPage from "./site/Waitlist";
 import { rememberRef } from "./lib/ref";
+import { routeKey, tradeHref } from "./lib/trade-url";
 
 /*
  * The site and the app behind one entry, split by path.
@@ -160,7 +161,7 @@ const NOT_FOUND: Loader = () => import("./site/NotFound");
 /// middleware has already redirected it home). Unlocked, an unknown path is
 /// the not-found page.
 const routeFor = (path: string) =>
-  ROUTES[path] ?? (UNLOCKED ? NOT_FOUND : ROUTES["/"]);
+  ROUTES[routeKey(path)] ?? (UNLOCKED ? NOT_FOUND : ROUTES["/"]);
 
 /*
  * One `lazy` per path, kept.
@@ -177,7 +178,9 @@ const routeFor = (path: string) =>
 const ToastHost = UNLOCKED ? lazy(() => import("./components/ToastHost")) : null;
 
 const built = new Map<string, ComponentType>();
-const pageFor = (path: string) => {
+const pageFor = (at: string) => {
+  // Every market's address shares the one trade page (and its chunk).
+  const path = routeKey(at);
   const hit = built.get(path);
   if (hit) return hit;
   // The waitlist is already in the bundle, so it is rendered as itself. Behind
@@ -192,10 +195,14 @@ const pageFor = (path: string) => {
 /// Start the chunk before the click. A pointer resting on a link is the
 /// earliest honest signal of intent there is, and on a fast connection the
 /// module is usually parsed by the time the press lands.
-const warm = (path: string) => { if (ROUTES[path]) void routeFor(path)(); };
+const warm = (path: string) => { if (ROUTES[routeKey(path)]) void routeFor(path)(); };
 
 function Site() {
   const [url, setUrl] = useState(() => location.pathname + location.search);
+  // Counts link swaps. The terminal moves its own address when the market
+  // changes, which this state never sees, so a link back to the market the
+  // page opened on can name the same `url` and would otherwise not remount.
+  const [swaps, setSwaps] = useState(0);
   const path = normalize(new URL(url, location.origin).pathname);
 
   // A referral link can open any page, so every page keeps its code.
@@ -219,11 +226,12 @@ function Site() {
       if (!href || href.startsWith("#")) return;
       const to = new URL(href, location.href);
       if (to.origin !== location.origin || to.hash) return;
-      if (!ROUTES[normalize(to.pathname)]) return;
+      if (!ROUTES[routeKey(normalize(to.pathname))]) return;
       e.preventDefault();
       if (to.href === location.href) return;
       history.pushState(null, "", to.href);
       sync();
+      setSwaps((n) => n + 1);
     };
 
     const onOver = (e: Event) => {
@@ -257,7 +265,7 @@ function Site() {
    */
   return (
     <>
-      <Page key={url} />
+      <Page key={`${url}|${swaps}`} />
       {/* Its own boundary, so loading it never holds the page back. */}
       {ToastHost && routeFor(path) !== WAITLIST && <Suspense fallback={null}><ToastHost /></Suspense>}
     </>
@@ -266,13 +274,19 @@ function Site() {
 
 // The `/waitlist` alias and, while locked, anything that is not the front
 // page, are corrected in the address bar before the first render.
+// So is the old market address: `/trade?symbol=HYPE` becomes `/trade/HYPE`,
+// keeping any other query.
 {
   const path = location.pathname.replace(/(.)\/$/, "$1");
-  const resolved = normalize(path);
-  const hidden = !UNLOCKED && !ROUTES[resolved];
-  if (hidden || resolved !== path) {
+  let resolved = normalize(path);
+  const query = new URLSearchParams(location.search);
+  const linked = resolved === "/trade" ? query.get("symbol") : null;
+  if (linked) { resolved = tradeHref(linked); query.delete("symbol"); }
+  const search = query.toString() ? `?${query}` : "";
+  const hidden = !UNLOCKED && !ROUTES[routeKey(resolved)];
+  if (hidden || resolved !== path || linked) {
     history.replaceState(null, "",
-      hidden ? "/" : `${resolved}${location.search}${location.hash}`);
+      hidden ? "/" : `${resolved}${search}${location.hash}`);
   }
 }
 

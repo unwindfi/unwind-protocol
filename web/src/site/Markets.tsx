@@ -23,6 +23,7 @@ import { MarketPeek } from "@/components/MarketPeek";
 import { NavIcon } from "@/components/NavIcon";
 import { getMarkets, usePollState, type Market } from "@/lib/api";
 import { compact, pct, price, tone } from "@/lib/format";
+import { tradeHref } from "@/lib/trade-url";
 
 const NONE: Market[] = [];
 const SAVED = "unwind.watchlist";
@@ -536,7 +537,7 @@ export default function Markets() {
                   inside it. */}
               <div className={`group relative grid ${GRID} items-center gap-2 border-b border-line px-3
                             py-3.5 last:border-0 hover:bg-panel2/60 sm:gap-3 sm:px-5`}>
-                <a href={`/trade?symbol=${m.symbol}`}
+                <a href={tradeHref(m.symbol)}
                   className="flex min-w-0 items-center gap-3 after:absolute after:inset-0">
                   <TickerLogo m={m} size={36} />
                   <span className="min-w-0">

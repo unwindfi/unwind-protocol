@@ -49,6 +49,7 @@ import {
   listingLimits, LISTING_ROUND_TRIP_FEE_BPS, MIN_LISTING_BACKING_USD, POOL_QUOTE_BUDGET_BPS,
   TESTNET_LISTING_BACKING_USD,
 } from "@scripts/listing-policy";
+import { tradeHref } from "@/lib/trade-url";
 
 const NONE: Market[] = [];
 
@@ -446,7 +447,7 @@ export default function List() {
         done: `${name} listed, backed with ${payLabel(seedAmount)}`,
         note: preview.opensAtListing ? "Trading is open."
           : `Trading opens in about ${Math.round(preview.seasonSec / 60)} minutes.`,
-        next: { label: `Trade ${name}`, href: `/trade?symbol=${encodeURIComponent(name)}` },
+        next: { label: `Trade ${name}`, href: tradeHref(name) },
       });
     } catch {
       // The toast has said the server could not be reached.
@@ -582,8 +583,7 @@ export default function List() {
                         {devnetHits.map((p) => (
                           <li key={p.pool} role="option" aria-selected={false}>
                             {p.listed ? (
-                              <a href={`/trade?symbol=${encodeURIComponent(
-                                markets.find((m) => m.observed?.source === p.pool)?.symbol ?? p.symbol)}`}
+                              <a href={tradeHref(markets.find((m) => m.observed?.source === p.pool)?.symbol ?? p.symbol)}
                                 onMouseDown={(e) => e.preventDefault()}
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
                                 <TokenIcon src={p.icon ?? null} label={p.symbol} />
@@ -897,7 +897,7 @@ export default function List() {
                       className="scroll-mt-24 rounded-[16px] border border-line px-4 py-3.5 target:border-foreground/40">
                       <div className="flex items-center gap-3">
                         {m.observed!.tradeable || m.observed!.budgetUsd > 0 ? (
-                          <a href={`/trade?symbol=${m.symbol}`}
+                          <a href={tradeHref(m.symbol)}
                             className="flex-1 text-[13.5px] font-medium transition-colors hover:text-brand">
                             {m.symbol}
                           </a>

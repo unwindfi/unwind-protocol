@@ -101,7 +101,7 @@ export function Welcome() {
       }
       if (!preview) write(who, { v: VERSION, at: Date.now(), signature });
       setOpen(false);
-      if (path === "trade" && location.pathname !== "/trade") location.href = "/trade";
+      if (path === "trade" && !/^\/trade(\/|$)/.test(location.pathname)) location.href = "/trade";
       if (path === "earn" && location.pathname !== "/earn") location.href = "/earn";
     } catch (e: any) {
       setNote(/reject|denied|cancel/i.test(String(e?.message)) ? "Signature declined." : humanError(e));

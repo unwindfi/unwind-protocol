@@ -27,6 +27,7 @@ import {
 import { storedRef } from "@/lib/ref";
 import { signAndSend, type TxToastOptions } from "@/lib/tx";
 import { compact, money } from "@/lib/format";
+import { tradeHref } from "@/lib/trade-url";
 
 /// The rules in force. Shown on the page so a change is never silent.
 const RULES_VERSION = "v1";
@@ -543,7 +544,7 @@ function Markets({ r, self }: { r: Rewards; self: boolean }) {
             <span className="hidden md:block">Points</span>
           </Head>
           {r.listed.map((m) => (
-            <a key={m.symbol} href={`/trade?symbol=${m.symbol}`}
+            <a key={m.symbol} href={tradeHref(m.symbol)}
               className={`${cols} border-t border-line px-5 py-3 text-[13.5px] hover:bg-panel2 sm:px-7`}>
               <span title={m.symbol} className="min-w-0 truncate font-medium">{m.symbol}</span>
               <span className="n">{m.traders ?? DASH}</span>

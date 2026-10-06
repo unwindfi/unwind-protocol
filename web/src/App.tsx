@@ -26,6 +26,7 @@ import { claimFaucet, signAndSend, type TxToastOptions } from "@/lib/tx";
 import { toast } from "@/lib/toasts";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
 import { money, pnum } from "@/lib/format";
+import { TRADE, symbolFromPath, tradeHref } from "@/lib/trade-url";
 
 /// Only timeframes the price source actually carries. Jupiter publishes no
 /// sub-minute bars at all, so 5s/15s had nothing behind them but this process's
@@ -41,17 +42,16 @@ const CLOSE_NOTE = "Exits clear in the next batch, same price as entries. "
   + "A crowded batch may fill part of it; the rest stays open.";
 
 export default function App() {
-  // A link from the landing page names the market it was clicked on.
+  // A link names the market in the path: `/trade/HYPE`.
   const [symbol, setSymbol] = useState<string | null>(
-    () => new URLSearchParams(window.location.search).get("symbol"));
+    () => symbolFromPath(window.location.pathname));
   // The address follows the market on screen, so a reload or a shared link
   // opens the market that was being looked at, not the one the page opened on.
   useEffect(() => {
-    if (!symbol) return;
-    const u = new URL(window.location.href);
-    if (u.searchParams.get("symbol") === symbol) return;
-    u.searchParams.set("symbol", symbol);
-    window.history.replaceState(window.history.state, "", u);
+    if (!symbol || !window.location.pathname.startsWith(TRADE)) return;
+    const to = tradeHref(symbol);
+    if (window.location.pathname === to) return;
+    window.history.replaceState(window.history.state, "", to + window.location.search + window.location.hash);
   }, [symbol]);
   const [tf, setTf] = useState(300);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -115,14 +115,24 @@ export default function App() {
   // back to the first market there put a WIND link on SPYx, and its orders
   // with it. Until the server's own list says, the terminal waits.
   const market = useMemo(
-    () => markets.find((m) => m.symbol === symbol) ?? (symbol && !fresh ? undefined : browsable[0] ?? markets[0]),
+    () => markets.find((m) => m.symbol === symbol)
+      ?? (symbol ? markets.find((m) => m.symbol.toLowerCase() === symbol.toLowerCase()) : undefined)
+      ?? (symbol && !fresh ? undefined : browsable[0] ?? markets[0]),
     [markets, browsable, symbol, fresh]
   );
+
+  // A link typed in another case (`/trade/hype`) takes the market's own
+  // spelling, which the address then follows.
+  useEffect(() => {
+    if (market && symbol && market.symbol !== symbol
+        && market.symbol.toLowerCase() === symbol.toLowerCase()) setSymbol(market.symbol);
+  }, [market, symbol]);
 
   // Also corrects a symbol that came in off a link and does not exist, by
   // the server's list only (see `fresh`).
   useEffect(() => {
-    if (fresh && markets.length && !markets.some((m) => m.symbol === symbol)) setSymbol((browsable[0] ?? markets[0]).symbol);
+    const known = (s: string | null) => !!s && markets.some((m) => m.symbol.toLowerCase() === s.toLowerCase());
+    if (fresh && markets.length && !known(symbol)) setSymbol((browsable[0] ?? markets[0]).symbol);
   }, [markets, browsable, symbol, fresh]);
 
   useEffect(() => {
@@ -486,7 +496,7 @@ export default function App() {
         {accountBox}
       </main>
       <StatusBar lastOk={lastOk} readOnly={readOnly} cluster={account?.cluster} />
-      <SiteFooter tradeHref="/trade" />
+      <SiteFooter tradeHref={TRADE} />
       {overlays}
     </div>
   );

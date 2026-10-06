@@ -52,6 +52,7 @@ import { PayToken } from "@/components/PayToken";
 import { YourBacking } from "@/components/YourBacking";
 import { FundPrompt } from "@/components/FundPrompt";
 import { compact, money } from "@/lib/format";
+import { tradeHref } from "@/lib/trade-url";
 
 const NONE: Market[] = [];
 
@@ -518,7 +519,7 @@ export function PositionLine({ v, className = "" }: { v: Vault; className?: stri
   const p = v.position;
   if (!p || !v.symbol) return null;
   return (
-    <a href={`/trade?symbol=${encodeURIComponent(v.symbol)}`}
+    <a href={tradeHref(v.symbol)}
       className={`n block truncate text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline ${className}`}>
       Position: <span className={p.isLong ? "text-up" : "text-down"}>{p.isLong ? "Long" : "Short"}</span> {money(p.size, 0)}
     </a>

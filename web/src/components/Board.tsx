@@ -2,6 +2,7 @@ import { TickerLogo } from "@/components/TickerLogo";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import type { Market } from "@/lib/api";
 import { price } from "@/lib/format";
+import { tradeHref } from "@/lib/trade-url";
 
 /// Seconds since the source pool was first read, which is the market's age:
 /// nothing observes a pool until someone lists it against one.
@@ -18,7 +19,7 @@ function Card({ m }: { m: Market }) {
   // terminal; the rest go to the page where the thing they are missing can be
   // supplied. A card that leads to a market you cannot trade yet is only
   // useful if it leads to the way to finish it.
-  const href = o.tradeable || o.budgetUsd > 0 ? `/trade?symbol=${m.symbol}` : `/list#${m.symbol}`;
+  const href = o.tradeable || o.budgetUsd > 0 ? tradeHref(m.symbol) : `/list#${m.symbol}`;
 
   return (
     <a href={href}

@@ -34,8 +34,9 @@ export default async function middleware(req: Request) {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
         });
   }
-  // Files at the root -- the favicon, robots, the manifest -- are the same either way.
-  if (/\.[^/]*$/.test(path)) return next();
+  // Files at the root -- the favicon, robots, the manifest -- are the same
+  // either way. A market's page is never a file, even when its symbol has a dot.
+  if (/\.[^/]*$/.test(path) && !/^\/trade\/[^/]+$/.test(path)) return next();
   return rewrite(new URL("/unlocked/index.html", url));
 }
 

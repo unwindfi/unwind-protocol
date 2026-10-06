@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
 import { money, price, tone } from "@/lib/format";
+import { tradeHref } from "@/lib/trade-url";
 
 const BTN = "press h-[48px] rounded-full bg-foreground px-6 text-[14px] font-medium text-background " +
   "transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-35";
@@ -326,7 +327,7 @@ function Positions({ rows, owner, loaded }: {
             <span className="hidden lg:block">Margin</span>
           </Head>
           {rows.map((r) => (
-            <a key={r.symbol} href={`/trade?symbol=${r.symbol}`}
+            <a key={r.symbol} href={tradeHref(r.symbol)}
               className={`${POS} ${ROW} hover:bg-panel2`}>
               <span className="min-w-0">
                 <span title={r.symbol} className="block truncate font-medium">{r.symbol}</span>
@@ -381,7 +382,7 @@ function Orders({ orders, owner, loaded, canAct, busy, onCancel }: {
             const key = `${o.symbol}:${o.slot}`;
             return (
               <div key={o.address} className={`${ORD} ${ROW}`}>
-                <a href={`/trade?symbol=${o.symbol}`} className="min-w-0 hover:underline">
+                <a href={tradeHref(o.symbol)} className="min-w-0 hover:underline">
                   <span title={o.symbol} className="block truncate font-medium">{o.symbol}</span>
                   <span className="block text-[12px] text-muted-foreground md:hidden">{orderKind(o)}</span>
                 </a>
