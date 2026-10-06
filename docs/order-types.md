@@ -37,7 +37,9 @@ position, so the same size cannot be promised to two closing orders. A close
 fills like any other taker: in full when the batch can match it, pro rata with
 its flow when it cannot. What a crowded batch does not fill is not carried
 over. The rest of the position stays open, and the trade screen shows how
-much closed.
+much closed. Before a close is sent, the trade screen asks to confirm it,
+with the expected close price and PnL, and says when the position is larger
+than the market fills in one batch.
 
 **Makers** rest as liquidity at their own price. A maker trades only with
 takers, never with the pool and never with another maker. Set `is_maker` on

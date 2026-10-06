@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Table } from "@/components/motion/table";
 import type { TableColumn } from "@/components/motion/table";
-import { getFills, usePoll } from "@/lib/api";
+import { getFills, poolFill, usePoll } from "@/lib/api";
+import { createPortal } from "react-dom";
+import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 import type { Account, Market, Position, Trade } from "@/lib/api";
 import { hhmmss, money, pct, pnum, price, tone } from "@/lib/format";
 
@@ -64,30 +66,91 @@ function useSize<T extends HTMLElement>() {
   return [ref, size.h, size.w] as const;
 }
 
-/// Close takes two taps: the first arms it for three seconds and says what
-/// the second will do. A position is the one thing on this panel a stray tap
-/// cannot take back.
-function CloseButton({
-  symbol, busy, onClose, className,
-}: { symbol: string; busy: boolean; onClose: (symbol: string) => void; className: string }) {
-  const [armed, setArmed] = useState(false);
-  useEffect(() => {
-    if (!armed) return;
-    const t = setTimeout(() => setArmed(false), 3000);
-    return () => clearTimeout(t);
-  }, [armed]);
+/*
+ * Close asks first, in a dialog that says what the close will do: the side and
+ * size, the price it is expected to fill at and the PnL that leaves, and when
+ * it fills. A position is the one thing on this panel a stray tap cannot take
+ * back, and the two-tap button it replaces turned red for three seconds and
+ * said only "Confirm".
+ *
+ * Closing is a market order into the next batch. A position larger than the
+ * pool fills in one batch closes in part, so the dialog says so before, not
+ * the toast after.
+ */
+/// A label and its figure on one line, for the close dialog.
+function DRow({ k, children }: { k: string; children: React.ReactNode }) {
   return (
-    <button disabled={busy}
-      aria-label={armed ? `Confirm close ${symbol} position` : `Close ${symbol} position`}
-      onClick={() => {
-        if (!armed) return setArmed(true);
-        setArmed(false);
-        onClose(symbol);
-      }}
-      onBlur={() => setArmed(false)}
-      className={`${className} ${armed ? "border-down text-down" : ""}`}>
-      {armed ? "Confirm" : "Close"}
-    </button>
+    <div className="flex items-baseline justify-between gap-4 py-1.5">
+      <span className="text-muted-foreground">{k}</span>
+      <span className="n font-medium">{children}</span>
+    </div>
+  );
+}
+
+function CloseButton({
+  row, market, busy, onClose, className,
+}: { row: PosRow; market?: Market; busy: boolean; onClose: (symbol: string) => void; className: string }) {
+  const [open, setOpen] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  useModalFocus(panel, open, () => setOpen(false), cancel);
+  const fill = market ? poolFill(market) : null;
+  const partly = fill != null && row.size > fill;
+  // What the close books: the PnL marked at the price it is expected to fill at.
+  const pnlAtExit = row.entry > 0
+    ? row.size * ((row.exit - row.entry) / row.entry) * (row.isLong ? 1 : -1) - row.funding
+    : row.pnl;
+  return (
+    <>
+      <button disabled={busy} aria-label={`Close ${row.symbol} position`} aria-haspopup="dialog"
+        onClick={() => setOpen(true)} className={className}>
+        Close
+      </button>
+      {open && createPortal(
+        <div className="fixed inset-0 z-[95] flex items-end justify-center sm:items-center sm:p-6">
+          <button type="button" aria-label="Cancel" tabIndex={-1} onClick={() => setOpen(false)}
+            className="absolute inset-0 cursor-default bg-black/60" />
+          <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="close-title"
+            className="relative w-full rounded-t-[12px] border border-line bg-panel sm:max-w-[400px]
+                       sm:rounded-[12px]">
+            <div className="flex items-center gap-2.5 border-b border-line px-5 py-4">
+              <h2 id="close-title" className="text-[16px] font-medium">Close {row.symbol}</h2>
+              <span className={`rounded-[6px] px-1.5 py-0.5 text-[12px] font-medium ${
+                row.isLong ? "bg-up/10 text-up" : "bg-down/10 text-down"}`}>
+                {row.isLong ? "Long" : "Short"} {row.leverage.toFixed(1)}x
+              </span>
+            </div>
+            <div className="px-5 py-3 text-[13.5px]">
+              <DRow k="Size">{money(row.size, 0)}</DRow>
+              <DRow k="Entry">{pnum(row.entry)}</DRow>
+              <DRow k="Expected close price">{pnum(row.exit)}</DRow>
+              <DRow k="Expected PnL">
+                <span className={tone(pnlAtExit)}>{money(pnlAtExit)}</span>
+              </DRow>
+              <DRow k="Fills">Next batch, in a few seconds</DRow>
+            </div>
+            <p className="text-pretty border-t border-line px-5 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+              {partly
+                ? `A market close at the next batch's price. This market fills up to ${money(fill!, 0)} a batch, so part of this position may stay open; close the rest after.`
+                : "A market close at the next batch's price, which can differ a little from the price shown."}
+            </p>
+            <div className="grid grid-cols-2 gap-2.5 border-t border-line px-5 py-4">
+              <button ref={cancel} type="button" onClick={() => setOpen(false)}
+                className="press h-11 rounded-full border border-line text-[14px] font-medium
+                           transition-colors hover:border-foreground/40">
+                Cancel
+              </button>
+              <button type="button" disabled={busy}
+                onClick={() => { setOpen(false); onClose(row.symbol); }}
+                className="press h-11 rounded-full bg-down text-[14px] font-medium text-background
+                           transition-opacity hover:opacity-90 disabled:opacity-35">
+                Close position
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body)}
+    </>
   );
 }
 
@@ -110,8 +173,8 @@ function KV({ k, children }: { k: string; children: React.ReactNode }) {
 }
 
 function PositionCard({
-  r, busy, onClose,
-}: { r: PosRow; busy: boolean; onClose: (symbol: string) => void }) {
+  r, busy, onClose, markets,
+}: { r: PosRow; busy: boolean; onClose: (symbol: string) => void; markets: Market[] }) {
   return (
     <div className="border-b border-line px-4 py-3.5">
       <div className="flex items-center gap-2">
@@ -139,7 +202,7 @@ function PositionCard({
         <span className="text-[11.5px] text-muted-foreground">
           Funding <span className={`n ${tone(-r.funding)}`}>{money(-r.funding)}</span>
         </span>
-        <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
+        <CloseButton row={r} market={markets.find((x) => x.symbol === r.symbol)} busy={busy} onClose={onClose}
           className="press ml-auto min-h-[36px] rounded-full border border-line px-4 text-[12.5px]
                      font-medium transition-colors hover:border-foreground/40 active:bg-panel3
                      disabled:opacity-35" />
@@ -256,7 +319,7 @@ export function BottomPanel({
       cell: (r: PosRow) => <span className={tone(-r.funding)}>{money(-r.funding)}</span> }]),
     { key: "act", header: "", width: W.act,
       cell: (r) => (
-        <CloseButton symbol={r.symbol} busy={busy} onClose={onClose}
+        <CloseButton row={r} market={markets.find((x) => x.symbol === r.symbol)} busy={busy} onClose={onClose}
           className="press text-[12px] font-medium text-foreground transition-opacity
                      hover:opacity-70 disabled:opacity-35" />) },
   ];
@@ -431,7 +494,7 @@ export function BottomPanel({
             ? positions.length === 0
               ? mine("No open positions", "Connect a wallet to see its positions")
               : positions.map((r) => (
-                  <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} />))
+                  <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} markets={markets} />))
             : <Table data={positions} columns={posCols} getRowId={(r) => r.symbol} rowHeight={ROW}
                 className={flat} height={tableH(positions.length)}
                 emptyState={mine("No open positions", "Connect a wallet to see its positions")} />
