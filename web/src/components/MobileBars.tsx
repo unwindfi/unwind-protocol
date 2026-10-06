@@ -36,22 +36,20 @@ export function MobileBars({
   return (
     <div className="flex-none border-t border-line bg-panel safe-b">
       {showTrade && (
-      // The /list pair: the inverted pill for buying, the outlined one for
-      // selling. Both are real actions, so neither is dimmed; the fill only
-      // says which one is first.
+      // Filled with each side's colour, the same fills the ticket's submit
+      // button uses, so the bar already says which way each one trades.
       <div className="grid grid-cols-2 gap-2.5 px-4 py-2.5">
         <button onClick={() => onTrade("long")}
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
-                     rounded-full bg-foreground text-background transition-opacity hover:opacity-90">
+                     rounded-full bg-up text-background transition-opacity hover:opacity-90">
           <span className="text-[14px] font-medium leading-none">Long</span>
-          <span className="n text-[11px] leading-none opacity-60">{pnum(m.ask)}</span>
+          <span className="n text-[11px] leading-none opacity-70">{pnum(m.ask)}</span>
         </button>
         <button onClick={() => onTrade("short")}
           className="press flex min-h-[48px] flex-col items-center justify-center gap-0.5
-                     rounded-full border border-line text-foreground transition-colors
-                     hover:border-foreground/40">
+                     rounded-full bg-down text-background transition-opacity hover:opacity-90">
           <span className="text-[14px] font-medium leading-none">Short</span>
-          <span className="n text-[11px] leading-none text-muted-foreground">{pnum(m.bid)}</span>
+          <span className="n text-[11px] leading-none opacity-70">{pnum(m.bid)}</span>
         </button>
       </div>
       )}

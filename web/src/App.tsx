@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Nav } from "@/components/Nav";
 import { MarketHeader } from "@/components/MarketHeader";
 import { MarketPalette } from "@/components/MarketPalette";
 import { Chart } from "@/components/Chart";
@@ -286,7 +285,9 @@ export default function App() {
     />
   );
 
-  const nav = <Nav />;
+  // The phone gets the site's own header too, so the wallet, theme and menu
+  // sit in the same order and at the same height as on every other page.
+  const nav = <SiteHeader here="/trade" actions={<WalletActions />} />;
 
   const overlays = (
     <>

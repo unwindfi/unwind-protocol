@@ -33,14 +33,14 @@ export function WalletActions() {
   return (
     <>
       <button onClick={() => setVisible(true)} disabled={connecting}
-        className="press flex h-11 flex-none items-center gap-2.5 whitespace-nowrap rounded-[14px]
-                   bg-panel3 px-4 text-[15px] text-foreground
-                   hover:bg-line disabled:opacity-35">
-        <NavIcon name="wallet" size={18} />
-        {/* Spelled out where the header has room; a phone header fits one word. */}
-        {connecting ? "Connecting…" : (
-          <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect wallet</span></>
-        )}
+        className="press flex h-10 flex-none items-center gap-2 whitespace-nowrap rounded-full
+                   bg-panel3 px-3.5 text-[14px] text-foreground hover:bg-line disabled:opacity-35
+                   sm:h-11 sm:gap-2.5 sm:rounded-[14px] sm:px-4 sm:text-[15px]">
+        {/* A phone header is a row of 40px circles, so there the tile is a
+            40px pill with a smaller icon; the full tile returns at sm. */}
+        <span className="contents sm:hidden"><NavIcon name="wallet" size={16} /></span>
+        <span className="hidden sm:contents"><NavIcon name="wallet" size={18} /></span>
+        {connecting ? "Connecting…" : "Wallet"}
       </button>
     </>
   );
@@ -70,7 +70,8 @@ function Connected({ address, onDisconnect }: { address: string; onDisconnect: (
   return (
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
-        className={`press flex h-11 items-center gap-2.5 rounded-[14px] px-4 text-[15px] text-foreground ${
+        className={`press flex h-10 items-center gap-2 rounded-full px-3.5 text-[14px] text-foreground
+          sm:h-11 sm:gap-2.5 sm:rounded-[14px] sm:px-4 sm:text-[15px] ${
           open ? "bg-line" : "bg-panel3 hover:bg-line"}`}>
         <span className="size-2 flex-none rounded-full bg-up" />
         <span className="n">{short}</span>
