@@ -1,16 +1,11 @@
 import { source } from '@/lib/source';
-import {
-  DocsBody,
-  DocsPage,
-  DocsTitle,
-  MarkdownCopyButton,
-} from 'fumadocs-ui/layouts/docs/page';
+import { DocsBody, DocsPage, DocsTitle } from 'fumadocs-ui/layouts/docs/page';
 import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
-import { getPageMarkdownUrl, siteName } from '@/lib/shared';
+import { siteName } from '@/lib/shared';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -29,13 +24,10 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
           width={1990}
           height={796}
           priority
-          className="mb-2 w-full rounded-xl border object-cover"
+          className="mb-2 w-full rounded-xl object-cover"
         />
       )}
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={getPageMarkdownUrl(page).url} />
-      </div>
+      <DocsTitle className="border-b pb-6">{page.data.title}</DocsTitle>
       <DocsBody>
         <MDX
           components={getMDXComponents({

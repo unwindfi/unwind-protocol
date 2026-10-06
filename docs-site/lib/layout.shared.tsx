@@ -1,6 +1,8 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 import Image from 'next/image';
 import { Wordmark } from '@/components/wordmark';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { ArrowSquareOut, XLogo } from '@phosphor-icons/react/ssr';
 import { appUrl, xUrl } from './shared';
 
 export function baseOptions(): BaseLayoutProps {
@@ -15,9 +17,20 @@ export function baseOptions(): BaseLayoutProps {
       ),
       url: '/',
     },
+    themeSwitch: { component: <ThemeToggle /> },
     links: [
-      { text: 'App', url: appUrl, external: true },
-      { text: 'X', url: xUrl, external: true },
+      {
+        text: 'App',
+        url: appUrl,
+        external: true,
+        icon: <ArrowSquareOut weight="duotone" className="text-fd-primary" />,
+      },
+      {
+        text: 'X',
+        url: xUrl,
+        external: true,
+        icon: <XLogo weight="duotone" className="text-fd-primary" />,
+      },
     ],
   };
 }

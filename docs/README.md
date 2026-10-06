@@ -1,5 +1,5 @@
 ---
-cover: .gitbook/assets/unwind-cover.png
+cover: .gitbook/assets/unwind-hero.png
 coverY: 0
 ---
 

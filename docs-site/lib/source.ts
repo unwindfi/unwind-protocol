@@ -1,6 +1,6 @@
 import { llms, loader } from 'fumadocs-core/source';
 import { createElement } from 'react';
-import { icons } from 'lucide-react';
+import * as Phosphor from '@phosphor-icons/react/ssr';
 import { docsRoute } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { applyMdxPreset } from 'fumadocs-mdx/config';
@@ -33,8 +33,9 @@ export const source = loader({
   source: docs.toFumadocsSource(),
   icon(name) {
     if (!name) return;
-    if (!(name in icons)) throw new Error(`Unknown sidebar icon: ${name}`);
-    return createElement(icons[name as keyof typeof icons]);
+    const Icon = (Phosphor as unknown as Record<string, React.ComponentType<{ weight?: string; className?: string }>>)[name];
+    if (!Icon) throw new Error(`Unknown sidebar icon: ${name}`);
+    return createElement(Icon, { weight: 'duotone', className: 'text-fd-primary' });
   },
   plugins: [
     {

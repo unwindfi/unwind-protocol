@@ -12,6 +12,7 @@
     "types:check": "npm run sync && next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "fumadocs-core": "16.16.2",
     "fumadocs-mdx": "15.4.6",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.16.2",

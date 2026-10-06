@@ -88,31 +88,34 @@ function parse(file) {
 }
 
 
-// One Lucide icon per page in the sidebar, by source file. Names are
-// lucide-react exports; an unknown name fails the build in lib/source.ts.
+
+
+// One Phosphor icon per page in the sidebar, by source file, drawn duotone in
+// the brand violet (lib/source.ts). Names are @phosphor-icons/react exports;
+// an unknown name fails the build.
 const ICONS = {
   'README.md': 'House',
   'about.md': 'Info',
   '101.md': 'GraduationCap',
-  'risks.md': 'TriangleAlert',
-  'how-to-open-a-market.md': 'CirclePlus',
+  'risks.md': 'Warning',
+  'how-to-open-a-market.md': 'PlusCircle',
   'how-to-underwrite-a-market.md': 'ShieldCheck',
-  'devnet.md': 'FlaskConical',
+  'devnet.md': 'Flask',
   'auction.md': 'Gavel',
-  'pool.md': 'Droplets',
-  'price-sources.md': 'Radio',
+  'pool.md': 'Drop',
+  'price-sources.md': 'Broadcast',
   'loss-budget.md': 'Wallet',
-  'verification.md': 'BadgeCheck',
+  'verification.md': 'SealCheck',
   'fees.md': 'Receipt',
   'rewards.md': 'Gift',
-  'order-types.md': 'ListOrdered',
-  'portfolio.md': 'ChartPie',
-  'margining.md': 'Scale',
-  'liquidations.md': 'Flame',
+  'order-types.md': 'ListNumbers',
+  'portfolio.md': 'ChartPieSlice',
+  'margining.md': 'Scales',
+  'liquidations.md': 'Fire',
   'auto-deleveraging.md': 'Scissors',
-  'funding.md': 'ArrowLeftRight',
+  'funding.md': 'ArrowsLeftRight',
   'sessions.md': 'Clock',
-  'corporate-actions.md': 'Landmark',
+  'corporate-actions.md': 'Bank',
 };
 
 function write(file, dest, extra = {}) {
