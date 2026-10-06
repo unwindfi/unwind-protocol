@@ -34,8 +34,9 @@ ssh "$HOST" bash -s -- "$APP" "$REV" <<'REMOTE'
 set -euo pipefail
 APP=$1; REV=$2
 # Files the box owns, not the repo: the state (with its keys), the faucet's
-# claims and the vault tape. node_modules is reused unless the lock changed.
-for f in .devnet-state.json .devnet-faucet.json .quote-cache.json .cache .npm; do
+# claims, the devnet mirrors and the vault tape. node_modules is reused unless
+# the lock changed.
+for f in .devnet-state.json .devnet-faucet.json .devnet-copies.json .quote-cache.json .cache .npm; do
   if [ -e "$APP/$f" ]; then cp -a "$APP/$f" "$APP.next/"; fi
 done
 # Hard links, not a move: the running server still has this tree open.
