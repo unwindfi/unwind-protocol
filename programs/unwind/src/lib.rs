@@ -228,6 +228,12 @@ pub mod unwind {
         instructions::admin::set_pool_paused(ctx, paused)
     }
 
+    /// The program's upgrade authority turns a pool's points on or off
+    /// (`Pool::no_points`).
+    pub fn set_pool_points(ctx: Context<SetPoolPoints>, enabled: bool) -> Result<()> {
+        instructions::admin::set_pool_points(ctx, enabled)
+    }
+
     pub fn nominate_authority(ctx: Context<UpdatePool>, new_authority: Pubkey) -> Result<()> {
         instructions::admin::nominate_authority(ctx, new_authority)
     }

@@ -38,6 +38,13 @@ ACCOUNT_ARGS+=(--account 3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv \
 ACCOUNT_ARGS+=(--account 3Y695CuQ8AP4anbwAqiEBeQF9KxqHFr8piEwvw3UePnQ \
   tests/fixtures/raydium-sol-usdc-observation.json)
 
+# The upgrade authority of the perps program: the same key
+# scripts/bootstrap-localnet.ts loads as the deployer, which switches points on
+# for the pools it creates (`set_pool_points`). `--bpf-program` would load the
+# program with no upgrade authority, and then no pool here could earn points.
+DEPLOYER="${DEPLOYER:-$HOME/.config/solana/id.json}"
+UPGRADE_AUTHORITY="$(solana-keygen pubkey "$DEPLOYER")"
+
 # Port 8000 (the default gossip port) is commonly taken by another dev server,
 # and the validator panics rather than falling back, so pin the ports here.
 exec solana-test-validator \
@@ -47,6 +54,6 @@ exec solana-test-validator \
   --dynamic-port-range 8110-8140 \
   \
   --ledger .localnet-ledger \
-  --bpf-program "$PROGRAM_ID" target/deploy/unwind.so \
+  --upgradeable-program "$PROGRAM_ID" target/deploy/unwind.so "$UPGRADE_AUTHORITY" \
   --bpf-program "$MOCK_PYTH_ID" target/deploy/mock_pyth.so \
   "${ACCOUNT_ARGS[@]}"

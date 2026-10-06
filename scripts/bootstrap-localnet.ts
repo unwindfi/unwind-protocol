@@ -98,6 +98,11 @@ async function main() {
   const lp = prior ? kp(prior.keys.lp) : Keypair.generate();
   const trader = prior ? kp(prior.keys.trader) : Keypair.generate();
   if (prior) console.log(`resuming ${STATE_PATH.split("/").pop()}`);
+  // The key that deployed the program, and so its upgrade authority
+  // (scripts/localnet.sh on localnet).
+  const deployer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(
+    fs.readFileSync(process.env.DEPLOYER ??
+      `${process.env.HOME}/.config/solana/id.json`, "utf8"))));
   // A public cluster has no faucet worth relying on, so the deployer funds the
   // demo accounts out of its own balance instead of airdropping to each.
   if (IS_LOCAL) {
@@ -106,9 +111,7 @@ async function main() {
         await conn.requestAirdrop(kp.publicKey, 500e9), "confirmed");
     }
   } else {
-    const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(
-      fs.readFileSync(process.env.DEPLOYER ??
-        `${process.env.HOME}/.config/solana/id.json`, "utf8"))));
+    const payer = deployer;
     // Only top up what is actually short. A resumed run would otherwise pay
     // the demo accounts again out of a balance that has to cover rent.
     const tx = new Transaction();
@@ -195,6 +198,28 @@ async function main() {
       programData: PublicKey.findProgramAddressSync([program.programId.toBuffer()], BPF_LOADER_UPGRADEABLE)[0],
     })
     .rpc();
+
+  // A pool created by anyone but the program's upgrade authority starts with
+  // no points (`Pool::no_points`). The demo pool is created from a fresh key,
+  // so the deployer switches its points on. Checked on a resumed run too.
+  const programData = PublicKey.findProgramAddressSync(
+    [program.programId.toBuffer()], BPF_LOADER_UPGRADEABLE)[0];
+  const programDataInfo = await conn.getAccountInfo(programData);
+  // UpgradeableLoaderState::ProgramData: u32 tag, u64 slot, Option<Pubkey>.
+  const upgradeAuthority = programDataInfo && programDataInfo.data[12] === 1
+    ? new PublicKey(programDataInfo.data.subarray(13, 45)) : null;
+  if ((await program.account.pool.fetch(pool)).noPoints) {
+    if (upgradeAuthority?.equals(deployer.publicKey)) {
+      await retry(() => program.methods.setPoolPoints(true)
+        .accounts({ upgradeAuthority: deployer.publicKey, pool, programData })
+        .signers([deployer])
+        .rpc());
+      console.log("  points switched on for the pool");
+    } else {
+      console.log(`  pool earns no points: the deployer ${deployer.publicKey.toBase58()} ` +
+        `is not the upgrade authority (${upgradeAuthority?.toBase58() ?? "none"})`);
+    }
+  }
 
   // Saved now, not only at the end: everything after this is resumable from
   // the keys and the mint, and a run the RPC cuts off halfway would otherwise

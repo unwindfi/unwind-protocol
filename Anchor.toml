@@ -24,6 +24,12 @@ test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 # Fixed `PriceUpdateV2` fixtures for the integration tests, written by
 # `scripts/gen-oracle-accounts.ts` and loaded at boot. The tests need prices
 # that never move; the product posts live ones through `mock_pyth` instead.
+# Loads the programs upgradeable, with the provider wallet as upgrade
+# authority, so the pools the tests create from it earn points
+# (`Pool::no_points`).
+[test]
+upgradeable = true
+
 [test.validator]
 bind_address = "0.0.0.0"
 

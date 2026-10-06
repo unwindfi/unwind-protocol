@@ -623,6 +623,37 @@ pub fn set_pool_paused(ctx: Context<UpdatePool>, paused: bool) -> Result<()> {
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct SetPoolPoints<'info> {
+    /// The program's upgrade authority, checked against `program_data`.
+    pub upgrade_authority: Signer<'info>,
+    #[account(mut)]
+    pub pool: Account<'info, Pool>,
+    #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
+    )]
+    pub program_data: Account<'info, ProgramData>,
+}
+
+/// Who may switch a pool's points on or off: the program's upgrade authority,
+/// on every build, and nobody once the program is immutable. A devnet pool
+/// created from a fresh key starts with no points; this is how the deployer
+/// vouches for it.
+pub fn check_points_switch(upgrade_authority: Option<Pubkey>, signer: &Pubkey) -> Result<()> {
+    check_pool_creator(upgrade_authority, signer, true)
+}
+
+pub fn set_pool_points(ctx: Context<SetPoolPoints>, enabled: bool) -> Result<()> {
+    check_points_switch(
+        ctx.accounts.program_data.upgrade_authority_address,
+        &ctx.accounts.upgrade_authority.key(),
+    )?;
+    ctx.accounts.pool.no_points = !enabled;
+    Ok(())
+}
+
 pub fn nominate_authority(ctx: Context<UpdatePool>, new_authority: Pubkey) -> Result<()> {
     ctx.accounts.pool.pending_authority = new_authority;
     Ok(())
@@ -1099,6 +1130,15 @@ mod tests {
         // An immutable program creates no more pools.
         assert!(check_pool_creator(None, &admin, true).is_err());
         assert!(check_pool_creator(None, &admin, false).is_ok());
+    }
+
+    #[test]
+    fn only_the_upgrade_authority_switches_points() {
+        let admin = Pubkey::new_unique();
+        assert!(check_points_switch(Some(admin), &admin).is_ok());
+        // A pool's own authority is not enough, on any build.
+        assert!(check_points_switch(Some(admin), &Pubkey::new_unique()).is_err());
+        assert!(check_points_switch(None, &admin).is_err());
     }
 
     #[test]

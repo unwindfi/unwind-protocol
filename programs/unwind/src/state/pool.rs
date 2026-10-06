@@ -119,7 +119,8 @@ pub struct Pool {
     /// pool earns nobody points: its money is whatever token its creator
     /// chose, so a deposit, a backing or a fill there costs nothing real and
     /// would otherwise mint points without limit. Was `_reserved`, which was
-    /// zero, so every pool from before earns as it did.
+    /// zero, so every pool from before earns as it did. The upgrade
+    /// authority can switch it either way with `set_pool_points`.
     pub no_points: bool,
 
     /// Running total, wrapping, of how much what the markets with open

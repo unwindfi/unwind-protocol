@@ -135,6 +135,11 @@ created (`Pool::no_points`) and earns nobody anything: no trading points or
 volume, no referrer's cut, no points to the market's deployer, and no pool or
 backing points. `accrue_points` refuses its pool token account.
 
+The upgrade authority can switch a pool's points on or off with
+`set_pool_points`. The devnet bootstrap creates its pool from a fresh key and
+then switches points on with the deployer key, so devnet pools set up that way
+earn points.
+
 ## Numerical example
 
 A referred trader opens $10,000 on a market with a 10 basis point open fee,
