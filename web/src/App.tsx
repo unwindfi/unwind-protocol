@@ -22,7 +22,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import * as api from "@/lib/api";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { getAccount, getBatch, getMarkets, getTrades, peek, usePoll } from "@/lib/api";
+import { getAccount, getBatch, getMarkets, getTrades, peek, usePoll, usePollState } from "@/lib/api";
 import { claimFaucet, signAndSend, type TxToastOptions } from "@/lib/tx";
 import { toast } from "@/lib/toasts";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
@@ -94,9 +94,13 @@ export default function App() {
   // The connected wallet's account, and none without one. It used to fall
   // back to the server's demo account, so every visitor without a wallet saw
   // one shared balance and its positions as their own, and traded them.
-  const account = usePoll(
+  const accountPoll = usePollState(
     () => (owner ? getAccount(owner) : Promise.resolve(null)), 1800, [owner],
     () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null), accountTick);
+  const account = accountPoll.data;
+  // A connected wallet's balance before it has been read is a placeholder,
+  // and after a failed read it says so: neither is $0.
+  const accountState = owner && !account ? (accountPoll.error ? "failed" as const : "loading" as const) : undefined;
   const { setVisible: openWallet } = useWalletModal();
 
   // Twice a second against a one-second window: fast enough that the book is
@@ -252,6 +256,7 @@ export default function App() {
             note: "Rests this batch. Unfilled, the margin comes back.",
           })}
           onFund={owner ? fund : undefined}
+          accountState={accountState} onRetryAccount={accountPoll.retry}
       m={market} account={account} busy={busy || readOnly} mobile={isMobile}
       onConnect={owner ? undefined : () => openWallet(true)}
       card={!isMobile}

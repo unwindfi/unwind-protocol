@@ -101,6 +101,14 @@ Every order, close, deposit, withdrawal and backing is signed by the wallet
 you connect. Without one, the site shows prices, charts and markets, and the
 trade buttons ask you to connect; there is no shared demo account to trade.
 
+A transaction's notice turns to done once the transaction is confirmed (the
+`confirmed` commitment, about a second), not finalized, and links it on
+Solscan. A transaction that lands but fails says so. Program errors are
+shown as one short line (for example "Price moved, try again" for
+`SlippageExceeded`); the full list is in `web/src/lib/errors.ts`, and the
+web build fails if it no longer matches the program's errors. A balance the
+site could not read shows as unavailable with a retry, never as zero.
+
 ## First connection
 
 The first time a wallet connects, the site shows three screens once: what

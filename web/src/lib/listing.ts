@@ -13,6 +13,7 @@
  * `getPool` once a pool is chosen.
  */
 import { QUOTE_MINTS } from "@scripts/listing-policy";
+import { noteSolPrice } from "./errors";
 
 export type Dex = "raydium-clmm" | "meteora-dlmm";
 
@@ -150,5 +151,6 @@ export async function usdPrices(): Promise<Record<PayWith, number>> {
   const ids = Object.values(PAY_TOKENS).map((t) => t.mint).join(",");
   const body = await json(`https://lite-api.jup.ag/price/v3?ids=${ids}`);
   const of = (k: PayWith) => Number(body?.[PAY_TOKENS[k].mint]?.usdPrice) || (k === "SOL" ? 0 : 1);
+  noteSolPrice(of("SOL"));
   return { USDC: of("USDC"), USDT: of("USDT"), SOL: of("SOL") };
 }

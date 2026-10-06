@@ -41,8 +41,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import { EASE_OUT } from "@/lib/ease";
 import * as api from "@/lib/api";
+import { Pending, Unavailable } from "@/components/ui/unavailable";
 import {
-  getAccount, getApy, getBackings, getMarkets, peek, usePoll,
+  getAccount, getApy, getBackings, getMarkets, peek, usePoll, usePollState,
   type Account, type Apy, type Backing, type Market,
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
@@ -395,7 +396,9 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           <div className="mt-5">
             <div className="mb-2 flex items-baseline justify-between gap-3">
               <label htmlFor="vault-amount" className="text-[13px] text-foreground">Amount</label>
-              {owner && paying === "USDC" && (
+              {/* Only once the balance has been read: before that it is
+                  not $0, it is unknown. */}
+              {owner && paying === "USDC" && (account || (side === "out" && v.kind === "market")) && (
                 <button type="button"
                   // Down to the cent, never up: rounded up, MAX asked for a
                   // fraction of a cent more than there was and was refused.
@@ -457,7 +460,9 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                   ? `≈${money(usd * (1 - fee / 100))} at today's value`
                   : money(usd * (1 - fee / 100))}
           </Stat>
-          <Stat k="Fee">{fee ? `${fee}%, paid to remaining LPs` : "none"}</Stat>
+          <Stat k="Fee">{!fee ? "none" : usd
+            ? `${money(usdOf(usd) * fee / 100)} (${fee}%), paid to remaining LPs`
+            : `${fee}%, paid to remaining LPs`}</Stat>
           <Stat k="Yours now">{money(v.yours)}</Stat>
           <Stat k="APY" tone={v.apy.tone}>
             {v.apy.text}
@@ -517,7 +522,12 @@ export default function Earn() {
   const { setVisible } = useWalletModal();
   const owner = wallet.publicKey?.toBase58();
   const [tick, setTick] = useState(0);
-  const account = usePoll(() => getAccount(owner), 3000, [owner], undefined, tick);
+  const accountPoll = usePollState(() => getAccount(owner), 3000, [owner], undefined, tick);
+  const account = accountPoll.data;
+  // A connected wallet's figures before its account is read, or after the
+  // read failed: a placeholder, never $0.
+  const unread = owner && !account
+    ? (accountPoll.error ? <Unavailable onRetry={accountPoll.retry} /> : <Pending />) : null;
   const markets = usePoll(getMarkets, 5000) ?? NONE;
   // Seeded from the last answer, so the section is drawn at once rather than
   // empty until the first read lands.
@@ -629,13 +639,13 @@ export default function Earn() {
 
             <div className="mt-4">
               <Stat k="In your wallet">
-                {owner ? (
+                {unread ?? (owner ? (
                   <span className="inline-flex items-center gap-1.5">
                     <AnimatedNumber value={account?.usdc ?? 0} duration={0.9}
                       format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 })} />
                     <PayToken k="USDC" size={15} />
                   </span>
-                ) : <span className="font-normal text-muted-foreground">not connected</span>}
+                ) : <span className="font-normal text-muted-foreground">not connected</span>)}
               </Stat>
               <Stat k={`Pool APY${poolApy.text !== "–" ? `, ${poolApy.note}` : ""}`} tone={poolApy.tone}>
                 {poolApy.value != null
@@ -644,7 +654,7 @@ export default function Earn() {
                   : poolApy.text}
               </Stat>
               <Stat k="Deposited">
-                {owner ? <AnimatedNumber value={yours} duration={0.9} format={(n) => money(n)} /> : <span className="font-normal text-dim">–</span>}
+                {unread ?? (owner ? <AnimatedNumber value={yours} duration={0.9} format={(n) => money(n)} /> : <span className="font-normal text-dim">–</span>)}
               </Stat>
               {owner && account?.lp.pending && (
                 <Stat k="Withdrawing">

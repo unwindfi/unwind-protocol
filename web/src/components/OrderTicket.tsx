@@ -1,4 +1,5 @@
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
+import { Pending, Unavailable } from "@/components/ui/unavailable";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/motion/checkbox";
@@ -160,7 +161,12 @@ type Tif = keyof typeof TIF;
 export function OrderTicket({
   m, account, busy, onOrder, onLimit, onMaker, onPool, onFund, onTrigger, onCancelTrigger,
   onReduce, submitLabel, mobile = false, card = false, side: sideProp, onSideChange, onConnect,
+  accountState, onRetryAccount,
 }: {
+  /// For a connected wallet whose account has not been read: still reading,
+  /// or the read failed. Its balance is then a placeholder, never $0.
+  accountState?: "loading" | "failed";
+  onRetryAccount?: () => void;
   /// Present when no wallet is connected: the button asks for one instead
   /// of placing anything.
   onConnect?: () => void;
@@ -426,7 +432,7 @@ export function OrderTicket({
           </TabsList>
         </Tabs>
 
-        {onFund && avail === 0 && (
+        {onFund && account && avail === 0 && (
           // Inverted, because with nothing to trade with it is the one thing
           // this ticket can do: every other control waits on it.
           <button type="button" onClick={onFund} disabled={busy}
@@ -437,9 +443,12 @@ export function OrderTicket({
           </button>
         )}
 
-        {(account?.address || pos) && (
+        {(account?.address || pos || accountState) && (
           <div className="mt-3">
-            {account?.address && <KV k="Available to trade">{money(avail)}</KV>}
+            {account?.address ? <KV k="Available to trade">{money(avail)}</KV>
+              : accountState === "failed" ? <KV k="Available to trade"><Unavailable onRetry={onRetryAccount} /></KV>
+              : accountState === "loading" ? <KV k="Available to trade"><Pending /></KV>
+              : null}
             {/* Only when there is one. "Current position 0 SPYx" is a row that
                 exists to say nothing is there, which the rest of the ticket
                 already says. */}

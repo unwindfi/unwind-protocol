@@ -299,6 +299,9 @@ export function BottomPanel({
     : n === 0 ? 200 : Math.min(300, 48 * (n + 1) + 2));
 
   const empty = (s: string) => <div className="p-6 text-center text-[12.5px] text-dim">{s}</div>;
+  // A connected wallet whose account has not been read yet has nothing to
+  // say about its positions: "None" there would be a guess.
+  const mine = (s: string, nobody: string) => empty(!owner ? nobody : account ? s : "Loading");
 
   const count = (n: number) => n > 0 && <span className="n ml-1 text-dim">{n}</span>;
   const nowRates = market && (
@@ -340,24 +343,24 @@ export function BottomPanel({
         {tab === "orders" && (
           <Table data={orders} columns={orderCols} getRowId={(r) => r.address}
             className={flat} height={tableH(orders.length)}
-            emptyState={empty(owner ? "No take profits, stops or limit orders" : "Connect a wallet to see its orders")} />
+            emptyState={mine("No take profits, stops or limit orders", "Connect a wallet to see its orders")} />
         )}
         {tab === "funding" && (
-          positions.length === 0 && nowRates ? nowRates
+          positions.length === 0 && account && nowRates ? nowRates
             : <Table data={positions} columns={fundCols} getRowId={(r) => r.symbol}
                 className={flat} height={tableH(positions.length)}
-                emptyState={empty(owner ? "No open positions" : "Connect a wallet to see its positions")} />
+                emptyState={mine("No open positions", "Connect a wallet to see its positions")} />
         )}
 
         {tab === "positions" && (
           mobile
             ? positions.length === 0
-              ? empty(owner ? "No open positions" : "Connect a wallet to see its positions")
+              ? mine("No open positions", "Connect a wallet to see its positions")
               : positions.map((r) => (
                   <PositionCard key={r.symbol} r={r} busy={busy} onClose={onClose} />))
             : <Table data={positions} columns={posCols} getRowId={(r) => r.symbol}
                 className={flat} height={tableH(positions.length)}
-                emptyState={empty(owner ? "No open positions" : "Connect a wallet to see its positions")} />
+                emptyState={mine("No open positions", "Connect a wallet to see its positions")} />
         )}
         {/*
          * Balances was a tab here and a box in the rail, saying the same
@@ -370,7 +373,7 @@ export function BottomPanel({
           <div className={mobile ? "strip-scroll fade-right pr-10 [&>*]:min-w-[560px]" : ""}>
             <Table data={fills} columns={fillCols} getRowId={(_, i) => String(i)}
               className={mobile ? undefined : flat} height={mobile ? undefined : tableH(fills.length)}
-              emptyState={empty(owner ? "No fills yet" : "Connect a wallet to see its fills")} />
+              emptyState={mine("No fills yet", "Connect a wallet to see its fills")} />
           </div>
         )}
         {tab === "liqs" && (

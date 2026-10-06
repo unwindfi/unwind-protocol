@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/motion/checkbox";
 import { getApy, getMarkets, useHasBackend, usePoll } from "@/lib/api";
 import { DOCS, RISKS } from "@/site/Chrome";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
+import { humanError } from "@/lib/errors";
 
 const KEY = (wallet: string) => `unwind.welcome:${wallet}`;
 const VERSION = 1;
@@ -89,7 +90,7 @@ export function Welcome() {
       if (path === "trade" && location.pathname !== "/trade") location.href = "/trade";
       if (path === "earn" && location.pathname !== "/earn") location.href = "/earn";
     } catch (e: any) {
-      setNote(/reject|denied|cancel/i.test(String(e?.message)) ? "Signature declined." : String(e?.message ?? e));
+      setNote(/reject|denied|cancel/i.test(String(e?.message)) ? "Signature declined." : humanError(e));
     } finally { setBusy(false); }
   };
 

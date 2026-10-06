@@ -21,8 +21,9 @@ import { Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
+import { Unavailable } from "@/components/ui/unavailable";
 import {
-  getAccount, getBackings, getFills, getRewards, peek, useHasBackend, usePoll,
+  getAccount, getBackings, getFills, getRewards, peek, useHasBackend, usePoll, usePollState,
   type Account, type Backing, type Position, type Rewards, type Trade,
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
@@ -71,8 +72,9 @@ export default function PortfolioPage() {
   // Nothing is read without a wallet. The server answers an ownerless
   // account request with its own demo account, which is not the visitor's.
   const [tick, setTick] = useState(0);
-  const account = usePoll(() => owner ? getAccount(owner) : Promise.resolve(null), 5000, [owner],
+  const accountPoll = usePollState(() => owner ? getAccount(owner) : Promise.resolve(null), 5000, [owner],
     () => (owner ? peek<Account>(`/api/account?owner=${owner}`) : null), tick);
+  const account = accountPoll.data;
   const backingsRaw = usePoll(() => getBackings(owner), 10_000, [owner],
     () => (owner ? peek<Backing[]>(`/api/backings?owner=${owner}`) : null), tick);
   const backings = backingsRaw ?? NO_BACKINGS;
@@ -175,7 +177,10 @@ export default function PortfolioPage() {
                             sm:px-9 sm:py-9 lg:border-l lg:border-t-0">
             <div className={CAPS}>Account value</div>
             <div className="n mt-2 text-[40px] font-semibold leading-none tracking-[-.02em]">
-              {ready ? <AnimatedNumber value={total} duration={0.9} format={(n) => money(n)} /> : DASH}
+              {ready ? <AnimatedNumber value={total} duration={0.9} format={(n) => money(n)} />
+                : owner && accountPoll.error
+                  ? <span className="text-[15px] tracking-normal"><Unavailable onRetry={accountPoll.retry} /></span>
+                  : DASH}
             </div>
 
             {/* Two columns of figures rather than eight rows: the hero is as
@@ -228,6 +233,9 @@ export default function PortfolioPage() {
               liquidation, read from the chain. Connecting signs nothing and moves nothing.
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
+              {!api.readOnly && (
+                <button type="button" onClick={() => setVisible(true)} className={BTN}>Connect wallet</button>
+              )}
               <a href="/earn" className="press inline-flex h-[48px] items-center rounded-full bg-panel2 px-6
                                          text-[14px] font-medium transition-colors hover:bg-panel3">
                 Explore Earn

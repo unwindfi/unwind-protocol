@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/check-errors.mjs && tsc -b && vite build",
+    "check:errors": "node scripts/check-errors.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },

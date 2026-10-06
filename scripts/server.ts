@@ -17,6 +17,7 @@ import {
   NATIVE_MINT, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction,
   createAssociatedTokenAccountInstruction, createCloseAccountInstruction,
   createMintToInstruction, createSyncNativeInstruction, getAccount, getAssociatedTokenAddressSync, mintTo,
+  TokenAccountNotFoundError,
 } from "@solana/spl-token";
 import {
   AddressLookupTableAccount, ComputeBudgetProgram, Transaction, TransactionInstruction,
@@ -2868,14 +2869,19 @@ async function accountView(owner: PublicKey) {
   {
     // A wallet that has never traded has no token accounts yet; that is a zero
     // balance, not an error, so it must not blank the whole view.
-    const zero = { amount: 0n } as any;
+    // Only a missing account is a zero. A failed read throws, so the request
+    // answers with the last good view (or an error) rather than $0.
+    const zero = (e: unknown) => {
+      if (e instanceof TokenAccountNotFoundError) return { amount: 0n } as any;
+      throw e;
+    };
     // All at once: none depends on another, and against a remote RPC each
     // round trip is hundreds of milliseconds the page polls through.
     const [usdc, sol, lpTok, supply, p, positions, orderAccounts, traderPnl, request, slot] = await Promise.all([
-      getAccount(conn, ata(owner, usdcMint)).catch(() => zero),
+      getAccount(conn, ata(owner, usdcMint)).catch(zero),
       // For the faucet prompt: a wallet short of rent cannot list or back.
       conn.getBalance(owner).then((l) => l / 1e9).catch(() => null),
-      getAccount(conn, ata(owner, lpMint)).catch(() => zero),
+      getAccount(conn, ata(owner, lpMint)).catch(zero),
       lpSupplyRead(),
       poolAccount(),
       loadPositions(owner),
@@ -4597,11 +4603,19 @@ app.post("/api/tx/send", async (req, res) => {
         await new Promise((r) => setTimeout(r, 1_500));
       }
     }
-    await conn.confirmTransaction({
+    // Answers at "confirmed", not "finalized". A transaction that landed
+    // but failed comes back here with its error, not as a success.
+    const landed: any = await conn.confirmTransaction({
       signature: sig,
       blockhash: req.body.blockhash,
       lastValidBlockHeight: req.body.lastValidBlockHeight,
     }, "confirmed");
+    const failed = landed?.value?.err;
+    if (failed) {
+      const custom = failed?.InstructionError?.[1]?.Custom;
+      return res.status(400).json({ ok: false, sig, error: custom != null
+        ? `custom program error: 0x${Number(custom).toString(16)}` : JSON.stringify(failed) });
+    }
     // A new, cancelled or changed order is in the next trigger check.
     invalidateOrders();
     // An opened, resized or closed position is in the next liquidation check.

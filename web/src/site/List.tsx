@@ -42,6 +42,7 @@ import {
   type PayWith, type PoolOption, type TokenHit,
 } from "@/lib/listing";
 import { signAndSend } from "@/lib/tx";
+import { humanError } from "@/lib/errors";
 import { FundPrompt } from "@/components/FundPrompt";
 import { compact, money, price } from "@/lib/format";
 import {
@@ -312,7 +313,7 @@ export default function List() {
       setChosen(address); setPreview(p);
       remember(p.base, address);
     } catch (e: any) {
-      setPreviewErr(String(e?.message ?? e));
+      setPreviewErr(humanError(e));
     } finally {
       setReading(false);
     }
@@ -368,7 +369,7 @@ export default function List() {
     if (token) remember(token.mint, chosen);
     getPool(chosen)
       .then((p) => { if (seq.current === mine) setPreview(p); })
-      .catch((e) => { if (seq.current === mine) setPreviewErr(String(e?.message ?? e)); })
+      .catch((e) => { if (seq.current === mine) setPreviewErr(humanError(e)); })
       .finally(() => { if (seq.current === mine) setReading(false); });
   }, [chosen, preview, token]);
 
@@ -428,7 +429,7 @@ export default function List() {
         setMirroring(true);
         let m: Mirror;
         try { m = await startMirror(token.mint, preview.address); }
-        catch (e: any) { setError(e?.message ?? "Couldn't bring that pool to devnet."); return; }
+        catch (e: any) { setError(e?.message ? humanError(e) : "Couldn't bring that pool to devnet."); return; }
         finally { setMirroring(false); }
         // The mirror's depth is what the program reads; never ask past it.
         const fit = listingLimits(Math.min(preview.depthUsd, m.depthUsd), {

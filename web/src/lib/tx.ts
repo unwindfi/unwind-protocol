@@ -4,6 +4,7 @@ import { storedRef } from "./ref";
 import { apiUrl, knownCluster, post } from "./api";
 import { toast } from "./toasts";
 import { humanToken } from "./turnstile";
+import { REJECTED, humanError } from "./errors";
 
 export interface BuiltTx {
   tx: string;
@@ -25,8 +26,6 @@ export interface TxToastOptions {
 }
 
 type TxResult = { ok: boolean; error?: string; sig?: string };
-
-const REJECTED = "Rejected in wallet";
 
 /// A signature as perps venues show one: first four, last four.
 export const shortSig = (sig: string) => `${sig.slice(0, 4)}…${sig.slice(-4)}`;
@@ -68,7 +67,7 @@ export const txToast = {
         }
       : {
           title: `${o.label} failed`,
-          description: r.error ?? "Not accepted. Check your balance and try again.",
+          description: humanError(r.error ?? ""),
           status: "error" as const, links: solscan(r.sig), duration: 0, dismissible: true,
         };
     if (id) toast.update(id, patch);
@@ -93,10 +92,10 @@ export async function signAndSend(
   record?: { symbol: string; side: "buy" | "sell"; size: number; kind: string },
   toastOptions?: TxToastOptions
 ): Promise<TxResult> {
-  if (!toastOptions) return send(wallet, path, body, record);
+  if (!toastOptions) return readable(await send(wallet, path, body, record));
   let id: string | null = null;
   try {
-    const r = await send(wallet, path, body, record, () => { id = txToast.begin(toastOptions.label); });
+    const r = readable(await send(wallet, path, body, record, () => { id = txToast.begin(toastOptions.label); }));
     txToast.finish(id, r, toastOptions);
     return r;
   } catch (e) {
@@ -106,6 +105,10 @@ export async function signAndSend(
     throw e;
   }
 }
+
+/// A result whose error is already in the page's words (see `humanError`).
+const readable = <T extends TxResult>(r: T): T =>
+  r.ok || r.error == null ? r : { ...r, error: humanError(r.error) };
 
 async function send(
   wallet: WalletContextState,
@@ -126,7 +129,7 @@ async function send(
     // first fill is the one that names their referrer.
     body: JSON.stringify({ ...body, owner, ...(path === "order" ? { ref: storedRef() } : {}) }),
   });
-  const b = (await built.json()) as BuiltTx & { error?: string };
+  const b = (await built.json().catch(() => ({}))) as BuiltTx & { error?: string };
   if (!built.ok) return { ok: false, error: b.error ?? "Unable to build the transaction. Try again." };
 
   let signed: VersionedTransaction;
@@ -151,7 +154,8 @@ async function send(
       record,
     }),
   });
-  return sent.json();
+  // A non-JSON answer (a proxy's error page) is a failure, not a crash.
+  return sent.json().catch(() => ({ ok: false, error: "Unable to reach the server. Try again." }));
 }
 
 /// The faucet: test USDC, and SOL when the wallet is short of it. Every
@@ -170,6 +174,7 @@ export async function claimFaucet(owner: string) {
   } catch {
     r = { ok: false, error: "Unable to reach the server. Try again in a minute." };
   }
+  if (!r.ok && r.error != null) r = { ...r, error: humanError(r.error) };
   txToast.finish(id, r, {
     label, done: "Funded",
     note: `${(r.usdc ?? 0).toLocaleString()} test USDC` + (r.sol ? ` and ${r.sol} SOL` : ""),

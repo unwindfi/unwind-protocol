@@ -19,8 +19,9 @@ import { WalletActions } from "@/components/WalletActions";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
+import { Unavailable } from "@/components/ui/unavailable";
 import {
-  checkCode, getCreators, getLeaderboard, getRewards, useHasBackend, usePoll,
+  checkCode, getCreators, getLeaderboard, getRewards, useHasBackend, usePoll, usePollState,
   type CreatorRow, type Creators, type LeaderRow, type Leaderboard, type Rewards,
 } from "@/lib/api";
 import { storedRef } from "@/lib/ref";
@@ -113,7 +114,8 @@ export default function RewardsPage() {
   };
 
   const [tick, setTick] = useState(0);
-  const r = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
+  const rPoll = usePollState<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
+  const r = rPoll.data;
   const all = usePoll<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner], undefined, tick);
   const week = usePoll<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner], undefined, tick);
   const creators = usePoll<Creators | null>(() => getCreators(owner), 60_000, [owner], undefined, tick);
@@ -241,7 +243,9 @@ export default function RewardsPage() {
                   would be invisible. */}
               {r ? <AnimatedNumber value={live} duration={0.9}
                 format={rate > 0 ? (n) => n.toLocaleString(undefined,
-                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : points} /> : DASH}
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : points} />
+                : owner && rPoll.error ? <span className="text-[15px] tracking-normal"><Unavailable onRetry={rPoll.retry} /></span>
+                : DASH}
               {rate > 0 && (
                 <span className="text-[13px] font-normal tracking-normal text-up">+{points(rate)} a day</span>
               )}
