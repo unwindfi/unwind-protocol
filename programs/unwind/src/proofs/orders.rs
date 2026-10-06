@@ -641,8 +641,9 @@ fn a_liquidation_costs_the_pool_at_most_the_profit_and_the_budget() {
 // ------------------------------------------------------------ the batch
 
 /// No wallet holds more than `MAX_ORDERS_PER_OWNER` (4) live orders in a
-/// batch. An insert for a wallet already at the limit is refused, one below
-/// it lands in a slot that was free, and nothing else in the batch changes.
+/// batch, and none opens both ways in one. An insert for a wallet already at
+/// the limit, or holding a live open on the other side, is refused; any other
+/// lands in a slot that was free, and nothing else in the batch changes.
 /// This is what makes filling a batch to block other traders cost many funded
 /// wallets rather than one. The 64 slots are each free or live and belong to
 /// the inserting wallet or someone else, in any combination.
@@ -660,13 +661,21 @@ fn no_wallet_holds_more_than_four_orders_in_a_batch() {
     let mut mine = [false; MAX_BATCH_ORDERS];
     let mut live = [false; MAX_BATCH_ORDERS];
     let mut mine_before = 0usize;
+    let mut opposite_open = false;
     for j in 0..MAX_BATCH_ORDERS {
         mine[j] = kani::any();
         live[j] = kani::any();
+        let bid: bool = kani::any();
         b.orders[j].owner = if mine[j] { me } else { other };
         b.orders[j].active = live[j] as u8;
+        b.orders[j].is_bid = bid as u8;
         if live[j] && mine[j] {
             mine_before += 1;
+            // The new order below is an open bid: a live open ask of this
+            // wallet's would let it cross itself.
+            if !bid {
+                opposite_open = true;
+            }
         }
     }
     let new = BatchOrder {
@@ -686,6 +695,7 @@ fn no_wallet_holds_more_than_four_orders_in_a_batch() {
         Ok(i) => {
             let i = i as usize;
             assert!(mine_before < MAX_ORDERS_PER_OWNER);
+            assert!(!opposite_open);
             assert!(!live[i]);
             // The marker price says the whole new order landed in slot `i`.
             assert!(b.orders[i].price == 7);
@@ -703,7 +713,11 @@ fn no_wallet_holds_more_than_four_orders_in_a_batch() {
             }
         }
         Err(_) => {
-            assert!(mine_before >= MAX_ORDERS_PER_OWNER || live.iter().all(|l| *l));
+            assert!(
+                mine_before >= MAX_ORDERS_PER_OWNER
+                    || opposite_open
+                    || live.iter().all(|l| *l)
+            );
         }
     }
 }
