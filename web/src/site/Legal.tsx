@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { DOCS, LEGAL, RISKS, Shell, SiteFooter, SiteHeader, X_URL } from "@/site/Chrome";
+import { ArrowLeft } from "lucide-react";
+import { SiX } from "@icons-pack/react-simple-icons";
+import { DOCS, LEGAL, RISKS, SiteHeader, X_URL } from "@/site/Chrome";
 
 /*
  * The privacy policy, the terms and the risk disclosures, one page each at
@@ -29,21 +31,21 @@ const DOCS_BY_PATH: Record<string, Doc> = {
       "we", it means them.</>,
     sections: [
       { h: "What we collect", body: [
-        <><b className="font-medium text-foreground">Wallet addresses.</b> When you connect a
+        <><b className="font-semibold">Wallet addresses.</b> When you connect a
           wallet, the site sends its public address to our server, which keeps the address and
           when it was first and last seen, so we can count wallets. If you sign the welcome
           message, the server checks the signature and records when you signed. We never see
           or hold a private key.</>,
-        <><b className="font-medium text-foreground">IP addresses.</b> Our server uses your IP
+        <><b className="font-semibold">IP addresses.</b> Our server uses your IP
           address to apply rate limits. Faucet claims and devnet market copies keep the
           address for a day, to enforce their daily limits. A request over a
           limit may be logged with its address.</>,
-        <><b className="font-medium text-foreground">The waitlist.</b> If you joined the waitlist
+        <><b className="font-semibold">The waitlist.</b> If you joined the waitlist
           with X, we keep your X handle and who referred you. We do not keep your X password
           or post on your behalf.</>,
-        <><b className="font-medium text-foreground">Usage.</b> The site uses Vercel Web Analytics,
+        <><b className="font-semibold">Usage.</b> The site uses Vercel Web Analytics,
           which counts page views without cookies and without identifying you.</>,
-        <><b className="font-medium text-foreground">In your browser.</b> The site stores your
+        <><b className="font-semibold">In your browser.</b> The site stores your
           settings, your accepted welcome, a referral code you arrived with and recent data in
           your browser's local storage, so pages load fast. It stays on your device; clearing
           your site data removes it.</>,
@@ -244,44 +246,54 @@ const DOCS_BY_PATH: Record<string, Doc> = {
 export default function Legal() {
   const path = location.pathname.replace(/(.)\/$/, "$1");
   const doc = DOCS_BY_PATH[path] ?? DOCS_BY_PATH["/terms"];
+  // Back to where the reader came from, or to the markets when they arrived here directly.
+  const back = () => (history.length > 1 && document.referrer.startsWith(location.origin)
+    ? history.back() : location.assign("/markets"));
   return (
+    /*
+     * One reading column, a back arrow beside the title, the date under it,
+     * uppercase section heads, and the three pages linked from a thin bar
+     * fixed along the foot, as the terminal's status bar links them.
+     */
     <div className="site flex min-h-full flex-col">
       <SiteHeader />
-      <Shell main className="pb-14 pt-6 sm:pt-10">
-        <div className="grid gap-8 lg:grid-cols-[200px_minmax(0,1fr)]">
-          <nav aria-label="Legal" className="flex gap-1 overflow-x-auto lg:sticky lg:top-24 lg:flex-col lg:self-start">
-            {LEGAL.map((n) => (
-              <a key={n.href} href={n.href} aria-current={n.href === path ? "page" : undefined}
-                className="whitespace-nowrap rounded-[10px] px-3 py-2 text-[14px] text-muted-foreground
-                           transition-colors hover:text-foreground aria-[current=page]:bg-panel2
-                           aria-[current=page]:text-foreground">
-                {n.label}
-              </a>
-            ))}
-          </nav>
-          <article className="max-w-[72ch]">
-            <h1 className="text-balance text-[clamp(1.8rem,3.4vw,2.4rem)] font-semibold leading-[1.1] tracking-[-.02em]">
-              {doc.title}
-            </h1>
-            <p className="mt-2 text-[13px] text-dim">Last updated {UPDATED}</p>
-            <p className="text-pretty mt-5 text-[15px] leading-[1.65] text-muted-foreground">{doc.lede}</p>
-            <ol className="mt-8 flex flex-col">
-              {doc.sections.map((s, i) => (
-                <li key={s.h} id={s.h.toLowerCase().replace(/[^a-z]+/g, "-")}
-                  className="border-t border-line py-6">
-                  <h2 className="text-[16px] font-semibold tracking-[-.01em]">
-                    <span className="n mr-3 text-dim">{String(i + 1).padStart(2, "0")}</span>{s.h}
-                  </h2>
-                  {s.body.map((b, j) => (
-                    <p key={j} className="text-pretty mt-3 text-[14.5px] leading-[1.7] text-muted-foreground">{b}</p>
-                  ))}
-                </li>
-              ))}
-            </ol>
-          </article>
+      <main id="main" className="mx-auto w-full max-w-[760px] px-5 pb-24 pt-8 sm:pt-12">
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={back} aria-label="Back"
+            className="grid size-8 flex-none place-items-center rounded-full text-foreground
+                       transition-colors hover:bg-panel2">
+            <ArrowLeft size={20} strokeWidth={2} />
+          </button>
+          <h1 className="text-balance text-[32px] font-bold leading-[1.1] tracking-[-.02em]">{doc.title}</h1>
         </div>
-      </Shell>
-      <SiteFooter />
+        <p className="mt-6 text-center text-[14px] italic text-muted-foreground">Last Updated: {UPDATED}</p>
+        <p className="text-pretty mt-6 text-[14px] leading-6 text-foreground">{doc.lede}</p>
+        {doc.sections.map((s) => (
+          <section key={s.h} id={s.h.toLowerCase().replace(/[^a-z]+/g, "-")} className="mt-8">
+            <h2 className="text-[18px] font-semibold uppercase leading-6 tracking-[.01em]">{s.h}</h2>
+            {s.body.map((b, j) => (
+              <p key={j} className="text-pretty mt-2 text-[14px] leading-6 text-foreground">{b}</p>
+            ))}
+          </section>
+        ))}
+      </main>
+      <footer className="fixed inset-x-0 bottom-0 z-30 flex h-9 items-center justify-between gap-4 border-t
+                         border-line bg-background/90 px-4 text-[13px] backdrop-blur safe-b sm:px-5">
+        <nav aria-label="Legal" className="flex min-w-0 items-center gap-5 overflow-x-auto">
+          {LEGAL.map((n) => (
+            <a key={n.href} href={n.href} aria-current={n.href === path ? "page" : undefined}
+              className="whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground
+                         aria-[current=page]:text-foreground">
+              {n.label}
+            </a>
+          ))}
+        </nav>
+        <a href={X_URL} target="_blank" rel="noreferrer" aria-label="unwind on X" title="unwind on X"
+          className="grid size-6 flex-none place-items-center text-muted-foreground transition-colors
+                     hover:text-foreground">
+          <SiX size={13} aria-hidden />
+        </a>
+      </footer>
     </div>
   );
 }
