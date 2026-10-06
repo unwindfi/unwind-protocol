@@ -90,9 +90,9 @@ const STEPS = [25, 50, 75, 100];
 /// A label and its figure on one line, ruled like the Earn dialog's summary.
 function DRow({ k, children }: { k: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-t border-line py-3 first:border-t-0">
-      <span className="flex-none text-[13.5px] text-muted-foreground">{k}</span>
-      <span className="n text-right text-[13.5px] font-semibold">{children}</span>
+    <div className="flex items-baseline justify-between gap-4 border-t border-line py-2 first:border-t-0">
+      <span className="flex-none text-[13px] text-muted-foreground">{k}</span>
+      <span className="n text-right text-[13px] font-medium">{children}</span>
     </div>
   );
 }
@@ -152,30 +152,30 @@ function CloseButton({
           <button type="button" aria-label="Cancel" tabIndex={-1} onClick={() => setOpen(false)}
             className="absolute inset-0 cursor-default bg-black/60" />
           <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId}
-            className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[24px] border border-line
-                       bg-panel safe-b sm:max-w-[460px] sm:rounded-[24px]">
-            <div className="px-5 pb-5 pt-5 sm:px-6">
+            className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[20px] border border-line
+                       bg-panel safe-b sm:max-w-[380px] sm:rounded-[20px]">
+            <div className="px-4 pb-4 pt-4 sm:px-5">
               <header className="flex items-center gap-3">
-                {market && <TickerLogo m={market} size={40} />}
+                {market && <TickerLogo m={market} size={32} />}
                 <span className="min-w-0 flex-1">
-                  <h2 id={titleId} className="truncate text-[16px] font-medium">Close {row.symbol}</h2>
+                  <h2 id={titleId} className="truncate text-[15px] font-medium">Close {row.symbol}</h2>
                   <span className="n block truncate text-[12.5px] text-muted-foreground">
                     <span className={row.isLong ? "text-up" : "text-down"}>{side}</span>
                     {" "}· {money(row.size, 0)} · {row.leverage.toFixed(1)}x
                   </span>
                 </span>
                 <button type="button" onClick={() => setOpen(false)} aria-label="Cancel"
-                  className="press grid size-9 place-items-center rounded-full text-muted-foreground
+                  className="press grid size-8 place-items-center rounded-full text-muted-foreground
                              transition-colors hover:bg-panel2 hover:text-foreground">
                   <X size={16} strokeWidth={1.75} />
                 </button>
               </header>
 
-              <div className="mt-5">
+              <div className="mt-4">
                 <div className="mb-2 flex items-baseline justify-between gap-3">
                   <label htmlFor={`${titleId}-amt`} className="text-[13px] text-foreground">Amount</label>
                   <button type="button" onClick={() => setAmount(row.size.toFixed(2))}
-                    className="n text-[12px] text-dim transition-colors hover:text-foreground">
+                    className="n -mx-1 rounded-[6px] px-1 text-[12px] text-dim outline-none transition-colors hover:text-foreground focus-visible:bg-panel2">
                     Position {money(row.size)}
                     <span className="ml-1.5 font-medium text-foreground">MAX</span>
                   </button>
@@ -186,9 +186,9 @@ function CloseButton({
                     aria-invalid={!!problem} aria-describedby={problem ? `${titleId}-err` : undefined}
                     onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
-                    className="n h-[52px] w-full rounded-[12px] border border-line bg-panel2 pl-4 pr-16
-                               text-[20px] font-medium transition-colors placeholder:text-dim focus:border-brand" />
-                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[13px] text-dim">
+                    className="n h-11 w-full rounded-[10px] border border-line bg-panel2 pl-3.5 pr-14
+                               text-[16px] font-medium transition-colors placeholder:text-dim focus:border-brand" />
+                  <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[12px] text-dim">
                     USD
                   </span>
                 </div>
@@ -199,7 +199,7 @@ function CloseButton({
                       <button key={p} type="button" aria-pressed={on}
                         onClick={() => setAmount(p === 100 ? row.size.toFixed(2)
                           : (Math.floor(row.size * p) / 100).toFixed(2))}
-                        className={`press n h-8 rounded-full text-[12.5px] transition-colors ${on
+                        className={`press n h-7 rounded-full text-[12px] transition-colors ${on
                           ? "bg-panel3 text-foreground"
                           : "bg-panel2 text-muted-foreground hover:text-foreground"}`}>
                         {p}%
@@ -213,20 +213,20 @@ function CloseButton({
               </div>
 
               <button type="button" disabled={busy || !!problem} onClick={go}
-                className="press mt-5 h-[48px] w-full rounded-full bg-foreground text-[14px] font-medium
+                className="press mt-4 h-10 w-full rounded-full bg-foreground text-[13.5px] font-medium
                            text-background transition-opacity hover:opacity-90
                            disabled:pointer-events-none disabled:opacity-35">
                 {full ? "Close position" : `Close ${money(size)}`}
               </button>
             </div>
 
-            <div className="border-t border-line bg-panel2 px-5 pb-5 pt-2 sm:px-6">
+            <div className="border-t border-line bg-panel2 px-4 pb-4 pt-1 sm:px-5">
               <DRow k="Est. fill">{pnum(row.exit)}</DRow>
               <DRow k="Est. PnL"><span className={tone(pnl)}>{money(pnl)} ({pct(pnlPct)})</span></DRow>
               {fee != null && <DRow k="Fee">{money(fee)}</DRow>}
               {payout != null && payout < 100 && <DRow k="Profit paid">{payout.toFixed(0)}%</DRow>}
               {partly && (
-                <p className="text-pretty border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
+                <p className="text-pretty border-t border-line pt-2.5 text-[12px] leading-relaxed text-dim">
                   Fills up to {money(fill!, 0)} per batch; the rest stays open.
                 </p>
               )}

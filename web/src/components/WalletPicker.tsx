@@ -3,24 +3,32 @@
  *
  * It answers through the adapter's `WalletModalContext`, so every
  * `useWalletModal().setVisible(true)` on the site opens this one without
- * knowing it changed. Installed wallets first, then ones that load on
- * demand, then ones this browser does not have, which link out to install.
- * Choosing one selects it; the provider's autoConnect does the connecting,
- * as it did behind the old modal.
+ * knowing it changed. One rounded list: every Solana wallet this browser
+ * has, Phantom and Backpack first, then whichever of those two it lacks, as
+ * install links. Choosing one selects it; the provider's autoConnect does the
+ * connecting, as it did behind the old modal.
  */
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 import { useWallet, type Wallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { WalletModalContext } from "@solana/wallet-adapter-react-ui";
+import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 
-/// Shown when the browser exposes no Solana wallet at all.
-const SUGGESTED = [
-  { name: "Phantom", href: "https://phantom.com/download" },
-  { name: "Solflare", href: "https://solflare.com/download" },
-  { name: "Backpack", href: "https://backpack.app/downloads" },
+/*
+ * Offered whether or not this browser has them: the two wallets most Solana
+ * traders use. When one is not installed its row links to its download page.
+ * Any other wallet shows only when the browser has it. Phantom's mark comes
+ * from its adapter; Backpack ships none, so without the extension its row
+ * carries its initial on its red.
+ */
+const phantom = new PhantomWalletAdapter();
+const SUGGESTED: { name: string; href: string; icon: string | null; tint: string }[] = [
+  { name: "Phantom", href: phantom.url, icon: phantom.icon, tint: "" },
+  { name: "Backpack", href: "https://backpack.app/downloads", icon: null, tint: "bg-[#e33e3f]" },
 ];
+const ORDER = SUGGESTED.map((w) => w.name);
 
 export function WalletPickerProvider({ children }: { children: ReactNode }) {
   const [visible, setVisible] = useState(false);
@@ -33,20 +41,34 @@ export function WalletPickerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-const ROW = "flex h-12 w-full items-center gap-3 rounded-[8px] px-3 text-left text-[14.5px] " +
-  "transition-colors hover:bg-panel2 focus-visible:bg-panel2";
+const ROW = "flex h-14 w-full items-center gap-3 px-3.5 text-left transition-colors " +
+  "hover:bg-panel3 focus-visible:bg-panel3";
+
+function Chevron() {
+  return (
+    <span className="grid size-6 flex-none place-items-center rounded-full bg-panel3 text-muted-foreground">
+      <ChevronRight size={14} strokeWidth={2} />
+    </span>
+  );
+}
 
 function WalletPicker({ onClose }: { onClose: () => void }) {
   const { wallets, wallet: current, select, connect } = useWallet();
   const dialog = useRef<HTMLDivElement>(null);
   useModalFocus(dialog, true, onClose);
 
-  const [ready, missing] = useMemo(() => {
-    const rank = (w: Wallet) => (w.readyState === WalletReadyState.Installed ? 0 : 1);
-    const usable = wallets
+  // Every Solana wallet this browser exposes, Phantom and Backpack first;
+  // then whichever of those two it does not have, as install links.
+  const { ready, install } = useMemo(() => {
+    const rank = (w: Wallet) => {
+      const i = ORDER.indexOf(String(w.adapter.name));
+      return i < 0 ? ORDER.length : i;
+    };
+    const ready = wallets
       .filter((w) => w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable)
       .sort((a, b) => rank(a) - rank(b));
-    return [usable, wallets.filter((w) => w.readyState === WalletReadyState.NotDetected)];
+    const have = new Set(ready.map((w) => String(w.adapter.name)));
+    return { ready, install: SUGGESTED.filter((s) => !have.has(s.name)) };
   }, [wallets]);
 
   const pick = (w: Wallet) => {
@@ -62,62 +84,44 @@ function WalletPicker({ onClose }: { onClose: () => void }) {
       <button type="button" aria-label="Close" tabIndex={-1} onClick={onClose}
         className="absolute inset-0 cursor-default bg-black/60" />
       <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="wallet-picker-title"
-        className="pane-scroll relative max-h-[85dvh] w-full overflow-y-auto rounded-t-[12px] border
-                   border-line bg-panel sm:max-w-[400px] sm:rounded-[12px]">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
-          <h2 id="wallet-picker-title" className="text-[16px] font-medium">Connect a wallet</h2>
-          <button type="button" onClick={onClose} aria-label="Close"
-            className="grid size-8 place-items-center rounded-[8px] text-muted-foreground
-                       transition-colors hover:bg-panel2 hover:text-foreground">
-            <X size={16} />
-          </button>
-        </div>
+        className="pane-scroll relative max-h-[85dvh] w-full overflow-y-auto rounded-t-[20px] border
+                   border-line bg-panel px-4 pb-5 pt-6 safe-b sm:max-w-[380px] sm:rounded-[20px] sm:px-5">
+        <button type="button" onClick={onClose} aria-label="Close"
+          className="press absolute right-3 top-3 grid size-9 place-items-center rounded-full
+                     text-muted-foreground transition-colors hover:bg-panel2 hover:text-foreground">
+          <X size={16} strokeWidth={1.75} />
+        </button>
 
-        <div className="p-2">
+        <h2 id="wallet-picker-title" className="text-center text-[16px] font-medium">Connect wallet</h2>
+        <p className="text-pretty mx-auto mt-1 max-w-[280px] text-center text-[13px] leading-[1.5] text-muted-foreground">
+          Trade, list and back markets on Solana.
+        </p>
+
+        <div className="mt-5 divide-y divide-line overflow-hidden rounded-[16px] bg-panel2">
           {ready.map((w) => (
             <button key={w.adapter.name} type="button" onClick={() => pick(w)} className={ROW}>
-              <img src={w.adapter.icon} alt="" className="size-7 flex-none rounded-[6px]" />
-              <span className="min-w-0 flex-1 truncate font-medium">{w.adapter.name}</span>
-              {w.readyState === WalletReadyState.Installed && (
-                <span className="text-[12.5px] text-muted-foreground">Installed</span>
-              )}
+              <img src={w.adapter.icon} alt="" className="size-9 flex-none rounded-[9px]" />
+              <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium">{w.adapter.name}</span>
+              <Chevron />
             </button>
           ))}
-
-          {missing.length > 0 && (
-            <>
-              {ready.length > 0 && <div className="mx-3 my-2 border-t border-line" />}
-              {missing.map((w) => (
-                <a key={w.adapter.name} href={w.adapter.url} target="_blank" rel="noreferrer"
-                  className={`${ROW} text-muted-foreground hover:text-foreground`}>
-                  <img src={w.adapter.icon} alt="" className="size-7 flex-none rounded-[6px] opacity-70" />
-                  <span className="min-w-0 flex-1 truncate">{w.adapter.name}</span>
-                  <span className="text-[12.5px]">Not installed</span>
-                </a>
-              ))}
-            </>
-          )}
-
-          {!ready.length && !missing.length && (
-            <div className="px-3 pb-2 pt-3">
-              <p className="text-pretty text-[13.5px] leading-[1.55] text-muted-foreground">
-                No Solana wallet found in this browser. Install one, then reload this page.
-              </p>
-              <div className="mt-3 flex flex-col">
-                {SUGGESTED.map((s) => (
-                  <a key={s.name} href={s.href} target="_blank" rel="noreferrer"
-                    className={`${ROW} justify-between`}>
-                    <span className="font-medium">{s.name}</span>
-                    <span className="text-[12.5px] text-muted-foreground">Install</span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
+          {install.map((s) => (
+            <a key={s.name} href={s.href} target="_blank" rel="noreferrer" className={ROW}>
+              {s.icon
+                ? <img src={s.icon} alt="" className="size-9 flex-none rounded-[9px]" />
+                : <span aria-hidden className={`grid size-9 flex-none place-items-center rounded-[9px]
+                                                text-[17px] font-semibold text-white ${s.tint}`}>{s.name[0]}</span>}
+              <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium">{s.name}</span>
+              <span className="text-[12.5px] text-muted-foreground">Install</span>
+              <Chevron />
+            </a>
+          ))}
         </div>
 
-        <p className="border-t border-line px-5 py-3.5 text-[12.5px] leading-[1.5] text-muted-foreground">
-          Connecting signs nothing and moves nothing.
+        <p className="text-pretty mt-5 text-center text-[12px] leading-[1.55] text-muted-foreground">
+          By connecting, you agree to the{" "}
+          <a href="/terms" className="text-foreground hover:underline">Terms of Service</a> and{" "}
+          <a href="/privacy" className="text-foreground hover:underline">Privacy Policy</a>.
         </p>
       </div>
     </div>
