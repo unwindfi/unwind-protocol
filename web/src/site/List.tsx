@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/motion/checkbox";
 import { WalletActions } from "@/components/WalletActions";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import {
-  canSign, getMarkets, mirrorToDevnet, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
+  canSign, getAllMarkets, mirrorToDevnet, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
   type TestnetPool,
 } from "@/lib/api";
 import {
@@ -233,10 +233,11 @@ export default function List() {
   const [payWith, setPayWith] = useState<PayWith>("USDC");
   const [prices, setPrices] = useState<Record<PayWith, number> | null>(null);
 
-  const markets = usePoll(getMarkets, 5000) ?? NONE;
+  // Hidden ones too, so a listed pool still links to its market.
+  const markets = usePoll(getAllMarkets, 5000) ?? NONE;
   /// Markets that take backing: a paused one refuses it, so it is left off
   /// (it still shows on Markets, where its positions can exit).
-  const listed = useMemo(() => markets.filter((m) => m.observed && !m.paused), [markets]);
+  const listed = useMemo(() => markets.filter((m) => m.observed && !m.paused && !m.hidden), [markets]);
 
   useEffect(() => { void canSign().then(setSignable); }, []);
   useEffect(() => { void usdPrices().then(setPrices).catch(() => {}); }, []);

@@ -73,9 +73,12 @@ oldest claim of the last 24 hours is a day old.
   the form is filled in, so List rarely waits for it. A pool needs $1,000 of
   depth. Devnet makes one mirror per token, up to 50 a day in all and 8 a
   day from one address.
-- **WIND, KITE and YAK.** Invented tokens with their own pools, left for
-  testers to list and back. They follow the percentage moves of BONK, JUP and
-  WIF.
+- **WIND, KITE and YAK.** Invented tokens with their own pools. They can't
+  be listed, and markets already on them are left off every list, though a
+  holder can still close by direct link.
+
+A market on a token with no name and no logo is left off the lists the same
+way.
 
 Real tokens' devnet pools are quoted in Circle's devnet USDC
 (`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`), not in the venue's test

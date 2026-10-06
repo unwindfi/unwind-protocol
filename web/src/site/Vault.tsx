@@ -15,7 +15,7 @@ import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
 import {
-  getAccount, getApy, getApySeries, getBackings, getMarkets, useHasBackend, usePoll,
+  getAccount, getAllMarkets, getApy, getApySeries, getBackings, useHasBackend, usePoll,
   type Backing, type Market,
 } from "@/lib/api";
 import { Tile, VaultDialog, VaultIcon, vaultsOf } from "@/site/Earn";
@@ -34,7 +34,7 @@ export default function VaultPage() {
   const owner = wallet.publicKey?.toBase58();
   const [tick, setTick] = useState(0);
   const account = usePoll(() => getAccount(owner), 3000, [owner], undefined, tick);
-  const markets = usePoll(getMarkets, 5000) ?? NONE;
+  const markets = usePoll(getAllMarkets, 5000) ?? NONE;
   const backings = usePoll(() => getBackings(owner), 5000, [owner], undefined, tick) ?? NO_BACKINGS;
   const apy = usePoll(getApy, 30_000);
   const series = usePoll(getApySeries, 60_000);

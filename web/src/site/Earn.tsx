@@ -43,7 +43,7 @@ import { EASE_OUT } from "@/lib/ease";
 import * as api from "@/lib/api";
 import { Pending, Unavailable } from "@/components/ui/unavailable";
 import {
-  getAccount, getApy, getBackings, getMarkets, peek, usePoll, usePollState,
+  getAccount, getAllMarkets, getApy, getBackings, peek, usePoll, usePollState,
   type Account, type Apy, type Backing, type Market,
 } from "@/lib/api";
 import { signAndSend } from "@/lib/tx";
@@ -153,6 +153,9 @@ export function vaultsOf(account: Account | null | undefined, markets: Market[],
    * a feed where the other has a depth, and the row says which.
    */
   for (const m of markets) {
+    // A hidden market (see `hidden` in lib/api) is shown only to a backer
+    // of it, who needs the row to take the backing out.
+    if (m.hidden && !backings.some((b) => b.symbol === m.symbol && b.value > 0)) continue;
     const o = m.observed;
     out.push({
       id: m.symbol, kind: "market", symbol: m.symbol, market: m,
@@ -528,7 +531,7 @@ export default function Earn() {
   // read failed: a placeholder, never $0.
   const unread = owner && !account
     ? (accountPoll.error ? <Unavailable onRetry={accountPoll.retry} /> : <Pending />) : null;
-  const markets = usePoll(getMarkets, 5000) ?? NONE;
+  const markets = usePoll(getAllMarkets, 5000) ?? NONE;
   // Seeded from the last answer, so the section is drawn at once rather than
   // empty until the first read lands.
   const backings = usePoll(() => getBackings(owner), 5000, [owner],

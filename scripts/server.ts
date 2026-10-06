@@ -946,6 +946,48 @@ async function realMintOf(m: MarketRt): Promise<string | null> {
   return (await shadowMintMap()).get(m.observed.source.toBase58()) ?? null;
 }
 
+/// The seeded devnet pools that copy no real token (WIND, KITE, YAK from
+/// scripts/seed-devnet-pools.ts), by pool address: every seeded pool that is
+/// not a copy. They stay tradable by direct link but are never offered.
+async function inventedPools(): Promise<Set<string>> {
+  if (CLUSTER !== "devnet") return new Set();
+  const copied = await shadowMintMap();
+  return new Set(seeded.filter((s) => !copied.has(s.pair)).map((s) => s.pair));
+}
+
+/// Tickers with a logo file in web/public/logos, read once.
+let logoFiles: Set<string> | null = null;
+function hasLogoFile(symbol: string) {
+  if (!logoFiles) {
+    try {
+      logoFiles = new Set(fs.readdirSync(path.join(ROOT, "web/public/logos"))
+        .filter((f) => /\.(png|svg)$/.test(f)).map((f) => f.replace(/\.(png|svg)$/, "")));
+    } catch { logoFiles = new Set(); }
+  }
+  // As TickerLogo reads it: `1MBONK` shows BONK's logo.
+  return logoFiles.has(symbol.replace(/^1[KMB](?=[A-Z])/, ""));
+}
+
+/*
+ * Markets left off every list a visitor browses: the invented devnet tokens,
+ * and a listed token with no name of its own, no logo from Jupiter and no
+ * file under web/public/logos. Nothing else changes for them: positions and
+ * backing still show in the account, and a direct link still trades, so a
+ * holder can always close.
+ */
+async function hiddenMarket(m: MarketRt): Promise<boolean> {
+  if (!m.observed) return false;
+  if ((await inventedPools()).has(m.observed.source.toBase58())) return true;
+  // "Unnamed token" is what `refreshListedDay` writes once a token's
+  // metadata turns out to have no name; until then the ticker stands in.
+  const name = m.name.trim();
+  const unnamed = !name || name === "Unnamed token" || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(name);
+  if (!unnamed) return false;
+  const real = await realMintOf(m);
+  if (real && tokenIcons.get(real)) return false;
+  return !hasLogoFile(m.symbol);
+}
+
 /// Token logos from Jupiter, by mainnet mint, for devnet copies: their own
 /// mints carry no metadata, and the site has files only for a few tickers.
 /// Looked up once per mint, a hundred to a request, never on the hot path.
@@ -2706,7 +2748,14 @@ const MARKETS_SERVE_MS = 30_000;
 /// says when its figures are stale.
 let marketsLast: { at: number; body: any } | null = null;
 
-app.get("/api/markets", async (_req, res) => {
+/// Every market with ?all=1, which the terminal and the account pages ask for
+/// so a position or backing in a hidden market can still be closed. The
+/// lists a visitor browses get the rest.
+const listedOnly = (body: any, all: boolean) =>
+  all || !Array.isArray(body) ? body : body.filter((m: any) => !m.hidden);
+
+app.get("/api/markets", async (req, res) => {
+  const all = req.query.all === "1";
   try {
     const now = Date.now();
     if (!marketsInFlight && (!marketsLast || now - marketsLast.at >= MARKETS_FRESH_MS)) {
@@ -2714,12 +2763,12 @@ app.get("/api/markets", async (_req, res) => {
       marketsInFlight = body;
       body.catch(() => {}).finally(() => { if (marketsInFlight === body) marketsInFlight = null; });
     }
-    if (marketsLast && now - marketsLast.at < MARKETS_SERVE_MS) return res.json(marketsLast.body);
-    res.json(await (marketsInFlight ?? Promise.resolve(marketsLast?.body)));
+    if (marketsLast && now - marketsLast.at < MARKETS_SERVE_MS) return res.json(listedOnly(marketsLast.body, all));
+    res.json(listedOnly(await (marketsInFlight ?? Promise.resolve(marketsLast?.body)), all));
   } catch (e: any) {
     if (marketsLast) {
       res.set("X-Stale-Since", String(marketsLast.at));
-      return res.json(marketsLast.body);
+      return res.json(listedOnly(marketsLast.body, all));
     }
     res.status(500).json({ error: e.message });
   }
@@ -2771,6 +2820,8 @@ async function marketsView() {
       const real = await realMintOf(m);
       return {
         symbol: m.symbol, name: m.name, color: m.color, mono: m.mono, price,
+        // Off the lists (see `hiddenMarket`); served only with ?all=1.
+        hidden: await hiddenMarket(m),
         icon: real ? tokenIcons.get(real) ?? null : null,
         // Null for an observed market: nobody wrote a definition for it, and
         // the pool it watches is the address that identifies it.
@@ -3840,7 +3891,9 @@ app.get("/api/testnet-pools", async (_req, res) => {
   const listed = new Set(Object.values(rt).map((m) => m.observed?.source?.toBase58()).filter(Boolean));
   const real = await shadowMintMap();
   await loadIcons([...real.values()]);
-  res.json(seeded.map((s) => ({
+  // Not the invented tokens: they copy nothing, and are not listed again.
+  const invented = await inventedPools();
+  res.json(seeded.filter((s) => !invented.has(s.pair)).map((s) => ({
     symbol: s.symbol, name: s.name, pool: s.pair, listed: listed.has(s.pair), real: real.get(s.pair) ?? null,
     icon: tokenIcons.get(real.get(s.pair) ?? "") ?? null,
   })));
@@ -4045,6 +4098,11 @@ app.post("/api/tx/list-market", async (req, res) => {
     const owner = ownerOf(req);
     listingsBuilt.set(owner.toBase58(), Date.now());
     const source = new PublicKey(req.body.pool);
+    if ((await inventedPools()).has(source.toBase58())) {
+      return res.status(400).json({
+        error: "that pool holds a made-up devnet test token; list a real token's devnet copy instead",
+      });
+    }
     const p = await readPool(conn, source, usdcMint);
     // The token's own name, not the request's. See `listingName`.
     const { symbol } = await listingName(p.base, p.address, p.unitExp);
@@ -4580,7 +4638,7 @@ app.get("/api/creators", async (req, res) => {
       const acc: any = byAddress.get(m.address.toBase58());
       if (!acc) continue;
       const deployer = acc.deployer.toBase58();
-      if (HOUSE.has(deployer)) continue;
+      if (HOUSE.has(deployer) || await hiddenMarket(m)) continue;
       const traders = countedTraders(m.address.toBase58(), deployer, HOUSE);
       const row = by.get(deployer) ?? { score: 0, markets: [] };
       row.score += traders;

@@ -21,7 +21,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import * as api from "@/lib/api";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { getAccount, getBatch, getMarkets, getTrades, peek, usePoll, usePollState } from "@/lib/api";
+import { getAccount, getAllMarkets, getBatch, getTrades, peek, usePoll, usePollState } from "@/lib/api";
 import { claimFaucet, signAndSend, type TxToastOptions } from "@/lib/tx";
 import { toast } from "@/lib/toasts";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
@@ -78,11 +78,13 @@ export default function App() {
   // builds initial state twice and the two copies are different objects.
   const fetched = useRef(new WeakSet<Market[]>());
   const polled = usePoll(async () => {
-    const l = await getMarkets();
+    const l = await getAllMarkets();
     fetched.current.add(l);
     return l;
-  }, 900, [], () => peek<Market[]>("/api/markets"));
+  }, 900, [], () => peek<Market[]>("/api/markets?all=1"));
   const markets = polled ?? [];
+  // What the pickers offer: hidden markets stay out unless one is open.
+  const browsable = useMemo(() => markets.filter((m) => !m.hidden || m.symbol === symbol), [markets, symbol]);
   const fresh = !!polled && fetched.current.has(polled);
   // Each answer is a fresh array, so a change of reference is a poll that
   // came back: the status bar's liveness, without a request of its own.
@@ -113,15 +115,15 @@ export default function App() {
   // back to the first market there put a WIND link on SPYx, and its orders
   // with it. Until the server's own list says, the terminal waits.
   const market = useMemo(
-    () => markets.find((m) => m.symbol === symbol) ?? (symbol && !fresh ? undefined : markets[0]),
-    [markets, symbol, fresh]
+    () => markets.find((m) => m.symbol === symbol) ?? (symbol && !fresh ? undefined : browsable[0] ?? markets[0]),
+    [markets, browsable, symbol, fresh]
   );
 
   // Also corrects a symbol that came in off a link and does not exist, by
   // the server's list only (see `fresh`).
   useEffect(() => {
-    if (fresh && markets.length && !markets.some((m) => m.symbol === symbol)) setSymbol(markets[0].symbol);
-  }, [markets, symbol, fresh]);
+    if (fresh && markets.length && !markets.some((m) => m.symbol === symbol)) setSymbol((browsable[0] ?? markets[0]).symbol);
+  }, [markets, browsable, symbol, fresh]);
 
   useEffect(() => {
     if (!market) return;
@@ -291,7 +293,7 @@ export default function App() {
 
   const overlays = (
     <>
-      <MarketPalette markets={markets} open={paletteOpen} onOpenChange={setPaletteOpen}
+      <MarketPalette markets={browsable} open={paletteOpen} onOpenChange={setPaletteOpen}
         onSelect={(s) => { setSymbol(s); setPaletteOpen(false); }} />
     </>
   );
@@ -414,7 +416,7 @@ export default function App() {
               comes out of the chart, so the list waits for a wider window
               and the header's switcher and the palette do its job. */}
           <div className="hidden xl:contents">
-            <MarketList markets={markets} current={market.symbol} onPick={setSymbol}
+            <MarketList markets={browsable} current={market.symbol} onPick={setSymbol}
               onPalette={() => setPaletteOpen(true)} />
           </div>
 

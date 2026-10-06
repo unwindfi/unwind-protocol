@@ -4,6 +4,9 @@ export interface Market {
   symbol: string; name: string; color: string; mono: string;
   /// The real token's logo, for a devnet copy of one (from Jupiter).
   icon?: string | null;
+  /// Kept off the lists: an invented devnet token, or one with no name and
+  /// no logo. Only `getAllMarkets` returns these, for a link or a position.
+  hidden?: boolean;
   /// The SPL mint this market is priced on, when there is one to name. Null
   /// for a market listed against a pool, whose identity is the pool rather
   /// than a token this venue knows the mint of.
@@ -253,6 +256,15 @@ export const getMarkets = async () => {
     if (firstMarkets) { const m = firstMarkets; firstMarkets = null; return m; }
     return get<Market[]>("/api/markets");
   }
+  readOnly = true;
+  return (await import("./live")).liveMarkets();
+};
+
+/// Every market, hidden ones included (each marked `hidden`): for the
+/// terminal, so a direct link trades and a position can be closed, and for
+/// pages that show what a wallet holds.
+export const getAllMarkets = async () => {
+  if (await hasBackend()) return get<Market[]>("/api/markets?all=1");
   readOnly = true;
   return (await import("./live")).liveMarkets();
 };
