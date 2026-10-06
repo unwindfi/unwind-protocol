@@ -44,7 +44,7 @@ export const SkipLink = () => (
   </a>
 );
 
-export const DOCS = "https://unwind.gitbook.io/unwind-docs";
+export const DOCS = "https://docs.unwindfi.xyz";
 
 export const X_URL = "https://x.com/unwindfi";
 

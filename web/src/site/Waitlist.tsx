@@ -21,7 +21,7 @@ const X_URL = "https://x.com/unwindfi";
 
 /// The documentation: a GitBook site synced from `docs/` in this repo,
 /// rather than a route this app serves.
-const DOCS = "https://unwind.gitbook.io/unwind-docs";
+const DOCS = "https://docs.unwindfi.xyz";
 
 /*
  * Joining is signing in with X. The button is a plain link to the function

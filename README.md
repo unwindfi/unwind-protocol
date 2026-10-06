@@ -6,7 +6,7 @@ Anyone can open a perp market on any token with an on-chain price. Orders
 collect for one second and clear together, so arriving first earns nothing.
 Each market is backed by first-loss capital from whoever wants it to exist.
 
-[Documentation](https://unwind.gitbook.io/unwind-docs) ·
+[Documentation](https://docs.unwindfi.xyz) ·
 [X](https://x.com/unwindfi)
 
 > **Status:** live on Solana devnet. Unaudited. Do not use with real funds.
