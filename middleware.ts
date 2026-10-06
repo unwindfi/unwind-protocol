@@ -1,11 +1,10 @@
 /*
- * The lock in front of the unfinished pages.
+ * Devnet is open, the waitlist stays the front door.
  *
- * Without the cookie from `/code` the site is the waitlist: `/` is served as
- * built, `/unlocked/*` does not exist, and any other page redirects home,
- * which is what `vercel.json` used to do on its own. With the cookie every
- * page is answered by the full build under `/unlocked/`, at its own address,
- * so the router in the app never learns it was moved.
+ * `/` is the waitlist for everyone without the cookie from `/code`. Every
+ * other page is answered by the full build under `/unlocked/`, at its own
+ * address, so the router in the app never learns it was moved. With the
+ * cookie, `/` is the full build too.
  */
 import { unlocked } from "./api/_code";
 
@@ -23,7 +22,6 @@ export default async function middleware(req: Request) {
   const open = await unlocked(req);
 
   if (path.startsWith("/unlocked/")) {
-    if (!open) return new Response("Not found", { status: 404 });
     // Only the build itself is copied there; the favicon and the rest of
     // `public` it points at are the ones at the root.
     return /^\/unlocked\/(assets\/|index\.html$)/.test(path)
@@ -39,8 +37,7 @@ export default async function middleware(req: Request) {
   }
   // Files at the root -- the favicon, robots, the manifest -- are the same either way.
   if (/\.[^/]*$/.test(path)) return next();
-  if (open) return rewrite(new URL("/unlocked/index.html", url));
-  if (path !== "/") return redirect(new URL(`/${url.search}`, url));
+  if (open || path !== "/") return rewrite(new URL("/unlocked/index.html", url));
   return next();
 }
 
