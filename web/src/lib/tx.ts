@@ -162,6 +162,27 @@ async function send(
 /// "Get test funds" button comes here, so each one asks for the human check
 /// first (when the build has a Turnstile key). The server signs the claim,
 /// so the toast starts at "Confirming" rather than at the wallet.
+/*
+ * When this wallet may claim again, as the faucet last said.
+ *
+ * The server allows one claim a day and only says so when asked to send, so
+ * a wallet that had claimed was still offered the button and told no after.
+ * Kept per browser; a cleared store just means the server says it instead.
+ */
+const nextClaimKey = (owner: string) => `unwind.faucet.next.${owner}`;
+export function faucetWaitHours(owner?: string | null): number {
+  if (!owner) return 0;
+  try {
+    const at = Number(localStorage.getItem(nextClaimKey(owner)));
+    return at > Date.now() ? Math.ceil((at - Date.now()) / 3_600_000) : 0;
+  } catch { return 0; }
+}
+function rememberNextClaim(owner: string, r: { ok: boolean; error?: string | null }) {
+  const hours = r.ok ? 24 : Number(/try again in (\d+)h/.exec(r.error ?? "")?.[1] ?? 0);
+  if (!hours) return;
+  try { localStorage.setItem(nextClaimKey(owner), String(Date.now() + hours * 3_600_000)); } catch { /* no storage */ }
+}
+
 export async function claimFaucet(owner: string) {
   const label = "Get test funds";
   const turnstile = await humanToken();
@@ -174,6 +195,7 @@ export async function claimFaucet(owner: string) {
   } catch {
     r = { ok: false, error: "Unable to reach the server. Try again in a minute." };
   }
+  rememberNextClaim(owner, r);
   if (!r.ok && r.error != null) r = { ...r, error: humanError(r.error) };
   txToast.finish(id, r, {
     label, done: "Funded",

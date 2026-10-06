@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { getAccount, getBackings, usePoll } from "@/lib/api";
-import { claimFaucet } from "@/lib/tx";
+import { claimFaucet, faucetWaitHours } from "@/lib/tx";
 
 /// Below this a wallet cannot pay the rent a listing or a first deposit
 /// needs; the faucet tops it up under the same line.
@@ -33,12 +33,15 @@ export function FundPrompt({ onFunded }: { onFunded?: () => void }) {
    */
   const placed = (backings ?? []).reduce((a, b) => a + b.value, 0)
     + account.margin + (account.lp?.value ?? 0);
+  // Claimed today: no button, which would only be refused; the line says when.
+  const wait = faucetWaitHours(owner);
   const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
   const message = !noUsdc
-    ? "This wallet has too little SOL for rent and fees. A claim tops it up, once a day."
+    ? `This wallet has too little SOL for rent and fees. ${wait ? `Next test funds in ${wait}h.` : "A claim tops it up, once a day."}`
     : placed > 0
       ? `No test USDC left in this wallet: ${usd(placed)} is in your backing, margin and LP. `
-        + "One claim a day gives 10,000 more."
+        + (wait ? `Next test funds in ${wait}h.` : "One claim a day gives 10,000 more.")
+      : wait ? `No test USDC in this wallet. Next test funds in ${wait}h.`
       : "This wallet has no test funds yet. One claim a day gives 10,000 test USDC, and SOL for rent and fees.";
 
   async function claim() {
@@ -59,11 +62,11 @@ export function FundPrompt({ onFunded }: { onFunded?: () => void }) {
       <span className="min-w-0 flex-1 text-muted-foreground">
         {message}
       </span>
-      <button type="button" onClick={claim} disabled={busy}
+      {!wait && <button type="button" onClick={claim} disabled={busy}
         className="press h-9 rounded-full bg-foreground px-4 text-[13px] font-medium text-background
                    transition-opacity hover:opacity-90 disabled:opacity-35">
         Get test funds
-      </button>
+      </button>}
     </div>
   );
 }

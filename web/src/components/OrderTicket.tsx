@@ -10,6 +10,7 @@ import { NumberTicker } from "@/components/motion/number-ticker";
 import { EASE_OUT } from "@/lib/ease";
 import type { Account, Market } from "@/lib/api";
 import { money, pnum, price, tone } from "@/lib/format";
+import { faucetWaitHours } from "@/lib/tx";
 
 /// Key and value across one rule, the way /list states a figure: the name
 /// quiet on the left, the number in weight on the right.
@@ -432,7 +433,15 @@ export function OrderTicket({
           </TabsList>
         </Tabs>
 
-        {onFund && account && avail === 0 && (
+        {onFund && account && avail === 0 && faucetWaitHours(account.address) > 0 && (
+          // Claimed today: the button would only be refused. Say when it
+          // comes back, and where USDC already put to work can be taken out.
+          <p className="text-pretty mt-4 text-[12.5px] leading-relaxed text-muted-foreground">
+            No USDC in this wallet. Next test funds in {faucetWaitHours(account.address)}h;
+            backing and LP can be withdrawn on <a href="/earn" className="text-foreground underline-offset-2 hover:underline">Earn</a>.
+          </p>
+        )}
+        {onFund && account && avail === 0 && !faucetWaitHours(account.address) && (
           // Inverted, because with nothing to trade with it is the one thing
           // this ticket can do: every other control waits on it.
           <button type="button" onClick={onFund} disabled={busy}

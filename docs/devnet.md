@@ -26,7 +26,8 @@ Connect a devnet wallet. With nothing to trade with, the order ticket shows
 **Get test funds**, and the list and earn pages show it above the form when
 the wallet has no test USDC or too little SOL for rent. A wallet whose USDC
 is all in backing, margin or LP is told how much is placed there rather than
-that it has no funds. It sends 10,000 test
+that it has no funds. Once a wallet has claimed, the page drops the button
+and says when the next claim opens. It sends 10,000 test
 USDC and, when the wallet holds under 0.1 SOL, 0.2 devnet SOL: enough to
 list a few markets and trade for a day. Each wallet can use it once a day,
 and one address three times a day. Before it sends, the page shows a short
