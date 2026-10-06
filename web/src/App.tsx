@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarketHeader } from "@/components/MarketHeader";
-import { MarketPalette } from "@/components/MarketPalette";
+import { CommandMenu } from "@/components/CommandMenu";
 import { Chart } from "@/components/Chart";
 import { ChartBoundary } from "@/components/ChartBoundary";
 import { ChartPanel } from "@/components/chart/ChartPanel";
@@ -303,8 +303,10 @@ export default function App() {
 
   const overlays = (
     <>
-      <MarketPalette markets={browsable} open={paletteOpen} onOpenChange={setPaletteOpen}
-        onSelect={(s) => { setSymbol(s); setPaletteOpen(false); }} />
+      {/* The site's Cmd K menu, fed the terminal's own list, so a market
+          picked here switches the terminal in place. */}
+      <CommandMenu markets={browsable} open={paletteOpen} onOpenChange={setPaletteOpen}
+        onMarket={(s) => { setSymbol(s); setPaletteOpen(false); }} />
     </>
   );
 
@@ -426,8 +428,7 @@ export default function App() {
               comes out of the chart, so the list waits for a wider window
               and the header's switcher and the palette do its job. */}
           <div className="hidden xl:contents">
-            <MarketList markets={browsable} current={market.symbol} onPick={setSymbol}
-              onPalette={() => setPaletteOpen(true)} />
+            <MarketList markets={browsable} current={market.symbol} onPick={setSymbol} />
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col gap-px">

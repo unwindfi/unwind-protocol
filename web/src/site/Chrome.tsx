@@ -7,6 +7,7 @@ import {
 import { SiX } from "@icons-pack/react-simple-icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NavIcon } from "@/components/NavIcon";
+import { isMac, openCommandMenu } from "@/lib/command-menu";
 
 
 /// The two button looks, after the /list card: an inverted pill for the one
@@ -141,11 +142,14 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
+        {/* Opens the Cmd K menu; the link is what it does without script. */}
         {here !== "/markets" && <a href="/markets" aria-label="Search markets"
+          onClick={(e) => { e.preventDefault(); openCommandMenu(); }}
           className="hidden h-10 w-[300px] items-center gap-2.5 rounded-full bg-panel px-4 text-[14px]
                      text-muted-foreground transition-colors hover:bg-panel2 md:flex lg:w-[340px]">
           <Search size={16} strokeWidth={2} aria-hidden />
           Search markets
+          <kbd className="ml-auto font-sans text-[12px] text-dim">{isMac ? "⌘K" : "Ctrl K"}</kbd>
         </a>}
         <div className="ml-auto flex flex-none items-center gap-2">
           {actions}

@@ -1,14 +1,14 @@
 /*
  * The market list beside the terminal, the way Jupiter and Backpack keep one:
- * every market with its price and move, searchable and grouped, one click from
+ * every market with its price and move, grouped, one click from
  * being the market on screen.
  *
- * The palette (Cmd/Ctrl K) is still the fast way to jump; this is the way to
- * browse, and to keep an eye on the markets you are not trading. Desktop only:
+ * The header's search (Cmd/Ctrl K) is the way to find a market; this is the
+ * way to browse, and to keep an eye on the markets you are not trading. Desktop only:
  * the phone switches markets from its header.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronsLeft, ChevronsRight, Search, Star } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Star } from "lucide-react";
 import { TickerLogo } from "@/components/TickerLogo";
 import type { Market } from "@/lib/api";
 import { pct, price, tone } from "@/lib/format";
@@ -40,19 +40,15 @@ function write(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* not kept; fine */ }
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
-export function MarketList({ markets, current, onPick, onPalette }: {
+export function MarketList({ markets, current, onPick }: {
   markets: Market[];
   current: string;
   onPick: (symbol: string) => void;
-  /// Opens the command palette, which owns the Cmd/Ctrl K shortcut.
-  onPalette: () => void;
 }) {
   const [saved, setSaved] = useState<string[]>(() => read(SAVED, []));
   const [collapsed, setCollapsed] = useState<boolean>(() => read(COLLAPSED, false));
   const [group, setGroup] = useState("all");
-  const [query, setQuery] = useState("");
 
   // /markets may change the watchlist in another tab.
   useEffect(() => {
@@ -68,26 +64,19 @@ export function MarketList({ markets, current, onPick, onPalette }: {
   });
   const toggleCollapsed = () => setCollapsed((c) => { write(COLLAPSED, !c); return !c; });
 
-  // Search beats the group: somebody typing a symbol wants that market
-  // wherever it is filed. Busiest first, as the palette sorts.
+  // Busiest first, as the Cmd K menu sorts.
   const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
     const g = GROUPS.find((x) => x.key === group) ?? GROUPS[0];
     return [...markets]
-      .filter((m) => (q
-        ? m.symbol.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
-        : g.of(m, saved)))
+      .filter((m) => g.of(m, saved))
       .sort((a, b) => b.volume24h - a.volume24h || b.oi - a.oi);
-  }, [markets, group, query, saved]);
+  }, [markets, group, saved]);
 
   if (collapsed) {
     return (
       <aside className="flex w-[52px] flex-none flex-col items-center gap-1 overflow-hidden
                         bg-panel py-2">
         <IconBtn label="Show markets" onClick={toggleCollapsed}><ChevronsRight size={16} /></IconBtn>
-        <IconBtn label={`Search markets (${isMac ? "Cmd" : "Ctrl"} K)`} onClick={onPalette}>
-          <Search size={15} />
-        </IconBtn>
         <div className="pane-scroll mt-1 flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 border-t
                         border-line pt-2">
           {shown.map((m) => (
@@ -106,39 +95,25 @@ export function MarketList({ markets, current, onPick, onPalette }: {
 
   return (
     <aside className="flex w-[248px] flex-none flex-col overflow-hidden bg-panel 2xl:w-[272px]">
-      <div className="flex flex-none items-center gap-1.5 px-2.5 pt-2.5">
-        {/* The field rings when its input has focus; the palette key sits beside
-            the label rather than in it, so a click on it is only its own. */}
-        <div className="field-ring flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full bg-panel2 pl-3 pr-1
-                        text-muted-foreground focus-within:text-foreground">
-          <label className="flex min-w-0 flex-1 items-center gap-2">
-            <Search size={14} className="flex-none" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search" aria-label="Search markets"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-foreground outline-none
-                         placeholder:text-dim" />
-          </label>
-          <button type="button" onClick={onPalette} title="Open the market palette"
-            className="inline-flex h-6 flex-none items-center rounded-full border border-line px-2 text-[10.5px]
-                       text-dim transition-colors hover:text-foreground">
-            {isMac ? "⌘K" : "Ctrl K"}
-          </button>
-        </div>
-        <IconBtn label="Hide markets" onClick={toggleCollapsed}><ChevronsLeft size={16} /></IconBtn>
-      </div>
-
-      <div className="mx-2.5 my-2 flex flex-none justify-between rounded-full bg-panel2 p-1">
+      {/* No search here: the site header's search (Cmd K) is the one way to
+          find a market, and on this page it switches the terminal in place.
+          So the groups lead the column, with the hide button beside them
+          rather than on a row of its own. */}
+      <div className="mx-2.5 mb-2 mt-2.5 flex flex-none items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 justify-between rounded-full bg-panel2 p-1">
         {GROUPS.map((g) => (
-          <button key={g.key} type="button" onClick={() => { setGroup(g.key); setQuery(""); }}
-            aria-pressed={g.key === group && !query}
+          <button key={g.key} type="button" onClick={() => setGroup(g.key)}
+            aria-pressed={g.key === group}
             aria-label={g.key === "fav" ? "Favorites" : undefined} title={g.key === "fav" ? "Favorites" : undefined}
-            className={cn("flex h-7 flex-none items-center rounded-full px-2.5 text-[12.5px] transition-colors",
-              g.key === group && !query ? "bg-panel3 font-medium text-foreground"
+            className={cn("flex h-7 flex-none items-center rounded-full px-2 text-[12.5px] transition-colors",
+              g.key === group ? "bg-panel3 font-medium text-foreground"
                 : "text-muted-foreground hover:text-foreground")}>
             {/* The star in place of the word, so all five fit the column. */}
-            {g.key === "fav" ? <Star size={13} strokeWidth={2} fill={g.key === group && !query ? "currentColor" : "none"} /> : g.label}
+            {g.key === "fav" ? <Star size={13} strokeWidth={2} fill={g.key === group ? "currentColor" : "none"} /> : g.label}
           </button>
         ))}
+      </div>
+        <IconBtn label="Hide markets" onClick={toggleCollapsed}><ChevronsLeft size={16} /></IconBtn>
       </div>
 
       <div className="grid flex-none grid-cols-[1fr_auto] border-b border-line px-3 pb-1.5
@@ -149,7 +124,7 @@ export function MarketList({ markets, current, onPick, onPalette }: {
       <div className="pane-scroll min-h-0 flex-1">
         {shown.length === 0 && (
           <div className="px-4 py-8 text-center text-[12px] text-dim">
-            {query ? "No markets match" : group === "fav" ? "Star a market to keep it here" : "None yet"}
+            {group === "fav" ? "Star a market to keep it here" : "None yet"}
           </div>
         )}
         {shown.map((m) => {

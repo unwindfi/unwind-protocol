@@ -180,6 +180,10 @@ const routeFor = (path: string) =>
 /// outlives a page change. Its own chunk, and only off the waitlist: the
 /// front page raises none and should not wait on the motion library for it.
 const ToastHost = UNLOCKED ? lazy(() => import("./components/ToastHost")) : null;
+/// The Cmd K menu, on every app page but the terminal, which mounts its own
+/// over its own market list (App.tsx). Its own chunk, and never on the
+/// waitlist.
+const CommandMenu = UNLOCKED ? lazy(() => import("./components/CommandMenu")) : null;
 
 const built = new Map<string, ComponentType>();
 const pageFor = (at: string) => {
@@ -272,6 +276,8 @@ function Site() {
       <Page key={`${url}|${swaps}`} />
       {/* Its own boundary, so loading it never holds the page back. */}
       {ToastHost && routeFor(path) !== WAITLIST && <Suspense fallback={null}><ToastHost /></Suspense>}
+      {CommandMenu && routeFor(path) !== WAITLIST && routeKey(path) !== "/trade"
+        && <Suspense fallback={null}><CommandMenu /></Suspense>}
     </>
   );
 }
