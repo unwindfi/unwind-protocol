@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::errors::PerpError;
 use crate::math::*;
 use crate::oracle::OraclePrice;
+use super::position::Position;
 use anchor_lang::prelude::*;
 
 /// Neutral value of `Market::price_factor`.
@@ -186,7 +187,62 @@ pub struct Market {
     pub risk_price: u64,
     /// Slot `risk_price` was last stepped in.
     pub risk_slot: u64,
-    pub _reserved: [u8; 32],
+    /// Which listing of this feed in this pool it is, from 1; part of the
+    /// address (see `market_generations::market_seeds`). Zero on a market
+    /// listed before generations, which sits at the old address. Was the
+    /// first four bytes of `_reserved`.
+    pub generation: u32,
+    pub _reserved: [u8; 28],
+
+    // Added after `_reserved`, which grew the account again; run
+    // `resize_market` on a market listed before. Zero reads as "no position
+    // tracked yet", which is what every existing position is.
+
+    /// Each side's moment sums over the positions it tracks, which bound the
+    /// profit winners hold on it however that side's losers net against them.
+    /// See `side_winners_bound_usd`.
+    pub long_moments: SideMoments,
+    pub short_moments: SideMoments,
+}
+
+/// Sums over one side's tracked positions, each held at its entry in today's
+/// price factor. A position is tracked when its `Position::q_epoch` is this
+/// market's `q_tag`; one opened before these sums existed is not, and its side
+/// reads incomplete (`tracked_usd` short of the side's size) until it is gone.
+///
+/// Every write replaces one position's whole term (`Market::retrack`), so the
+/// sums always equal a fresh recomputation from the tracked positions.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, PartialEq, Eq, Debug, InitSpace)]
+pub struct SideMoments {
+    /// Sum of tracked sizes, `USD_SCALE`.
+    pub tracked_usd: u64,
+    /// Sum of `floor(size * MOMENT_U_SCALE / entry)`.
+    pub inv_entry: u128,
+    /// Sum of `ceil(ceil(size * MOMENT_Q_STEP / entry) * MOMENT_Q_STEP / entry)`.
+    pub inv_entry_sq: u128,
+}
+
+/// Fixed point of `SideMoments::inv_entry`.
+pub const MOMENT_U_SCALE: u128 = 1_000_000_000_000_000_000;
+/// Applied twice to `SideMoments::inv_entry_sq`, which is in units of 1e-24.
+pub const MOMENT_Q_STEP: u128 = 1_000_000_000_000;
+
+/// One position's terms in its side's `SideMoments`: `size / entry` rounded
+/// down and `size / entry^2` rounded up. None when they do not fit, in which
+/// case the position is simply not tracked.
+pub fn moment_terms(size: u64, entry: u64) -> Option<(u128, u128)> {
+    if entry == 0 {
+        return None;
+    }
+    let (s, e) = (size as u128, entry as u128);
+    let u = s.checked_mul(MOMENT_U_SCALE)? / e;
+    let a = div_ceil_u128(s.checked_mul(MOMENT_Q_STEP)?, e);
+    let q = div_ceil_u128(a.checked_mul(MOMENT_Q_STEP)?, e);
+    Some((u, q))
+}
+
+fn div_ceil_u128(x: u128, d: u128) -> u128 {
+    x / d + u128::from(x % d != 0)
 }
 
 /// Where a market's mark comes from.
@@ -209,6 +265,16 @@ impl PriceSource {
 }
 
 impl Market {
+    /// Whether `key` is this market's own address, from its stored pool,
+    /// feed, generation and bump. No search, so cheap enough for any check.
+    pub fn is_at(&self, key: &Pubkey) -> bool {
+        let g = self.generation.to_le_bytes();
+        let mut seeds = super::market_seeds(self.pool.as_ref(), &self.feed_id, &g);
+        let bump = [self.bump];
+        seeds.push(&bump);
+        Pubkey::create_program_address(&seeds, &crate::ID).map_or(false, |a| a == *key)
+    }
+
     /// What is left of this market's loss allowance.
     pub fn remaining_budget_usd(&self) -> u64 {
         if self.net_loss_usd <= 0 {
@@ -703,6 +769,235 @@ impl Market {
             self.cumulative_short_funding
         }
     }
+
+    /// What a tracked position carries in `Position::q_epoch`. Moves with
+    /// every corporate action, which is what untracks every open position at
+    /// once (`reset_moments`). Never zero short of `split_epoch` wrapping.
+    pub fn q_tag(&self) -> u32 {
+        self.split_epoch.wrapping_add(1)
+    }
+
+    /// The size and entry `position` put into its side's sums, when it did.
+    /// A tracked position's entry is in today's price factor already: the
+    /// factor only moves with `split_epoch`, which untracks it.
+    pub fn tracked_term(&self, position: &Position) -> Option<(u64, u64)> {
+        (position.is_open() && position.q_epoch == self.q_tag())
+            .then_some((position.size_usd, position.entry_price))
+    }
+
+    /// Replaces one position's term in its side's sums: takes out `old`, what
+    /// `tracked_term` said it put in, and puts in `new_size` at `new_entry`.
+    /// Returns whether the new term went in, which is what the position's
+    /// `q_epoch` must then say. A term that does not fit is left out, and its
+    /// side reads incomplete; settlement never fails on it.
+    pub fn retrack(
+        &mut self,
+        is_long: bool,
+        old: Option<(u64, u64)>,
+        new_size: u64,
+        new_entry: u64,
+    ) -> bool {
+        let side = if is_long { &mut self.long_moments } else { &mut self.short_moments };
+        if let Some((size, entry)) = old {
+            if let Some((u, q)) = moment_terms(size, entry) {
+                side.tracked_usd = side.tracked_usd.saturating_sub(size);
+                side.inv_entry = side.inv_entry.saturating_sub(u);
+                side.inv_entry_sq = side.inv_entry_sq.saturating_sub(q);
+            }
+        }
+        if new_size == 0 {
+            return false;
+        }
+        let Some((u, q)) = moment_terms(new_size, new_entry) else {
+            return false;
+        };
+        match (
+            side.tracked_usd.checked_add(new_size),
+            side.inv_entry.checked_add(u),
+            side.inv_entry_sq.checked_add(q),
+        ) {
+            (Some(t), Some(a), Some(b)) => {
+                side.tracked_usd = t;
+                side.inv_entry = a;
+                side.inv_entry_sq = b;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A side's average entry from its moment sums, when they track every
+    /// position on it: `size / sum(size / entry)`, the same harmonic mean
+    /// `blend_entry_price` keeps, but recomputed rather than carried.
+    pub fn side_avg_from_moments(&self, is_long: bool) -> Option<u64> {
+        let (size, m) = if is_long {
+            (self.long_size_usd, &self.long_moments)
+        } else {
+            (self.short_size_usd, &self.short_moments)
+        };
+        if size == 0 || m.tracked_usd != size || m.inv_entry == 0 {
+            return None;
+        }
+        let avg = mul_div_u128(size as u128, MOMENT_U_SCALE, m.inv_entry).ok()?;
+        u64::try_from(avg).ok().filter(|a| *a > 0)
+    }
+
+    /// Takes `close_size` of `position` off its side: the size, the moment
+    /// sums and the average entry, together. `position` is as it was before
+    /// the close.
+    ///
+    /// The average used to be left where it was, so `size / avg` stopped being
+    /// the sum of `size / entry` over the positions still open, and the side
+    /// reported profit nobody held (or hid profit somebody did). Closing a
+    /// $1m long from $100 at $200 next to a $1m long opened at $200 left the
+    /// side at $1m from $133.33, up $500,000 at $200 when it was flat. Now the
+    /// closed size's own `size / entry` comes out: exactly, from the sums, when
+    /// the side is fully tracked, and from the stored average otherwise.
+    pub fn close_side(&mut self, is_long: bool, position: &Position, close_size: u64) -> Result<()> {
+        let old_size = if is_long { self.long_size_usd } else { self.short_size_usd };
+        let old_avg = if is_long { self.long_avg_entry_price } else { self.short_avg_entry_price };
+        let new_size = old_size.saturating_sub(close_size);
+        let mut new_avg = old_avg;
+        if close_size > 0 && position.is_open() {
+            let entry = self.adjust_entry_price(position.entry_price, position.entry_price_factor)?;
+            if let Some(old_term) = self.tracked_term(position) {
+                let left = position.size_usd.saturating_sub(close_size);
+                // A smaller size at the same entry always fits where the
+                // larger did.
+                let kept = self.retrack(is_long, Some(old_term), left, entry);
+                debug_assert!(kept == (left > 0));
+            }
+            if new_size > 0 && old_avg > 0 && entry > 0 {
+                let removed = close_size.min(position.size_usd) as u128;
+                let units = mul_div_u128(old_size as u128, MOMENT_U_SCALE, old_avg as u128)?
+                    .saturating_sub(mul_div_u128(removed, MOMENT_U_SCALE, entry as u128)?);
+                if units > 0 {
+                    if let Ok(a) = u64::try_from(mul_div_u128(new_size as u128, MOMENT_U_SCALE, units)?) {
+                        if a > 0 {
+                            new_avg = a;
+                        }
+                    }
+                }
+            }
+        }
+        if is_long {
+            self.long_size_usd = new_size;
+            self.long_avg_entry_price = new_avg;
+        } else {
+            self.short_size_usd = new_size;
+            self.short_avg_entry_price = new_avg;
+        }
+        // Exact when every position on the side is tracked.
+        if let Some(a) = self.side_avg_from_moments(is_long) {
+            if is_long {
+                self.long_avg_entry_price = a;
+            } else {
+                self.short_avg_entry_price = a;
+            }
+        }
+        Ok(())
+    }
+
+    /// Forgets every tracked term, for a corporate action: entries rebase by
+    /// a factor the sums could only follow with rounding. Every open position
+    /// stops matching `q_tag` with the same `split_epoch` step.
+    pub fn reset_moments(&mut self) {
+        self.long_moments = SideMoments::default();
+        self.short_moments = SideMoments::default();
+    }
+
+    /// An upper bound on the profit the winners on one side hold at `price`,
+    /// counted gross: a loser on the same side does not offset it. None while
+    /// the side holds a position its sums do not track.
+    ///
+    /// With sizes s, entries e, return y = p/e - 1 for a long (1 - p/e for a
+    /// short), S = sum s, net = sum s y and M2 = sum s y^2 = p^2 sum s/e^2 -
+    /// 2p sum s/e + S, the winners hold W = sum s max(y, 0) = (net + sum s |y|) / 2,
+    /// and by Cauchy-Schwarz sum s |y| <= sqrt(S M2). So W <= (net + sqrt(S M2)) / 2,
+    /// which is exact when every entry on the side is the same. Each piece is
+    /// rounded so the result is never below that.
+    pub fn side_winners_bound_usd(&self, is_long: bool, price: u64) -> Option<u64> {
+        let (size, m) = if is_long {
+            (self.long_size_usd, &self.long_moments)
+        } else {
+            (self.short_size_usd, &self.short_moments)
+        };
+        if m.tracked_usd != size {
+            return None;
+        }
+        if size == 0 {
+            return Some(0);
+        }
+        // Anything that does not fit is a bound past any u64.
+        Some(winners_bound(size as u128, m.inv_entry, m.inv_entry_sq, price as u128, is_long)
+            .unwrap_or(u64::MAX))
+    }
+
+    /// What `haircut_profit_usd` counts one side's winners at: the bound when
+    /// the side is fully tracked, and the side's net profit from its
+    /// aggregates when it is not, which is how every side was counted before.
+    pub fn side_winners_usd(&self, is_long: bool, price: u64) -> Result<u64> {
+        if let Some(bound) = self.side_winners_bound_usd(is_long, price) {
+            return Ok(bound);
+        }
+        let (size, entry) = if is_long {
+            (self.long_size_usd, self.long_avg_entry_price)
+        } else {
+            (self.short_size_usd, self.short_avg_entry_price)
+        };
+        if size == 0 {
+            return Ok(0);
+        }
+        Ok(position_pnl_usd(is_long, size, entry, price)?.max(0) as u64)
+    }
+}
+
+/// `(net + sqrt(S * M2)) / 2` from a side's sums, rounded up throughout.
+/// `u` and `q` are `SideMoments::inv_entry` and `inv_entry_sq`. None on
+/// overflow.
+fn winners_bound(s: u128, u: u128, q: u128, p: u128, is_long: bool) -> Option<u64> {
+    // p^2 q / 1e24, up. `q` is at least the true sum, so this is too.
+    let pq = mul_div_u128(p, q, MOMENT_Q_STEP).ok()?.checked_add(1)?;
+    let ppq = mul_div_u128(p, pq, MOMENT_Q_STEP).ok()?.checked_add(1)?;
+    // `u` is at most the true sum and at least it less one unit a position,
+    // and every tracked position has a size of at least one, so the true
+    // p * sum s/e lies in [pu_lo, pu_hi].
+    let pu_lo = mul_div_u128(p, u, MOMENT_U_SCALE).ok()?;
+    let pu_hi = mul_div_u128(p, u.checked_add(s)?, MOMENT_U_SCALE).ok()?.checked_add(1)?;
+    // M2 = p^2 q - 2 p u + S, high: the 2pu term is taken low.
+    let m2 = ppq.checked_add(s)?.saturating_sub(pu_lo.checked_mul(2)?);
+    let root = match s.checked_mul(m2) {
+        Some(x) => isqrt_ceil(x),
+        None => isqrt_ceil(s).checked_mul(isqrt_ceil(m2))?,
+    };
+    // 2W <= net + root, with net = pu - S on a long and S - pu on a short.
+    let twice = if is_long {
+        pu_hi.checked_add(root)?.saturating_sub(s)
+    } else {
+        s.checked_add(root)?.saturating_sub(pu_lo)
+    };
+    u64::try_from(div_ceil_u128(twice, 2)).ok()
+}
+
+/// The smallest r with r * r >= x.
+pub(crate) fn isqrt_ceil(x: u128) -> u128 {
+    if x < 2 {
+        return x;
+    }
+    // Newton from above, which settles on floor(sqrt(x)).
+    let mut r = 1u128 << (128 - x.leading_zeros()).div_ceil(2);
+    loop {
+        let next = (r + x / r) / 2;
+        if next >= r {
+            break;
+        }
+        r = next;
+    }
+    if r * r < x {
+        r + 1
+    } else {
+        r
+    }
 }
 
 #[cfg(test)]
@@ -766,7 +1061,10 @@ mod tests {
             last_price: 0,
             risk_price: 0,
             risk_slot: 0,
-            _reserved: [0; 32],
+            generation: 0,
+            _reserved: [0; 28],
+            long_moments: SideMoments::default(),
+            short_moments: SideMoments::default(),
         }
     }
 

@@ -167,20 +167,36 @@ pub fn fold_checkpoint<'info>(
 
 /// Tokens the LPs own in the pool's custodies, at the oracle.
 fn lp_in_kind_usd<'info>(pool: &Account<'info, Pool>, pairs: &'info [AccountInfo<'info>]) -> Result<u64> {
-    let mut total = 0u64;
+    lp_in_kind(pool, pairs)?.iter().try_fold(0u64, |a, (_, v)| {
+        a.checked_add(*v).ok_or(PerpError::MathOverflow.into())
+    })
+}
+
+/// Every custody from `(custody, price_update)` pairs, which must be all of
+/// them in index order, with what the LPs' tokens in it are worth at the
+/// oracle. A custody the LPs hold nothing in is not priced.
+pub fn lp_in_kind<'info>(
+    pool: &Account<'info, Pool>,
+    pairs: &'info [AccountInfo<'info>],
+) -> Result<Vec<(Account<'info, Custody>, u64)>> {
+    require!(
+        pairs.len() == (pool.num_custodies as usize) * 2,
+        PerpError::IncompleteCustodyList
+    );
+    let mut out = Vec::with_capacity(pairs.len() / 2);
     for (k, pair) in pairs.chunks(2).enumerate() {
-        let c: Account<Custody> = Account::try_from(&pair[0])?;
+        let c: Account<'info, Custody> = Account::try_from(&pair[0])?;
         require_keys_eq!(c.pool, pool.key(), PerpError::MarketPoolMismatch);
         require!(c.index as usize == k, PerpError::IncompleteCustodyList);
-        if c.lp_amount == 0 {
-            continue;
-        }
-        let price = c.price(&pair[1], &pool.pyth_receiver)?;
-        total = total
-            .checked_add(token_value_usd(c.lp_amount, price, c.decimals)?)
-            .ok_or(PerpError::MathOverflow)?;
+        let value = if c.lp_amount == 0 {
+            0
+        } else {
+            let price = c.price(&pair[1], &pool.pyth_receiver)?;
+            token_value_usd(c.lp_amount, price, c.decimals)?
+        };
+        out.push((c, value));
     }
-    Ok(total)
+    Ok(out)
 }
 
 /// What a market's traders are up, as the pool owes it (see
@@ -300,7 +316,8 @@ mod tests {
             budget_weight_bps: 10_000,
             backing_amount: 123_000_000,
             lp_amount,
-            _reserved: [0; 32],
+            lp_owed_amount: 0,
+            _reserved: [0; 24],
         }
     }
 

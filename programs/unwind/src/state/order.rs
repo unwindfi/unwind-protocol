@@ -1,5 +1,8 @@
 use anchor_lang::prelude::*;
 
+use super::market::PRICE_FACTOR_ONE;
+use crate::errors::PerpError;
+
 /// What a trigger does when it fires.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -51,7 +54,12 @@ pub struct Order {
     pub created_ts: i64,
     /// Zero never expires.
     pub expiry_ts: i64,
-    pub _reserved: [u8; 32],
+    /// `Market::price_factor` when the order was placed, so a corporate action
+    /// rebases `trigger_price` the way it rebases an entry (see `trigger_at`).
+    /// Zero on an order placed before this was recorded, read as
+    /// `PRICE_FACTOR_ONE`. Carved from the first 16 bytes of `_reserved`.
+    pub trigger_factor: u128,
+    pub _reserved: [u8; 16],
 }
 
 impl Order {
@@ -62,6 +70,26 @@ impl Order {
     /// Whether `price` is on the firing side of the trigger.
     pub fn is_triggered(&self, price: u64) -> bool {
         if self.trigger_above { price >= self.trigger_price } else { price <= self.trigger_price }
+    }
+
+    /// `trigger_price` in the terms of `market_factor`. A stop placed at $180
+    /// before a 4-for-1 split fires at $45, the same economic level.
+    pub fn trigger_at(&self, market_factor: u128) -> Result<u64> {
+        let placed = if self.trigger_factor == 0 { PRICE_FACTOR_ONE } else { self.trigger_factor };
+        if placed == market_factor {
+            return Ok(self.trigger_price);
+        }
+        let p = (self.trigger_price as u128)
+            .checked_mul(market_factor)
+            .ok_or(PerpError::MathOverflow)?
+            / placed;
+        Ok(u64::try_from(p).map_err(|_| PerpError::MathOverflow)?.max(1))
+    }
+
+    /// `is_triggered` against the trigger rebased to `market_factor`.
+    pub fn is_triggered_at(&self, price: u64, market_factor: u128) -> Result<bool> {
+        let t = self.trigger_at(market_factor)?;
+        Ok(if self.trigger_above { price >= t } else { price <= t })
     }
 
     pub fn is_expired(&self, now: i64) -> bool {
@@ -79,7 +107,7 @@ mod tests {
             slot: 0, kind: OrderKind::Close as u8, is_long: true,
             size_usd: 0, collateral_usd: 0,
             trigger_price: trigger, trigger_above: above,
-            created_ts: 0, expiry_ts: 0, _reserved: [0; 32],
+            created_ts: 0, expiry_ts: 0, trigger_factor: 0, _reserved: [0; 16],
         }
     }
 

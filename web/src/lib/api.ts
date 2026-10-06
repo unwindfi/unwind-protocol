@@ -112,6 +112,9 @@ export interface Account {
     /// LP tokens in escrow on their way out: paid at the pool's value when
     /// claimed, claimable once `slotsLeft` reaches zero.
     pending?: { shares: number; value: number; readySlot: number; slotsLeft: number; secondsLeft: number } | null;
+    /// Tokens the pool held for its LPs that claimed withdrawals took in
+    /// kind, waiting to be pulled one token at a time.
+    owed?: { symbol: string; mint: string; amount: number }[];
   };
   pool: { aum: number; liquidity: number; locked: number; free: number;
           utilization: number; maxUtilization: number; traderPnl: number;

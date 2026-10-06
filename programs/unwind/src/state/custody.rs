@@ -44,7 +44,10 @@ pub struct Custody {
     /// Owned by the LPs: what backing has paid them for losses they covered.
     /// Part of the pool's AUM at the oracle price.
     pub lp_amount: u64,
-    pub _reserved: [u8; 32],
+    /// Taken off `lp_amount` by withdrawal claims and not yet pulled by their
+    /// owners (`LpTokenClaim`). Still in the vault, no longer the pool's.
+    pub lp_owed_amount: u64,
+    pub _reserved: [u8; 24],
 }
 
 impl Custody {

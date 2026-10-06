@@ -31,6 +31,30 @@ market nobody can trade.
    up to what it holds. The site will not sign until this is ticked.
 5. Sign, paying the rent of the accounts the listing creates.
 
+## Opening a market that already exists
+
+A token can be listed more than once. Each listing of the same pool or feed is
+a new generation of its market, at an address of its own: the first listing
+is generation 1, the next generation 2, and the number only goes up. The
+program keeps the count in a `MarketGenerations` account per pool and feed,
+and a listing must name the generation after the newest one.
+
+So listing first holds nothing. A market listed with the wrong pool, a bad
+price source or settings nobody wants to trade is not the token's market for
+good; anyone can list the next generation beside it. Only the market's own
+lister can create its price observation, so its settings cannot be chosen by
+someone else between the listing and the lister's next transaction.
+
+When a token has several generations, the site shows the newest one that has
+backing, or the newest if none does. An unbacked relisting does not replace a
+backed market until someone backs it. The site refuses to list over a market
+it shows as live (backed, not paused, and observing its pool with the site's
+own settings) and lists the next generation otherwise.
+
+Markets opened before generations existed sit at their old address and count
+as generation 0. They keep trading; the next listing of the same token is
+generation 1.
+
 ## When trading opens
 
 At once. The venue's mark keeper prices every new market on its next pass,

@@ -1,13 +1,15 @@
 use crate::constants::*;
 use crate::errors::PerpError;
+use crate::state::custody::MAX_CUSTODIES;
 use anchor_lang::prelude::*;
 
 /// LP shares on their way out of the pool.
 ///
 /// A withdrawal is two steps. `request_withdraw` moves the shares out of the
 /// owner's wallet into an escrow token account the pool controls and stamps
-/// the slot. `claim_withdraw` burns them and pays USDC only once
-/// `WITHDRAW_COOLDOWN_SLOTS` have passed, at what the pool is worth then.
+/// the slot. `claim_withdraw` burns them only once `WITHDRAW_COOLDOWN_SLOTS`
+/// have passed and pays their part of the pool then: USDC, and the LP-held
+/// tokens in kind (`LpTokenClaim`).
 ///
 /// The shares are not burned on request, so they stay in the LP mint's supply
 /// and keep taking their part of every loss the pool books while they wait.
@@ -66,6 +68,31 @@ impl WithdrawRequest {
         self.shares -= shares;
         self.points_usd -= points;
         Ok(points)
+    }
+}
+
+/// LP-held tokens a withdrawal claim is owed in kind, waiting to be pulled.
+///
+/// `claim_withdraw` pays USDC and takes the claim's part of every custody's
+/// LP tokens off `Custody::lp_amount` at the same time, but sending each one
+/// would mean carrying every custody's vault and the owner's token accounts
+/// in the claim. So the amounts are recorded here and pulled one custody at a
+/// time with `claim_withdraw_tokens`. They are fixed at the claim: nothing
+/// anyone does afterwards changes them. One per owner per pool; it closes when
+/// the last token is pulled.
+#[account]
+#[derive(InitSpace)]
+pub struct LpTokenClaim {
+    pub bump: u8,
+    pub pool: Pubkey,
+    pub owner: Pubkey,
+    /// Tokens owed from each custody, by `Custody::index`.
+    pub owed: [u64; MAX_CUSTODIES],
+}
+
+impl LpTokenClaim {
+    pub fn is_empty(&self) -> bool {
+        self.owed.iter().all(|&t| t == 0)
     }
 }
 

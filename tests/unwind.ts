@@ -9,6 +9,7 @@ import {
   getAccount,
   getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
+  transfer,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { createHash } from "crypto";
@@ -16,6 +17,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Unwind } from "../target/types/unwind";
+import { marketGenerationsPda, marketPda } from "../scripts/market-address";
 
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
@@ -203,10 +205,8 @@ describe("unwind", () => {
       [Buffer.from("lp_mint"), pool.toBuffer()],
       program.programId
     );
-    [market] = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), pool.toBuffer(), FEED_ID],
-      program.programId
-    );
+    // The feed's first listing, generation 1 (scripts/market-address.ts).
+    market = marketPda(program.programId, pool, FEED_ID, 1);
 
     await post(200);
 
@@ -234,10 +234,11 @@ describe("unwind", () => {
       .rpc();
 
     await program.methods
-      .addMarket(marketParams())
+      .addMarket(marketParams(), 1)
       .accounts({
         payer: authority.publicKey,
         pool,
+        generations: marketGenerationsPda(program.programId, pool, FEED_ID),
         market,
         systemProgram: SystemProgram.programId,
       })
@@ -672,7 +673,8 @@ describe("unwind", () => {
     // 2-for-1: the price halves, so the price factor is multiplied by 1/2.
     await program.methods
       .applyCorporateAction(new BN(1), new BN(2), new BN(1e9))
-      .accounts({ authority: authority.publicKey, pool, market })
+      // The batch PDA resolves from the market; a Pyth market has no observation.
+      .accounts({ authority: authority.publicKey, pool, market, observation: null })
       .rpc();
     await program.methods
       .setMarketPaused(false)
@@ -728,6 +730,9 @@ describe("unwind", () => {
     await program.methods.requestWithdraw(half).accounts(accounts).signers([lp]).rpc();
     // The shares left the wallet but not the supply.
     assert.equal((await getAccount(provider.connection, escrowLp)).amount.toString(), half.toString());
+    // Anyone can send xLP into the escrow account. A unit sent in used to
+    // keep it from closing, so the last claim and every cancel failed.
+    await transfer(provider.connection, lp, lpLp, escrowLp, lp, 1);
 
     // Claims price from the AUM checkpoint as deposits do, so one is taken
     // right before each.

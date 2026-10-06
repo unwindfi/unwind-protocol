@@ -37,7 +37,12 @@ pub struct Position {
 
     pub open_ts: i64,
     pub last_update_ts: i64,
-    pub _reserved: [u8; 24],
+    /// `Market::q_tag` when this position's size and entry are counted in its
+    /// side's `SideMoments`, zero when they are not, which is every position
+    /// opened before those sums existed. Was the first four bytes of
+    /// `_reserved`.
+    pub q_epoch: u32,
+    pub _reserved: [u8; 20],
 }
 
 impl Position {
@@ -116,7 +121,8 @@ mod tests {
             closing_usd: 0,
             open_ts: 0,
             last_update_ts: 0,
-            _reserved: [0; 24],
+            q_epoch: 0,
+            _reserved: [0; 20],
         }
     }
 

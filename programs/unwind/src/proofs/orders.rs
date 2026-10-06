@@ -149,7 +149,10 @@ fn market() -> Market {
         last_price: 0,
         risk_price: 0,
         risk_slot: 0,
-        _reserved: [0; 32],
+        generation: 0,
+        _reserved: [0; 28],
+        long_moments: SideMoments::default(),
+        short_moments: SideMoments::default(),
         volume_usd: 0,
         deployer_synced_volume_usd: 0,
         deployer_rewards_usd: 0,
@@ -172,7 +175,8 @@ fn empty_position(is_long: bool) -> Position {
         closing_usd: 0,
         open_ts: 0,
         last_update_ts: 0,
-        _reserved: [0; 24],
+        q_epoch: 0,
+        _reserved: [0; 20],
     }
 }
 

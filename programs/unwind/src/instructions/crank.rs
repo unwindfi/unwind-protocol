@@ -14,8 +14,8 @@ pub struct AccrueFunding<'info> {
     #[account(
         mut,
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Account<'info, Market>,
 }

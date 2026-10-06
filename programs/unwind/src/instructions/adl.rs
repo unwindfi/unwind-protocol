@@ -22,8 +22,9 @@ pub struct AutoDeleverage<'info> {
     #[account(
         mut,
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation; generation 0 is the address
+        // markets had before generations (`market_seeds`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 
@@ -154,6 +155,7 @@ pub fn auto_deleverage(ctx: Context<AutoDeleverage>) -> Result<()> {
     apply_settlement_to_pool(
         &mut ctx.accounts.pool,
         &mut ctx.accounts.market,
+        &ctx.accounts.position,
         &settlement,
         payout,
         0,

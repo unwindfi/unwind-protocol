@@ -32,8 +32,8 @@ pub struct PlaceOrder<'info> {
 
     #[account(
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 
@@ -163,6 +163,8 @@ pub fn place_order(ctx: Context<PlaceOrder>, params: OrderParams) -> Result<()> 
     order.size_usd = params.size_usd;
     order.collateral_usd = escrow;
     order.trigger_price = params.trigger_price;
+    // The factor the trigger is quoted in, so a split rebases it (S2-04).
+    order.trigger_factor = ctx.accounts.market.price_factor;
     order.trigger_above = params.trigger_above;
     order.created_ts = clock.unix_timestamp;
     order.expiry_ts = params.expiry_ts;
@@ -191,8 +193,8 @@ pub struct CancelOrder<'info> {
     /// escrow. Without this the refund could be drawn from any pool's vault.
     #[account(
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 
@@ -298,8 +300,8 @@ pub struct ExecuteOrder<'info> {
     #[account(
         mut,
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 
@@ -410,8 +412,11 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
     // The trigger is measured against the index, not the fill price. A stop is
     // a statement about the market, not about the spread the pool happens to
     // be quoting when the keeper gets there.
+    // Rebased through the market's price factor: a trigger placed before a
+    // split is held to the same economic level after it (S2-04).
+    let trigger = ctx.accounts.order.trigger_at(ctx.accounts.market.price_factor)?;
     require!(
-        ctx.accounts.order.is_triggered(oracle.price),
+        ctx.accounts.order.is_triggered_at(oracle.price, ctx.accounts.market.price_factor)?,
         PerpError::OrderNotTriggered
     );
 
@@ -450,14 +455,14 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
             is_long,
             order.collateral_usd - open_fee,
             size_usd,
-            order.trigger_price,
+            trigger,
         )?;
 
         // The trigger price is the limit. For an open that is what a limit
         // order already meant, so nothing has to be invented here.
         let index = ctx.accounts.batch.load_mut()?.insert(BatchOrder {
             owner: order.owner,
-            price: order.trigger_price,
+            price: trigger,
             size_usd,
             collateral_usd: order.collateral_usd,
             is_bid: is_long as u8,
@@ -470,7 +475,7 @@ pub fn execute_order(ctx: Context<ExecuteOrder>) -> Result<()> {
         })?;
         // The escrow does not move: `place_order` put it in the vault and
         // counted it, and the batch order is now what it stands behind.
-        (index, size_usd, order.trigger_price, is_long)
+        (index, size_usd, trigger, is_long)
     } else {
         require!(ctx.accounts.position.is_open(), PerpError::PositionEmpty);
         let is_long = ctx.accounts.position.is_long;

@@ -274,6 +274,11 @@ fn book_planned(
     // carries the same entry the positions do and `trader_pnl_usd` can price
     // the whole book without walking it.
     let had_open_interest = market.has_open_interest();
+    // The position's term in its side's moment sums is replaced whole, read
+    // before anything below changes the position: what it put in comes out,
+    // and the grown position goes in at its blended entry.
+    let old_term = market.tracked_term(position);
+    let tracked = market.retrack(is_long, old_term, new_size, new_entry);
     if is_long {
         market.long_avg_entry_price = blend_entry_price(
             market.long_size_usd,
@@ -290,6 +295,16 @@ fn book_planned(
             fill,
         )?;
         market.short_size_usd = side_oi;
+    }
+    // The blend is exact up to rounding; with every position on the side in
+    // the sums, the average is recomputed from them instead, so rounding
+    // never accumulates.
+    if let Some(a) = market.side_avg_from_moments(is_long) {
+        if is_long {
+            market.long_avg_entry_price = a;
+        } else {
+            market.short_avg_entry_price = a;
+        }
     }
     if !had_open_interest && market.has_open_interest() {
         pool.markets_with_oi = pool
@@ -315,6 +330,7 @@ fn book_planned(
     position.entry_price = new_entry;
     position.entry_price_factor = market.price_factor;
     position.entry_funding = new_entry_funding;
+    position.q_epoch = if tracked { market.q_tag() } else { 0 };
     position.locked_usd = position
         .locked_usd
         .checked_add(extra_lock)
@@ -409,13 +425,15 @@ pub fn payable_usd(market: &Market, settlement: &Settlement) -> u64 {
 /// LPs: no close is ever paid more than its market was underwritten for, and
 /// no winner can beat another to the money by closing first.
 ///
-/// `winners` is read from the market's side aggregates, so a side holding
-/// both winners and losers counts net. Netting understates what winners are
-/// owed: a loser's loss is not money the market holds until that loser
-/// closes, while `available` counts only money it holds. So the closer's own
-/// side is never counted below `owed_usd`, the profit this close alone
-/// proves is on it. The other side's aggregate can still hide winners behind
-/// losers; see docs/loss-budget.md.
+/// `winners` must not be netted: a loser's loss is not money the market holds
+/// until that loser closes, while `available` counts only money it holds. So
+/// each side counts at an upper bound on its gross winners, from its moment
+/// sums (`Market::side_winners_bound_usd`), and a winner hidden behind a loser
+/// on either side is still counted. A side holding a position opened before
+/// those sums existed counts at its net profit instead, the old rule, until
+/// that position is gone. The closer's own side is never counted below
+/// `owed_usd`, the profit this close alone proves is on it. See
+/// docs/loss-budget.md.
 pub fn haircut_profit_usd(
     pool: &Pool,
     market: &Market,
@@ -432,20 +450,10 @@ pub fn haircut_profit_usd(
             .saturating_add(pool.liquidity_usd)
             .saturating_add(pool.insurance_usd),
     );
-    let side_profit = |long: bool| -> Result<u64> {
-        let (size, entry) = if long {
-            (market.long_size_usd, market.long_avg_entry_price)
-        } else {
-            (market.short_size_usd, market.short_avg_entry_price)
-        };
-        if size == 0 {
-            return Ok(0);
-        }
-        Ok(position_pnl_usd(long, size, entry, price)?.max(0) as u64)
-    };
-    let winners = side_profit(is_long)?
+    let winners = market
+        .side_winners_usd(is_long, price)?
         .max(owed_usd)
-        .checked_add(side_profit(!is_long)?)
+        .checked_add(market.side_winners_usd(!is_long, price)?)
         .ok_or(PerpError::MathOverflow)?;
     if winners <= available {
         return Ok(owed_usd);
@@ -503,6 +511,7 @@ pub fn fee_cuts_usd(pool: &Pool, fee_usd: u64) -> Result<u64> {
 pub fn apply_settlement_to_pool(
     pool: &mut Pool,
     market: &mut Market,
+    position: &Position,
     settlement: &Settlement,
     payout: u64,
     fee_usd: u64,
@@ -571,11 +580,9 @@ pub fn apply_settlement_to_pool(
     }
 
     let had_open_interest = market.has_open_interest();
-    if is_long {
-        market.long_size_usd = market.long_size_usd.saturating_sub(close_size);
-    } else {
-        market.short_size_usd = market.short_size_usd.saturating_sub(close_size);
-    }
+    // Size, moment sums and average entry come off the side together, here
+    // and nowhere else on a close (`Market::close_side`).
+    market.close_side(is_long, position, close_size)?;
     if had_open_interest && !market.has_open_interest() {
         pool.markets_with_oi = pool.markets_with_oi.saturating_sub(1);
         pool.oi_version = pool.oi_version.wrapping_add(1);
@@ -748,7 +755,7 @@ pub fn book_close_at(
     let payout = gross - haircut_usd;
 
     let backer_fee_usd = apply_settlement_to_pool(
-        pool, market, &settlement, payout, fee_usd, close_size, is_long,
+        pool, market, position, &settlement, payout, fee_usd, close_size, is_long,
     )?;
 
     position.size_usd = remaining;
@@ -960,7 +967,10 @@ pub(crate) mod tests {
             last_price: 0,
             risk_price: 0,
             risk_slot: 0,
-            _reserved: [0; 32],
+            generation: 0,
+            _reserved: [0; 28],
+            long_moments: SideMoments::default(),
+            short_moments: SideMoments::default(),
         };
         m.last_funding_ts = 0;
         m
@@ -981,7 +991,8 @@ pub(crate) mod tests {
             open_ts: 0,
             last_update_ts: 0,
             closing_usd: 0,
-            _reserved: [0; 24],
+            q_epoch: 0,
+            _reserved: [0; 20],
         }
     }
 
@@ -1201,8 +1212,9 @@ pub(crate) mod tests {
         let up = PX + PX / 10;
         let closed = book_close(&mut p, &mut m, &mut pos, 5_000_000_000, up, 1).unwrap();
         assert_eq!(pos.size_usd, 0, "fills in full");
-        assert_eq!(closed.haircut_usd, 200_000_000);
-        assert_eq!(p.liquidity_usd + p.insurance_usd, 0);
+        // To within the few micro-dollars the winners' bound rounds up by.
+        assert!(closed.haircut_usd.abs_diff(200_000_000) <= 5);
+        assert!(p.liquidity_usd + p.insurance_usd <= 5);
     }
 
     #[test]
@@ -1236,8 +1248,9 @@ pub(crate) mod tests {
         assert!(m.remaining_budget_usd() <= closed.fee_usd);
         // $495 owed after the fee, paid at $200 / $500, the winners' share.
         let owed = 500_000_000 - closed.fee_usd;
-        assert_eq!(closed.payout_usd, 1_000_000_000 + owed * 2 / 5);
-        assert_eq!(closed.haircut_usd, owed - owed * 2 / 5);
+        // To within the few micro-dollars the winners' bound rounds up by.
+        assert!(closed.payout_usd.abs_diff(1_000_000_000 + owed * 2 / 5) <= 5);
+        assert!(closed.haircut_usd.abs_diff(owed - owed * 2 / 5) <= 5);
     }
 
     #[test]
@@ -1299,21 +1312,26 @@ pub(crate) mod tests {
     #[test]
     fn a_winner_netted_against_its_own_sides_loser_is_paid_only_its_share() {
         // A's side nets to zero, so the aggregates alone said the only winner
-        // was C, and A closing first was paid all $500 and C nothing. A's own
-        // $500 now counts on its side: half each.
+        // was C, and A closing first was paid all $500 and C nothing. The
+        // long side now counts at its moment bound, $502.08 against a true
+        // $500: A is paid $249.48 and C what is left, $250.52.
         let (a, c) = a_and_c_paid_behind_a_netted_loser(true);
-        assert!(a.abs_diff(250_000_000) <= 1, "A paid {a}");
-        assert!(c.abs_diff(250_000_000) <= 1, "C paid {c}");
+        assert!(a.abs_diff(250_000_000) <= 1_000_000, "A paid {a}");
+        assert!(c.abs_diff(250_000_000) <= 1_000_000, "C paid {c}");
+        assert!(a <= 250_000_000, "never past the fair share");
+        assert!(a + c <= 500_000_000);
     }
 
     #[test]
-    fn a_winner_hidden_on_the_other_side_is_still_paid_last() {
-        // The order this rule cannot see: C closes first, and A's $500 is
-        // still hidden behind B in the long aggregate. Never past the budget,
-        // but not a fair share either; see docs/loss-budget.md.
+    fn a_winner_hidden_on_the_other_side_is_paid_its_share_too() {
+        // C closes first, with A hidden behind B in the long aggregate. The
+        // net rule paid C all $500 and A nothing. The long side's moment
+        // bound still sees A: C is paid $249.48, and so is A.
         let (a, c) = a_and_c_paid_behind_a_netted_loser(false);
+        assert!(a.abs_diff(250_000_000) <= 1_000_000, "A paid {a}");
+        assert!(c.abs_diff(250_000_000) <= 1_000_000, "C paid {c}");
+        assert!(c <= 250_000_000, "never past the fair share");
         assert!(a + c <= 500_000_000);
-        assert_eq!((a, c), (0, 500_000_000));
     }
 
     #[test]
@@ -1453,7 +1471,7 @@ pub(crate) mod tests {
         let (bounty, to_owner) = (fee - cuts, equity - fee);
         let before = vault_books(&p);
 
-        apply_settlement_to_pool(&mut p, &mut m, &settlement, equity - cuts, 0, size, true).unwrap();
+        apply_settlement_to_pool(&mut p, &mut m, &pos, &settlement, equity - cuts, 0, size, true).unwrap();
         take_fee_cuts(&mut p, fee).unwrap();
 
         // docs/fees.md: 20% protocol, 10% chain, 10% insurance. The liquidator
@@ -1714,7 +1732,7 @@ pub(crate) mod tests {
         p.trader_collateral_usd = 1_000;
         let books = vault_books(&p);
         // $300 owed past $1,000 of collateral.
-        apply_settlement_to_pool(&mut p, &mut m, &settlement(1_000, 1_300), 1_300, 0, 0, true)
+        apply_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 1_300), 1_300, 0, 0, true)
             .unwrap();
         assert_eq!((m.backing_usd, p.backing_usd, m.backing_drawn_usd), (0, 0, 100));
         assert_eq!(p.liquidity_usd, 0);
@@ -1731,7 +1749,7 @@ pub(crate) mod tests {
         p.trader_collateral_usd = 1_000;
         let liq = p.liquidity_usd;
         // The trader leaves $300 of their $1,000 behind.
-        apply_settlement_to_pool(&mut p, &mut m, &settlement(1_000, 700), 700, 0, 0, true)
+        apply_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 700), 700, 0, 0, true)
             .unwrap();
         assert_eq!((m.backing_usd, p.backing_usd, m.backing_drawn_usd), (200, 200, 0));
         assert_eq!(p.liquidity_usd, liq + 200, "the rest is the LPs'");
@@ -1744,7 +1762,7 @@ pub(crate) mod tests {
         m.charge_loss(m.remaining_budget_usd() - 100).unwrap();
         p.trader_collateral_usd = 1_000;
         let liq = p.liquidity_usd;
-        let r = apply_settlement_to_pool(&mut p, &mut m, &settlement(1_000, 1_101), 1_101, 0, 0, true);
+        let r = apply_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 1_101), 1_101, 0, 0, true);
         assert!(r.is_err());
         assert_eq!(p.liquidity_usd, liq, "nothing was paid");
     }
@@ -1921,5 +1939,293 @@ pub(crate) mod tests {
         book_cleared_open(&mut p, &mut m, &mut pos, order.owner, 1, true, used - fee, fee,
                           Pubkey::default(), filled, PX, 1).unwrap();
         assert_eq!(pos.size_usd, 11_000_000_000);
+    }
+}
+
+/// The side moment sums and the haircut that reads them, across random
+/// sequences of opens, top-ups, partial and full closes, liquidations and
+/// price moves.
+#[cfg(test)]
+mod moment_tests {
+    use super::tests::{market, pool, position, PX};
+    use super::*;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// The sums recomputed from the positions, side by side.
+    fn recompute(m: &Market, positions: &[Position]) -> [SideMoments; 2] {
+        let mut out = [SideMoments::default(); 2];
+        for pos in positions {
+            if let Some((size, entry)) = m.tracked_term(pos) {
+                let (u, q) = moment_terms(size, entry).unwrap();
+                let side = &mut out[usize::from(!pos.is_long)];
+                side.tracked_usd += size;
+                side.inv_entry += u;
+                side.inv_entry_sq += q;
+            }
+        }
+        out
+    }
+
+    /// Gross profit the winners on one side hold at `price`, position by
+    /// position: what the bound has to stay above.
+    fn gross_winners(m: &Market, positions: &[Position], is_long: bool, price: u64) -> u64 {
+        positions
+            .iter()
+            .filter(|p| p.is_open() && p.is_long == is_long)
+            .map(|p| {
+                let e = m.adjust_entry_price(p.entry_price, p.entry_price_factor).unwrap();
+                position_pnl_usd(is_long, p.size_usd, e, price).unwrap().max(0) as u64
+            })
+            .sum()
+    }
+
+    fn available(p: &Pool, m: &Market) -> u64 {
+        m.remaining_budget_usd()
+            .min(m.backing_usd.saturating_add(p.liquidity_usd).saturating_add(p.insurance_usd))
+    }
+
+    #[test]
+    fn the_sums_match_the_positions_and_no_winner_is_paid_past_its_share() {
+        let mut winning_closes = 0;
+        for seed in 1..=60u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let (mut p, mut m) = (pool(), market());
+            let budget = 200_000_000 + rng.below(3_000_000_000);
+            m.charge_loss(m.remaining_budget_usd() - budget).unwrap();
+            let mut positions: Vec<Position> = (0..6).map(|_| position()).collect();
+            let mut price = PX;
+            for _ in 0..250 {
+                let i = rng.below(positions.len() as u64) as usize;
+                match rng.below(10) {
+                    0..=1 => {
+                        // The price walks between $40 and $250.
+                        let step = (price / 20).max(1);
+                        price = if rng.below(2) == 0 { price + step } else { price - step };
+                        price = price.clamp(40 * PX / 100, 250 * PX / 100);
+                    }
+                    2..=4 => {
+                        let is_long = if positions[i].is_open() {
+                            positions[i].is_long
+                        } else {
+                            rng.below(2) == 0
+                        };
+                        let size = 10_000_000 + rng.below(5_000_000_000);
+                        let pos = &mut positions[i];
+                        let _ = book_open(&mut p, &mut m, pos, Pubkey::default(), 1, is_long,
+                                          size / 2 + 1, 0, Pubkey::default(), size, price, 0);
+                    }
+                    5..=7 => {
+                        if !positions[i].is_open() {
+                            continue;
+                        }
+                        let is_long = positions[i].is_long;
+                        let full = positions[i].size_usd;
+                        let size = if rng.below(2) == 0 { full } else { 1 + rng.below(full) };
+                        let s = settle(&positions[i], &m, size, price).unwrap();
+                        let owed = s.equity_usd.saturating_sub(s.collateral_share);
+                        let others = gross_winners(&m, &positions, !is_long, price)
+                            + gross_winners(&m, &positions, is_long, price);
+                        let whole = {
+                            let e = m.adjust_entry_price(positions[i].entry_price,
+                                                         positions[i].entry_price_factor).unwrap();
+                            position_pnl_usd(is_long, full, e, price).unwrap().max(0) as u64
+                        };
+                        // The true gross winners, counting this close at no
+                        // less than what it is owed.
+                        let true_winners = others - whole + whole.max(owed);
+                        let cash = available(&p, &m);
+                        let closed = book_close(&mut p, &mut m, &mut positions[i], size, price, 1)
+                            .unwrap();
+                        let paid = closed.payout_usd.saturating_sub(s.collateral_share);
+                        if owed > 0 && true_winners > cash {
+                            winning_closes += 1;
+                            let fair = (owed as u128 * cash as u128 / true_winners as u128) as u64;
+                            assert!(paid <= fair + 1, "seed {seed}: paid {paid} past fair {fair}");
+                        }
+                    }
+                    8 => {
+                        // A forced close, the way `liquidate` and ADL book it.
+                        if !positions[i].is_open() {
+                            continue;
+                        }
+                        let pos = positions[i].clone();
+                        let s = settle(&pos, &m, pos.size_usd, price).unwrap();
+                        let payout = payable_usd(&m, &s);
+                        apply_settlement_to_pool(&mut p, &mut m, &pos, &s, payout, 0,
+                                                 pos.size_usd, pos.is_long).unwrap();
+                        let pos = &mut positions[i];
+                        pos.size_usd = 0;
+                        pos.collateral_usd = 0;
+                        pos.entry_price = 0;
+                        pos.entry_price_factor = 0;
+                    }
+                    _ => {
+                        let _ = m.charge_loss(m.remaining_budget_usd() / 3);
+                    }
+                }
+                // Never one-sided: the sums are exactly the positions'.
+                let [long, short] = recompute(&m, &positions);
+                assert_eq!(long, m.long_moments, "seed {seed}: long sums drifted");
+                assert_eq!(short, m.short_moments, "seed {seed}: short sums drifted");
+                assert_eq!(m.long_moments.tracked_usd, m.long_size_usd);
+                assert_eq!(m.short_moments.tracked_usd, m.short_size_usd);
+                // Size, average entry and the sums agree: the side's average
+                // is the positions' harmonic mean, so its net PnL is theirs.
+                for is_long in [true, false] {
+                    let open: Vec<&Position> = positions.iter()
+                        .filter(|q| q.is_open() && q.is_long == is_long).collect();
+                    let size: u64 = open.iter().map(|q| q.size_usd).sum();
+                    let (side_size, avg) = if is_long {
+                        (m.long_size_usd, m.long_avg_entry_price)
+                    } else {
+                        (m.short_size_usd, m.short_avg_entry_price)
+                    };
+                    assert_eq!(side_size, size, "seed {seed}: side size");
+                    if size == 0 {
+                        continue;
+                    }
+                    let units: u128 = open.iter()
+                        .map(|q| q.size_usd as u128 * MOMENT_U_SCALE / q.entry_price as u128).sum();
+                    let harmonic = (size as u128 * MOMENT_U_SCALE / units) as u64;
+                    assert!(avg.abs_diff(harmonic) <= 1, "seed {seed}: avg {avg} vs {harmonic}");
+                    let pnl: i64 = open.iter()
+                        .map(|q| position_pnl_usd(is_long, q.size_usd, q.entry_price, price).unwrap())
+                        .sum();
+                    let agg = position_pnl_usd(is_long, size, avg, price).unwrap();
+                    // One unit of entry is size / entry of PnL at most.
+                    let tol = (size as u128 * price as u128 / (avg as u128 * avg as u128)) as i64
+                        + open.len() as i64 + 1;
+                    assert!((agg - pnl).abs() <= tol, "seed {seed}: side pnl {agg} vs {pnl}");
+                }
+                // The bound is a bound.
+                for is_long in [true, false] {
+                    let bound = m.side_winners_bound_usd(is_long, price).unwrap();
+                    assert!(bound >= gross_winners(&m, &positions, is_long, price),
+                            "seed {seed}: bound under the winners");
+                }
+                // And nothing paid past the budget, in any order.
+                assert!(m.net_loss_usd <= m.loss_budget_usd as i64, "seed {seed}");
+            }
+        }
+        assert!(winning_closes > 50, "the haircut bound in only {winning_closes} closes");
+    }
+
+    #[test]
+    fn the_bound_is_exact_with_one_entry_and_close_on_the_repro() {
+        let mut m = market();
+        // Three longs at one entry: the bound is the side's profit.
+        for _ in 0..3 {
+            m.long_size_usd += 1_000_000_000;
+            assert!(m.retrack(true, None, 1_000_000_000, PX));
+        }
+        let up = PX + PX / 10;
+        let b = m.side_winners_bound_usd(true, up).unwrap();
+        assert!((300_000_000..=300_000_005).contains(&b), "bound {b}");
+        assert!(m.side_winners_bound_usd(true, PX - PX / 10).unwrap() <= 5);
+
+        // The repro's long side: A $5,000 at $100, B $6,000 at $120, at $110.
+        // Gross winners $500, net zero; the bound reads $502.08.
+        let mut m = market();
+        m.long_size_usd = 11_000_000_000;
+        assert!(m.retrack(true, None, 5_000_000_000, PX));
+        assert!(m.retrack(true, None, 6_000_000_000, PX + PX / 5));
+        let b = m.side_winners_bound_usd(true, up).unwrap();
+        assert!((502_000_000..=502_100_000).contains(&b), "bound {b}");
+    }
+
+    #[test]
+    fn a_side_holding_an_untracked_position_counts_net_until_it_is_gone() {
+        // Long L was opened before the sums existed: its term is not in them
+        // and it carries no tag.
+        let (mut p, mut m) = (pool(), market());
+        let (mut legacy, mut fresh) = (position(), position());
+        book_open(&mut p, &mut m, &mut legacy, Pubkey::default(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 5_000_000_000, PX, 0).unwrap();
+        m.long_moments = SideMoments::default();
+        legacy.q_epoch = 0;
+
+        book_open(&mut p, &mut m, &mut fresh, Pubkey::default(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 6_000_000_000, PX + PX / 5, 0).unwrap();
+        assert_eq!(fresh.q_epoch, m.q_tag());
+        let up = PX + PX / 10;
+        assert_eq!(m.side_winners_bound_usd(true, up), None, "incomplete");
+        // So the side counts net, the old rule.
+        let net = position_pnl_usd(true, m.long_size_usd, m.long_avg_entry_price, up)
+            .unwrap().max(0) as u64;
+        assert_eq!(m.side_winners_usd(true, up).unwrap(), net);
+
+        // A partial close of the legacy position leaves the sums alone.
+        let before = m.long_moments;
+        book_close(&mut p, &mut m, &mut legacy, 1_000_000_000, up, 1).unwrap();
+        assert_eq!(m.long_moments, before);
+        assert_eq!(m.side_winners_bound_usd(true, up), None);
+
+        // Topping it up brings the whole of it in.
+        book_open(&mut p, &mut m, &mut legacy, Pubkey::default(), 1, true,
+                  1_000_000_000, 0, Pubkey::default(), 1_000_000_000, up, 0).unwrap();
+        assert_eq!(legacy.q_epoch, m.q_tag());
+        assert_eq!(m.long_moments.tracked_usd, m.long_size_usd);
+        assert!(m.side_winners_bound_usd(true, up).is_some());
+
+        // And a corporate action forgets every term: the next split epoch
+        // untracks everything open, and the side counts net again until
+        // those positions are gone.
+        m.split_epoch += 1;
+        m.reset_moments();
+        assert_eq!(m.side_winners_bound_usd(true, up), None);
+        let size = legacy.size_usd;
+        book_close(&mut p, &mut m, &mut legacy, size, up, 1).unwrap();
+        let size = fresh.size_usd;
+        book_close(&mut p, &mut m, &mut fresh, size, up, 1).unwrap();
+        assert_eq!(m.long_moments, SideMoments::default());
+        assert_eq!(m.side_winners_bound_usd(true, up), Some(0));
+    }
+
+    #[test]
+    fn a_close_takes_its_own_entry_off_the_side_average() {
+        // Long A $100k from $100 closes at $200 next to long B $100k opened
+        // at $200. The side used to stay at $100k from $133.33, up $50,000
+        // at $200 when B alone is flat.
+        let two = 2 * PX;
+        for legacy in [false, true] {
+            let (mut p, mut m) = (pool(), market());
+            let (mut a, mut b) = (position(), position());
+            book_open(&mut p, &mut m, &mut a, Pubkey::default(), 1, true,
+                      50_000_000_000, 0, Pubkey::default(), 100_000_000_000, PX, 0).unwrap();
+            if legacy {
+                // Opened before the sums: the stored average does the work.
+                m.long_moments = SideMoments::default();
+                a.q_epoch = 0;
+            }
+            book_open(&mut p, &mut m, &mut b, Pubkey::default(), 1, true,
+                      50_000_000_000, 0, Pubkey::default(), 100_000_000_000, two, 0).unwrap();
+            assert_eq!(m.long_avg_entry_price, PX * 4 / 3);
+            book_close(&mut p, &mut m, &mut a, 100_000_000_000, two, 1).unwrap();
+            assert_eq!(m.long_size_usd, 100_000_000_000);
+            assert!(m.long_avg_entry_price.abs_diff(two) <= 1, "legacy {legacy}: {}",
+                    m.long_avg_entry_price);
+            assert!(m.trader_pnl_usd(two).unwrap().abs() <= 10_000, "a cent at most");
+        }
+    }
+
+    #[test]
+    fn isqrt_ceil_is_the_smallest_root() {
+        for x in (0u128..5_000).chain([u64::MAX as u128, u128::MAX, u128::MAX - 1, 1 << 127]) {
+            let r = crate::state::market::isqrt_ceil(x);
+            assert!(r.checked_mul(r).map_or(true, |rr| rr >= x), "{x}");
+            assert!(r == 0 || (r - 1) * (r - 1) < x, "{x}");
+        }
     }
 }

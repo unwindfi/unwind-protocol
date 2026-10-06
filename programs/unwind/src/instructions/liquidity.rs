@@ -1,4 +1,4 @@
-use crate::aum::{pool_aum_usd, Unpriced};
+use crate::aum::{checkpoint_pnl_usd, lp_in_kind, pool_aum_usd, Unpriced};
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::batch::open_trader;
@@ -178,6 +178,82 @@ pub fn withdrawal_value(lp_amount: u64, aum: u64, lp_supply: u64, fee_bps: u16) 
     let net = gross.checked_sub(fee).ok_or(PerpError::MathOverflow)?;
     require!(net > 0, PerpError::ZeroAmount);
     Ok((gross, net))
+}
+
+/// What a claim of `shares` of `supply` takes out of the pool.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClaimSplit {
+    /// USDC, before and after the withdrawal fee.
+    pub gross_usd: u64,
+    pub net_usd: u64,
+    /// LP-held tokens owed from each custody, by `Custody::index`, after the
+    /// fee. Taken off `Custody::lp_amount` at the claim and pulled with
+    /// `claim_withdraw_tokens`.
+    pub tokens: [u64; MAX_CUSTODIES],
+}
+
+/// Splits a claim into USDC and tokens in kind.
+///
+/// The LPs own USDC and, once backing has paid them for losses they covered,
+/// tokens (`Custody::lp_amount`). Paying a leaver their whole share in USDC
+/// sold the stayers' USDC for tokens nobody could take out, until the last
+/// LPs held nothing else. So a claim takes its part of each: USDC from the
+/// pool's value without the tokens (`liquidity - pnl`), and the same part of
+/// every custody's LP tokens. `held` is `(lp_amount, value_usd)` per custody
+/// in index order.
+///
+/// The part is `shares / supply` against the supply this claim burns, and
+/// the tokens leave `lp_amount` with it, so the next claim is priced against
+/// smaller holdings and a smaller supply in the same proportion. Each part
+/// rounds down: the sum owed can never pass what the LPs hold, and the dust
+/// stays with the LPs who remain. The last claim (all of the supply) takes
+/// every token, since tokens with no shares behind them would belong to the
+/// next first depositor.
+///
+/// Traders up by more than the USDC hold a claim on the tokens too. The
+/// tokens owed are then cut to what the pool is worth after that profit, so a
+/// leaver takes no more than their part of the pool's whole value.
+///
+/// The withdrawal fee comes off both parts and stays with the LPs. Refuses a
+/// claim that would pay nothing at all.
+pub fn split_claim(
+    shares: u64,
+    supply: u64,
+    fee_bps: u16,
+    liquidity_usd: u64,
+    pnl_usd: i64,
+    held: &[(u64, u64)],
+) -> Result<ClaimSplit> {
+    require!(shares > 0, PerpError::ZeroAmount);
+    require!(supply > 0 && shares <= supply, PerpError::InsufficientLiquidity);
+    require!(held.len() <= MAX_CUSTODIES, PerpError::IncompleteCustodyList);
+    let last = shares == supply;
+
+    let usdc_value = (liquidity_usd as i128 - pnl_usd as i128).clamp(0, u64::MAX as i128) as u64;
+    let gross_usd = mul_div_u64(shares, usdc_value as u128, supply as u128)?;
+    let net_usd = gross_usd
+        .checked_sub(bps_of(gross_usd, fee_bps)?)
+        .ok_or(PerpError::MathOverflow)?;
+
+    // What traders are up past the USDC, taken from the tokens' value.
+    let shortfall = (pnl_usd as i128 - liquidity_usd as i128).clamp(0, u64::MAX as i128) as u64;
+    let in_kind = held.iter().try_fold(0u64, |a, &(_, v)| a.checked_add(v).ok_or(PerpError::MathOverflow))?;
+    let keep = in_kind.saturating_sub(shortfall);
+
+    let mut tokens = [0u64; MAX_CUSTODIES];
+    for (i, &(amount, _)) in held.iter().enumerate() {
+        tokens[i] = if last {
+            amount
+        } else {
+            let mut t = mul_div_u64(amount, shares as u128, supply as u128)?;
+            if shortfall > 0 && in_kind > 0 {
+                t = mul_div_u64(t, keep as u128, in_kind as u128)?;
+            }
+            t.checked_sub(bps_of(t, fee_bps)?).ok_or(PerpError::MathOverflow)?
+        };
+    }
+    require!(net_usd > 0 || tokens.iter().any(|&t| t > 0), PerpError::ZeroAmount);
+    Ok(ClaimSplit { gross_usd, net_usd, tokens })
 }
 
 /// Whether the pool can pay `gross` out to a leaving LP.
@@ -371,7 +447,11 @@ pub fn cancel_withdraw(ctx: Context<CancelWithdraw>) -> Result<()> {
     let bump = ctx.accounts.pool.bump;
     let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, usdc_mint_key.as_ref(), &[bump]]];
 
-    if shares > 0 {
+    // The whole balance, not `shares`: anyone can send xLP into the escrow
+    // account, and a unit left behind made the close below fail, so the
+    // request could never be cancelled. What was sent goes to the owner.
+    let balance = ctx.accounts.escrow_lp.amount;
+    if balance > 0 {
         transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -383,7 +463,7 @@ pub fn cancel_withdraw(ctx: Context<CancelWithdraw>) -> Result<()> {
                 },
                 signer_seeds,
             ),
-            shares,
+            balance,
             ctx.accounts.lp_mint.decimals,
         )?;
     }
@@ -452,14 +532,29 @@ pub struct ClaimWithdraw<'info> {
     #[account(seeds = [AUM_SEED, pool.key().as_ref()], bump = checkpoint.bump)]
     pub checkpoint: Box<Account<'info, AumCheckpoint>>,
 
+    /// The LP-held tokens this claim is owed, pulled afterwards with
+    /// `claim_withdraw_tokens`. Closed again here if it is owed none.
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + LpTokenClaim::INIT_SPACE,
+        seeds = [LP_TOKEN_CLAIM_SEED, pool.key().as_ref(), owner.key().as_ref()],
+        bump,
+    )]
+    pub token_claim: Box<Account<'info, LpTokenClaim>>,
+
     pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
 }
 
 /// Burns `lp_amount` escrowed shares once the cooldown is over and pays them
-/// at what the pool is worth now. What is left in escrow stays claimable; the
+/// their part of the pool now (see `split_claim`): USDC from the pool's value
+/// without its LP-held tokens, and the same part of those tokens, recorded on
+/// the owner's `LpTokenClaim`. What is left in escrow stays claimable; the
 /// request closes when the last share is claimed.
 ///
-/// `remaining_accounts` as for `add_liquidity`.
+/// `remaining_accounts` as for `add_liquidity`; a custody the LPs hold
+/// tokens in must be writable.
 pub fn claim_withdraw<'info>(
     ctx: Context<'_, '_, 'info, 'info, ClaimWithdraw<'info>>,
     lp_amount: u64,
@@ -479,21 +574,55 @@ pub fn claim_withdraw<'info>(
     // is counted at the most it could cost the LPs rather than refusing: one
     // stalled feed or emptied pool must not lock every LP's capital in the
     // pool.
-    let aum = pool_aum_usd(
-        &ctx.accounts.pool, &ctx.accounts.checkpoint, Clock::get()?.unix_timestamp,
-        ctx.remaining_accounts, Unpriced::AtWorst,
+    let pool_info = &ctx.accounts.pool;
+    let pnl = checkpoint_pnl_usd(
+        pool_info.key(), pool_info.oi_version, pool_info.markets_with_oi,
+        &ctx.accounts.checkpoint, Clock::get()?.unix_timestamp, Unpriced::AtWorst,
     )?;
+    let mut custodies = lp_in_kind(pool_info, ctx.remaining_accounts)?;
+    let held: Vec<(u64, u64)> = custodies.iter().map(|(c, v)| (c.lp_amount, *v)).collect();
+    let in_kind_usd = held.iter().fold(0u64, |a, &(_, v)| a.saturating_add(v));
+    let aum = pool_info.aum_with_in_kind_usd(pnl, in_kind_usd);
     let lp_supply = ctx.accounts.lp_mint.supply;
-    let (gross, net) = withdrawal_value(
+    let split = split_claim(
         lp_amount,
-        aum,
         lp_supply,
-        ctx.accounts.pool.remove_liquidity_fee_bps,
+        pool_info.remove_liquidity_fee_bps,
+        pool_info.liquidity_usd,
+        pnl,
+        &held,
     )?;
+    let (gross, net) = (split.gross_usd, split.net_usd);
     require!(net >= min_usd_out, PerpError::SlippageExceeded);
     check_withdrawal_allowed(&ctx.accounts.pool, gross)?;
 
     ctx.accounts.request.release(lp_amount)?;
+
+    // The tokens leave the LPs' holdings at the burn, against the supply the
+    // burn reduces, so no later claim can change what this one is owed.
+    let pool_key = ctx.accounts.pool.key();
+    let owner_key = ctx.accounts.owner.key();
+    let tc = &mut ctx.accounts.token_claim;
+    if tc.pool == Pubkey::default() {
+        tc.bump = ctx.bumps.token_claim;
+        tc.pool = pool_key;
+        tc.owner = owner_key;
+    }
+    for ((c, _), info) in custodies.iter_mut().zip(ctx.remaining_accounts.chunks(2)) {
+        let t = split.tokens[c.index as usize];
+        if t == 0 {
+            continue;
+        }
+        require!(info[0].is_writable, PerpError::IncompleteCustodyList);
+        c.lp_amount = c.lp_amount.checked_sub(t).ok_or(PerpError::MathOverflow)?;
+        c.lp_owed_amount = c.lp_owed_amount.checked_add(t).ok_or(PerpError::MathOverflow)?;
+        let i = c.index as usize;
+        tc.owed[i] = tc.owed[i].checked_add(t).ok_or(PerpError::MathOverflow)?;
+        c.exit(&crate::ID)?;
+    }
+    if !split.tokens.iter().all(|&t| t == 0) {
+        emit!(LiquidityOwedInKind { pool: pool_key, owner: owner_key, tokens: split.tokens });
+    }
 
     let usdc_mint_key = ctx.accounts.pool.usdc_mint;
     let bump = ctx.accounts.pool.bump;
@@ -509,23 +638,25 @@ pub fn claim_withdraw<'info>(
             },
             signer_seeds,
         ),
-        lp_amount,
+        escrow_burn(lp_amount, ctx.accounts.request.shares, ctx.accounts.escrow_lp.amount),
     )?;
 
-    transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.usdc_vault.to_account_info(),
-                mint: ctx.accounts.usdc_mint.to_account_info(),
-                to: ctx.accounts.owner_usdc.to_account_info(),
-                authority: ctx.accounts.pool.to_account_info(),
-            },
-            signer_seeds,
-        ),
-        net,
-        ctx.accounts.usdc_mint.decimals,
-    )?;
+    if net > 0 {
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.usdc_vault.to_account_info(),
+                    mint: ctx.accounts.usdc_mint.to_account_info(),
+                    to: ctx.accounts.owner_usdc.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            net,
+            ctx.accounts.usdc_mint.decimals,
+        )?;
+    }
 
     if ctx.accounts.request.shares == 0 {
         close_escrow(
@@ -537,6 +668,11 @@ pub fn claim_withdraw<'info>(
         )?;
         ctx.accounts
             .request
+            .close(ctx.accounts.owner.to_account_info())?;
+    }
+    if ctx.accounts.token_claim.is_empty() {
+        ctx.accounts
+            .token_claim
             .close(ctx.accounts.owner.to_account_info())?;
     }
 
@@ -552,6 +688,106 @@ pub fn claim_withdraw<'info>(
         aum_before: aum,
     });
     Ok(())
+}
+
+#[derive(Accounts)]
+pub struct ClaimWithdrawTokens<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
+    pub pool: Box<Account<'info, Pool>>,
+
+    #[account(
+        mut,
+        seeds = [CUSTODY_SEED, pool.key().as_ref(), mint.key().as_ref()],
+        bump = custody.bump,
+        has_one = pool @ PerpError::MarketPoolMismatch,
+        has_one = mint,
+        has_one = vault,
+    )]
+    pub custody: Box<Account<'info, Custody>>,
+
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut)]
+    pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        constraint = owner_token.mint == custody.mint,
+        constraint = owner_token.owner == owner.key(),
+    )]
+    pub owner_token: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [LP_TOKEN_CLAIM_SEED, pool.key().as_ref(), owner.key().as_ref()],
+        bump = token_claim.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub token_claim: Box<Account<'info, LpTokenClaim>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// Sends the owner the tokens a withdrawal claim is owed from one custody,
+/// and closes their `LpTokenClaim` once nothing is owed from any. The amount
+/// was fixed at the claim and is already off the LPs' holdings, so this moves
+/// no value between LPs and needs no price.
+pub fn claim_withdraw_tokens(ctx: Context<ClaimWithdrawTokens>) -> Result<()> {
+    require!(!ctx.accounts.pool.paused, PerpError::PoolPaused);
+    let i = ctx.accounts.custody.index as usize;
+    let amount = ctx.accounts.token_claim.owed[i];
+    require!(amount > 0, PerpError::ZeroAmount);
+
+    let usdc_mint_key = ctx.accounts.pool.usdc_mint;
+    let bump = ctx.accounts.pool.bump;
+    let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, usdc_mint_key.as_ref(), &[bump]]];
+    transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.vault.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                to: ctx.accounts.owner_token.to_account_info(),
+                authority: ctx.accounts.pool.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        amount,
+        ctx.accounts.mint.decimals,
+    )?;
+
+    let c = &mut ctx.accounts.custody;
+    c.lp_owed_amount = c.lp_owed_amount.checked_sub(amount).ok_or(PerpError::MathOverflow)?;
+    ctx.accounts.token_claim.owed[i] = 0;
+    if ctx.accounts.token_claim.is_empty() {
+        ctx.accounts
+            .token_claim
+            .close(ctx.accounts.owner.to_account_info())?;
+    }
+
+    emit!(LiquidityTokensClaimed {
+        pool: ctx.accounts.pool.key(),
+        owner: ctx.accounts.owner.key(),
+        mint: ctx.accounts.mint.key(),
+        amount,
+    });
+    Ok(())
+}
+
+/// xLP a claim of `lp_amount` burns from an escrow holding `balance`, with
+/// `remaining` shares left on the request after it. The last claim burns
+/// whatever else somebody sent into the escrow too: the account must be empty
+/// to close, and a unit left in it kept the request open for good.
+pub fn escrow_burn(lp_amount: u64, remaining: u64, balance: u64) -> u64 {
+    if remaining == 0 {
+        balance.max(lp_amount)
+    } else {
+        lp_amount
+    }
 }
 
 /// Closes an emptied escrow account, rent to the owner.
@@ -597,6 +833,22 @@ pub struct LiquidityAdded {
     pub amount_usd: u64,
     pub lp_minted: u64,
     pub aum_before: u64,
+}
+
+/// LP-held tokens a claim is owed in kind, by `Custody::index`.
+#[event]
+pub struct LiquidityOwedInKind {
+    pub pool: Pubkey,
+    pub owner: Pubkey,
+    pub tokens: [u64; MAX_CUSTODIES],
+}
+
+#[event]
+pub struct LiquidityTokensClaimed {
+    pub pool: Pubkey,
+    pub owner: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
 }
 
 #[event]
@@ -855,6 +1107,203 @@ mod tests {
         let left = aum(liq, 100_000 * USD as i64, 0) - at_claim;
         assert_eq!(left, 855_000 * USD);
         assert_eq!(left as u128 * supply as u128, 900_000 * USD as u128 * (supply - lp) as u128);
+    }
+
+    // In-kind redemption (F1P-07). `split_claim` is what `claim_withdraw`
+    // pays: USDC from the pool's value without the LP tokens, and the claim's
+    // part of each custody's LP tokens, taken off `lp_amount` at the burn.
+
+    /// A pool whose LPs hold `lp` tokens in one custody (a dollar a unit),
+    /// left in sequence. `claim` applies a claim as `claim_withdraw` does.
+    struct Lps {
+        liq: u64,
+        pnl: i64,
+        lp: u64,
+        supply: u64,
+    }
+
+    impl Lps {
+        fn claim(&mut self, shares: u64, fee_bps: u16) -> Result<ClaimSplit> {
+            let s = split_claim(shares, self.supply, fee_bps, self.liq, self.pnl, &[(self.lp, self.lp)])?;
+            check_withdrawal_allowed(&pool(self.liq), s.gross_usd)?;
+            self.lp -= s.tokens[0];
+            self.supply -= shares;
+            self.liq -= s.net_usd;
+            Ok(s)
+        }
+    }
+
+    #[test]
+    fn usdc_paid_on_a_claim_leaves_the_lp_tokens_out() {
+        // $1,000 USDC and $1,000 of tokens, 2,000 shares. Half the shares used
+        // to take $1,000 in USDC: every dollar of USDC there was. Now they
+        // take $500 and half the tokens.
+        let s = split_claim(1_000, 2_000, 0, 1_000, 0, &[(1_000, 1_000)]).unwrap();
+        assert_eq!((s.gross_usd, s.net_usd), (500, 500));
+        assert_eq!(s.tokens[0], 500);
+        // Traders up $200 come off the USDC part only.
+        let s = split_claim(1_000, 2_000, 0, 1_000, 200, &[(1_000, 1_000)]).unwrap();
+        assert_eq!((s.net_usd, s.tokens[0]), (400, 500));
+    }
+
+    #[test]
+    fn the_token_fraction_is_taken_against_the_supply_the_claim_burns() {
+        // 25 of 100 shares: a quarter of each custody, rounded down.
+        let s = split_claim(25, 100, 0, 0, 0, &[(1_000, 10), (7, 7), (0, 0)]).unwrap();
+        assert_eq!(&s.tokens[..3], &[250, 1, 0]);
+        // A later claim against the smaller supply and holdings is owed the
+        // same per share: the first claim's tokens left with it.
+        let mut p = Lps { liq: 0, pnl: 0, lp: 1_000, supply: 100 };
+        let a = p.claim(25, 0).unwrap();
+        let b = p.claim(25, 0).unwrap();
+        assert_eq!((a.tokens[0], b.tokens[0]), (250, 250));
+        assert_eq!((p.lp, p.supply), (500, 50));
+    }
+
+    #[test]
+    fn two_lps_leaving_in_sequence_get_the_same_tokens_per_share() {
+        // Two LPs with the same shares leave one after the other. The second
+        // is owed what the first was, or one unit more where the first one's
+        // rounding left dust behind; never less.
+        for lp in [0u64, 1, 2, 7, 999, 1_000, 123_456_789, u64::MAX / 3] {
+            for supply in 2..=20u64 {
+                for s in 1..=supply / 2 {
+                    let mut p = Lps { liq: 0, pnl: 0, lp, supply };
+                    let a = p.claim(s, 0).map(|c| c.tokens[0]).unwrap_or(0);
+                    let b = p.claim(s, 0).map(|c| c.tokens[0]).unwrap_or(0);
+                    assert!(b >= a && b <= a + 1, "lp {lp} supply {supply} s {s}: {a} then {b}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn what_leavers_are_owed_never_sums_past_what_the_lps_hold() {
+        // Every pool of up to 40 tokens and 12 shares, emptied by claims of
+        // 1 to 4 shares, with and without fees. `Lps::claim` takes each claim
+        // off what is held, so a sum past it would underflow; and the last
+        // leaver takes the remainder, so no tokens are left behind no shares.
+        for lp in 0..=40u64 {
+            for supply in 1..=12u64 {
+                for size in 1..=4u64 {
+                    for fee in [0u16, 30, 5_000] {
+                        let mut p = Lps { liq: 100, pnl: 0, lp, supply };
+                        let mut owed = 0u64;
+                        while p.supply > 0 {
+                            let shares = size.min(p.supply);
+                            match p.claim(shares, fee) {
+                                Ok(s) => owed += s.tokens[0],
+                                Err(_) => p.supply -= shares,
+                            }
+                        }
+                        assert_eq!(owed + p.lp, lp);
+                        assert_eq!(p.lp, 0, "lp {lp} supply {supply} size {size} fee {fee}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_fee_is_taken_from_the_tokens_too_and_stays_with_the_lps() {
+        let s = split_claim(50, 100, 1_000, 1_000, 0, &[(1_000, 1_000)]).unwrap();
+        assert_eq!((s.gross_usd, s.net_usd), (500, 450));
+        assert_eq!(s.tokens[0], 450);
+        // The last leaver has nobody to leave a fee to in tokens; they take
+        // all of them. Their USDC fee is swept to insurance as before.
+        let s = split_claim(100, 100, 1_000, 1_000, 0, &[(1_000, 1_000)]).unwrap();
+        assert_eq!((s.net_usd, s.tokens[0]), (900, 1_000));
+    }
+
+    #[test]
+    fn trader_profit_past_the_usdc_comes_off_the_tokens() {
+        // $100 USDC, $300 of tokens, traders up $200: the pool is worth $200,
+        // and half of it is $100, all of it in tokens. Without the scaling a
+        // leaver took half the tokens ($150) and left the whole hole with the
+        // LPs who stayed.
+        let s = split_claim(50, 100, 0, 100, 200, &[(300, 300)]).unwrap();
+        assert_eq!(s.net_usd, 0);
+        assert_eq!(s.tokens[0], 100);
+        // Under water altogether: nothing to take, refused.
+        assert!(split_claim(50, 100, 0, 100, 400, &[(300, 300)]).is_err());
+    }
+
+    #[test]
+    fn a_claim_that_pays_no_usdc_still_pays_its_tokens() {
+        // All of the pool's value is in tokens: the claim is not refused.
+        let s = split_claim(10, 100, 0, 0, 0, &[(1_000, 5_000)]).unwrap();
+        assert_eq!((s.net_usd, s.tokens[0]), (0, 100));
+        // Nothing at all is refused, as before.
+        assert!(split_claim(1, 100, 0, 1, 0, &[(1, 1)]).is_err());
+        assert!(split_claim(0, 100, 0, 1_000, 0, &[]).is_err());
+        assert!(split_claim(101, 100, 0, 1_000, 0, &[]).is_err());
+    }
+
+    #[test]
+    fn a_deposit_still_buys_the_tokens_at_their_price() {
+        // $1,000 USDC and $1,000 of tokens behind 2,000 shares. A deposit is
+        // priced on both: $1,000 buys 1,000 shares, not 2,000. Valuing it on
+        // the USDC alone would hand the depositor a share of the tokens free.
+        let (liq, tokens, supply) = (1_000 * USD, 1_000 * USD, 2_000 * USD);
+        let lp = deposit(1_000 * USD, 0, supply, aum(liq, 0, tokens)).unwrap();
+        assert_eq!(lp, 1_000 * USD);
+        // Straight back out it takes a third of each: $666.67 of USDC and
+        // $333.33 of tokens, no more than the $1,000 it paid.
+        let s = split_claim(lp, supply + lp, 0, liq + 1_000 * USD, 0, &[(tokens, tokens)]).unwrap();
+        assert!(s.net_usd + s.tokens[0] <= 1_000 * USD);
+        assert!(s.net_usd + s.tokens[0] + 2 >= 1_000 * USD);
+        // At every small size, with fees and traders either way, a deposit
+        // and a claim of its shares return at most what was paid.
+        for liq in 0..=12u64 {
+            for tok in 0..=6u64 {
+                for pnl in -4..=8i64 {
+                    let a = aum(liq, pnl, tok);
+                    for supply in 1..=6u64 {
+                        for amount in 1..=12u64 {
+                            for fee in [0u16, 30] {
+                                let Some(lp) = deposit(amount, fee, supply, a) else { continue };
+                                if let Ok(s) = split_claim(lp, supply + lp, fee, liq + amount, pnl, &[(tok, tok)]) {
+                                    assert!(s.net_usd + s.tokens[0] <= amount,
+                                        "liq {liq} tok {tok} pnl {pnl} supply {supply} amount {amount}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_claim_never_lowers_what_a_remaining_share_holds() {
+        // Pool value and tokens per share each hold or rise for the LPs who
+        // stay, 667 of 1,000 shares.
+        for liq in [0u64, 1, 999, 10_000] {
+            for tok in [0u64, 1, 333, 10_000] {
+                for pnl in [-500i64, 0, 400, 20_000] {
+                    for fee in [0u16, 5, 30] {
+                        let mut p = Lps { liq, pnl, lp: tok, supply: 1_000 };
+                        let before = aum(liq, pnl, tok) as u128;
+                        if p.claim(333, fee).is_err() {
+                            continue;
+                        }
+                        let after = aum(p.liq, pnl, p.lp) as u128;
+                        assert!(after * 1_000 >= before * 667, "liq {liq} tok {tok} pnl {pnl} fee {fee}");
+                        assert!(p.lp as u128 * 1_000 >= tok as u128 * 667);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_last_claim_empties_an_escrow_somebody_sent_extra_into() {
+        // S2-02: 100 escrowed, one unit sent in by someone else. A partial
+        // claim burns only its own shares; the last one burns everything so
+        // the escrow can close.
+        assert_eq!(escrow_burn(40, 60, 101), 40);
+        assert_eq!(escrow_burn(60, 0, 61), 61);
+        assert_eq!(escrow_burn(100, 0, 100), 100);
     }
 
     #[test]

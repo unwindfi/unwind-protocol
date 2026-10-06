@@ -11,7 +11,6 @@ import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as fs from "fs";
 import * as path from "path";
-import { feedIdFor } from "./markets";
 
 const ROOT = path.join(__dirname, "..");
 const st = JSON.parse(fs.readFileSync(`${ROOT}/.devnet-state.json`, "utf8"));
@@ -30,8 +29,9 @@ const POLL_MS = 8_000;
   const program: any = new Program(idl, provider);
 
   const pool = new PublicKey(st.pool);
-  const market = PublicKey.findProgramAddressSync(
-    [Buffer.from("market"), pool.toBuffer(), Buffer.from(feedIdFor(SYMBOL))], program.programId)[0];
+  // The address the bootstrap listed or reused, which carries the market's
+  // generation (scripts/market-address.ts).
+  const market = new PublicKey(st.markets[SYMBOL].market);
   const position = PublicKey.findProgramAddressSync(
     [Buffer.from("position"), market.toBuffer(), trader.publicKey.toBuffer()], program.programId)[0];
   const batch = PublicKey.findProgramAddressSync(

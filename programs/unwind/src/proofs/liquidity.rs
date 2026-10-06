@@ -135,8 +135,12 @@ fn shares_for_deposit(amount: u64, fee_bps: u16, lp_supply: u64, aum_before: u64
 }
 
 /// What burning `lp_amount` pays, as `(gross, net)`. Mirrors
-/// `withdrawal_value` (used by `claim_withdraw`), from
-/// `let gross = mul_div_u64(...)` to the `net > 0` check.
+/// `withdrawal_value`, from `let gross = mul_div_u64(...)` to the `net > 0`
+/// check. `claim_withdraw` now pays through `split_claim`: the same lines on
+/// the USDC part of the pool (liquidity less PnL), plus the claim's part of
+/// the LP-held tokens in kind, each rounded down, so what it pays in all is
+/// at most this payout on the whole AUM. The in-kind split itself is tested
+/// in `instructions/liquidity.rs`.
 fn value_of_withdrawal(lp_amount: u64, aum: u64, lp_supply: u64, fee_bps: u16) -> Result<(u64, u64)> {
     let gross = mul_div_u64(lp_amount, aum as u128, lp_supply as u128)?;
     let fee = bps_of(gross, fee_bps)?;

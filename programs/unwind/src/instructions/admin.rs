@@ -95,8 +95,9 @@ impl MarketParams {
     /// Where the mark comes from, checked against the market being listed.
     /// Both are fixed for the market's life, so a listing whose source can
     /// never be read (an observed market pointed at any account but its own
-    /// observation, or a source that is neither) would hold that market's
-    /// address, and the pool or feed it is keyed by, for good.
+    /// observation, or a source that is neither) would be dead from the
+    /// start. It no longer blocks the feed (the next listing takes the next
+    /// generation), but there is no reason to let it land.
     pub fn validate_source(&self, market: &Pubkey) -> Result<()> {
         match PriceSource::from_u8(self.price_source)? {
             PriceSource::Pyth => require_keys_eq!(
@@ -269,7 +270,7 @@ pub fn initialize_pool(ctx: Context<InitializePool>, params: PoolParams) -> Resu
 }
 
 #[derive(Accounts)]
-#[instruction(params: MarketParams)]
+#[instruction(params: MarketParams, generation: u32)]
 pub struct AddMarket<'info> {
     /// Anyone. Listing a market costs its rent and earns the lister nothing
     /// until somebody funds it, which is the whole of the spam defence.
@@ -279,11 +280,26 @@ pub struct AddMarket<'info> {
     #[account(mut)]
     pub pool: Account<'info, Pool>,
 
+    /// How many times this feed has been listed in this pool. The first
+    /// listing creates it.
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + MarketGenerations::INIT_SPACE,
+        seeds = [MARKET_GENERATION_SEED, pool.key().as_ref(), params.feed_id.as_ref()],
+        bump
+    )]
+    pub generations: Account<'info, MarketGenerations>,
+
+    /// At `generation`, which must be the feed's next one. A feed is never
+    /// held by whoever listed it first: a market listed with a bad source or
+    /// bad parameters keeps its own address, and the next listing of the same
+    /// feed takes the generation after it.
     #[account(
         init,
         payer = payer,
         space = 8 + Market::INIT_SPACE,
-        seeds = [MARKET_SEED, pool.key().as_ref(), params.feed_id.as_ref()],
+        seeds = [MARKET_SEED, pool.key().as_ref(), params.feed_id.as_ref(), generation.to_le_bytes().as_ref()],
         bump
     )]
     pub market: Account<'info, Market>,
@@ -291,7 +307,7 @@ pub struct AddMarket<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn add_market(ctx: Context<AddMarket>, params: MarketParams) -> Result<()> {
+pub fn add_market(ctx: Context<AddMarket>, params: MarketParams, generation: u32) -> Result<()> {
     // The authority lists with any parameters `validate` accepts; anyone else
     // lists inside the bounds the site itself uses.
     if ctx.accounts.payer.key() == ctx.accounts.pool.authority {
@@ -300,10 +316,16 @@ pub fn add_market(ctx: Context<AddMarket>, params: MarketParams) -> Result<()> {
         params.validate_listing()?;
     }
     params.validate_source(&ctx.accounts.market.key())?;
+    let generations = &mut ctx.accounts.generations;
+    generations.bump = ctx.bumps.generations;
+    generations.pool = ctx.accounts.pool.key();
+    generations.feed_id = params.feed_id;
+    generations.take(generation)?;
     let clock = Clock::get()?;
     let market = &mut ctx.accounts.market;
 
     market.bump = ctx.bumps.market;
+    market.generation = generation;
     market.pool = ctx.accounts.pool.key();
     market.symbol = params.symbol;
     market.feed_id = params.feed_id;
@@ -430,6 +452,23 @@ pub fn set_market_paused(ctx: Context<UpdateMarket>, paused: bool) -> Result<()>
     Ok(())
 }
 
+/// Accounts for a corporate action: the market, and everything else that holds
+/// a price in the token's terms (S2-04).
+#[derive(Accounts)]
+pub struct CorporateAction<'info> {
+    #[account(address = pool.authority @ PerpError::Unauthorized)]
+    pub authority: Signer<'info>,
+    pub pool: Account<'info, Pool>,
+    #[account(mut, has_one = pool @ PerpError::MarketPoolMismatch)]
+    pub market: Account<'info, Market>,
+    /// Its resting limits are prices too.
+    #[account(mut, seeds = [BATCH_SEED, market.key().as_ref()], bump)]
+    pub batch: AccountLoader<'info, Batch>,
+    /// Required when the market is observed: the mark is a price.
+    #[account(mut, address = market.observation @ PerpError::WrongOracleFeed)]
+    pub observation: Option<Account<'info, Observation>>,
+}
+
 /// Applies a split or other price-discontinuous corporate action.
 ///
 /// `numerator / denominator` is the factor the *price* is multiplied by: a 4-for-1
@@ -437,18 +476,68 @@ pub fn set_market_paused(ctx: Context<UpdateMarket>, paused: bool) -> Result<()>
 /// `price_factor`, so open positions keep their economic exposure across the
 /// action instead of being liquidated by an arithmetic artefact.
 ///
+/// Every other price in the token's terms moves in the same instruction, so no
+/// two of them disagree for a single reading: the risk price and last price
+/// (`rescale_market`), the limits resting in the open batch (`rescale_batch`),
+/// an observed mark (`rescale_observation`). Trigger orders rebase lazily
+/// through the factor they were placed under (`Order::trigger_at`).
+///
 /// The market must be paused first. An action applied while fills are landing
 /// would mark some positions pre-split and some post-split against one index.
 pub fn apply_corporate_action(
-    ctx: Context<UpdateMarket>,
+    ctx: Context<CorporateAction>,
     numerator: u64,
     denominator: u64,
     new_multiplier: u64,
 ) -> Result<()> {
     require!(numerator > 0 && denominator > 0, PerpError::InvalidParameter);
-    let market = &mut ctx.accounts.market;
-    require!(market.paused, PerpError::MarketPaused);
+    require!(ctx.accounts.market.paused, PerpError::MarketPaused);
 
+    rescale_batch(&mut *ctx.accounts.batch.load_mut()?, numerator, denominator)?;
+    if PriceSource::from_u8(ctx.accounts.market.price_source)? == PriceSource::Observed {
+        let o = ctx
+            .accounts
+            .observation
+            .as_mut()
+            .ok_or(PerpError::WrongOracleFeed)?;
+        rescale_observation(o, numerator, denominator)?;
+    }
+
+    let market = &mut ctx.accounts.market;
+    rescale_market(market, numerator, denominator)?;
+    market.last_multiplier = new_multiplier;
+
+    emit!(CorporateActionApplied {
+        market: market.key(),
+        numerator,
+        denominator,
+        split_epoch: market.split_epoch,
+        new_multiplier,
+    });
+    Ok(())
+}
+
+/// `price * numerator / denominator`, never below one unit: zero reads as
+/// "unset" for most of these fields.
+fn rescale_price(price: u64, numerator: u64, denominator: u64, round_up: bool) -> Result<u64> {
+    if price == 0 {
+        return Ok(0);
+    }
+    let n = (price as u128)
+        .checked_mul(numerator as u128)
+        .ok_or(PerpError::MathOverflow)?;
+    let d = denominator as u128;
+    let q = n / d + u128::from(round_up && n % d != 0);
+    Ok(u64::try_from(q).map_err(|_| PerpError::MathOverflow)?.max(1))
+}
+
+/// Moves every price the market stores into the new terms at once.
+///
+/// The risk price matters most. Left at the old level it would walk to the
+/// new one at `RISK_PRICE_STEP_BPS_PER_SLOT` a slot, and liquidation reads it
+/// (also while paused): after a 4-for-1 split every short would read 300%
+/// down for over a hundred readings.
+pub fn rescale_market(market: &mut Market, numerator: u64, denominator: u64) -> Result<()> {
     market.price_factor = market
         .price_factor
         .checked_mul(numerator as u128)
@@ -469,19 +558,47 @@ pub fn apply_corporate_action(
         numerator as u128,
         denominator as u128,
     )?;
+    // The step remainder belongs to the old walk; the new risk price starts
+    // where the old one stood, in the new terms.
+    market.risk_price = rescale_price(market.risk_price, numerator, denominator, false)?;
+    market.risk_step_rem = 0;
+    // Kept rescaled rather than cleared: a reading under the same publish time
+    // must still match it, and an old-terms price under that time does not.
+    market.last_price = rescale_price(market.last_price, numerator, denominator, false)?;
     market.split_epoch = market
         .split_epoch
         .checked_add(1)
         .ok_or(PerpError::MathOverflow)?;
-    market.last_multiplier = new_multiplier;
+    // The side moment sums are not rescaled: they would pick up rounding the
+    // positions' own lazy rebase does not, and then stop matching them. They
+    // are emptied instead, and the new `split_epoch` untracks every position
+    // they held, so the market counts winners by the old net rule until those
+    // positions close or are topped up (`Market::side_winners_usd`).
+    market.reset_moments();
+    Ok(())
+}
 
-    emit!(CorporateActionApplied {
-        market: market.key(),
-        numerator,
-        denominator,
-        split_epoch: market.split_epoch,
-        new_multiplier,
-    });
+/// Rescales the limits resting in an open batch, or refuses a sealed one.
+///
+/// A sealed batch has cleared at a price in the old terms and settles every
+/// fill at it; settled after the action, those fills would book old prices
+/// against new factors. It is settled first (permissionless), then the action
+/// lands. A buy's ceiling rounds down and a sell's floor up, so no limit is
+/// loosened.
+pub fn rescale_batch(batch: &mut Batch, numerator: u64, denominator: u64) -> Result<()> {
+    require!(batch.is_open() && batch.unsettled == 0, PerpError::BatchSealed);
+    for o in batch.orders.iter_mut().filter(|o| o.active != 0) {
+        o.price = rescale_price(o.price, numerator, denominator, o.is_bid == 0)?;
+    }
+    Ok(())
+}
+
+/// Moves an observed mark with the split. Left alone, the mark would walk to
+/// the pool's new price at `max_move_bps` a reading while entries had already
+/// moved.
+pub fn rescale_observation(o: &mut Observation, numerator: u64, denominator: u64) -> Result<()> {
+    o.ewma_price = rescale_price(o.ewma_price, numerator, denominator, false)?;
+    o.last_spot = rescale_price(o.last_spot, numerator, denominator, false)?;
     Ok(())
 }
 
@@ -957,5 +1074,133 @@ mod tests {
         assert!(p(PriceSource::Observed as u8, Pubkey::new_unique()).validate_source(&market).is_err());
         assert!(p(PriceSource::Pyth as u8, obs).validate_source(&market).is_err());
         assert!(p(7, Pubkey::default()).validate_source(&market).is_err());
+    }
+}
+
+/// S2-04: a split has to move every price the market stores, not only entries.
+#[cfg(test)]
+mod corporate_action_tests {
+    use super::*;
+    use crate::instructions::liquidate::{below_maintenance, liquidation_fills};
+    use crate::instructions::trade::settle;
+    use crate::instructions::trade::tests::{market, position};
+    use crate::oracle::OraclePrice;
+
+    const OLD: u64 = 200_000_000; // $200 before a 4-for-1 split
+    const NEW: u64 = 50_000_000; // $50 after it
+
+    fn px(price: u64, ts: i64) -> OraclePrice {
+        OraclePrice { price, conf: 0, published_ts: ts }
+    }
+
+    /// A market at `at` with one $10,000 position at 10x, risk price caught up.
+    fn one_position(is_long: bool, at: u64) -> (Market, Position) {
+        let mut m = market();
+        if is_long {
+            m.long_size_usd = 10_000_000_000;
+            m.long_avg_entry_price = at;
+        } else {
+            m.short_size_usd = 10_000_000_000;
+            m.short_avg_entry_price = at;
+        }
+        m.accept_price(&px(at, 1_000), 10).unwrap();
+        let mut p = position();
+        p.is_long = is_long;
+        p.size_usd = 10_000_000_000;
+        p.collateral_usd = 1_000_000_000;
+        p.entry_price = at;
+        p.entry_price_factor = m.price_factor;
+        (m, p)
+    }
+
+    #[test]
+    fn a_split_rescales_every_price_the_market_stores() {
+        let (mut m, _) = one_position(false, OLD);
+        m.risk_step_rem = 7;
+        let factor = m.price_factor;
+        rescale_market(&mut m, 1, 4).unwrap();
+        assert_eq!(m.price_factor, factor / 4);
+        assert_eq!(m.short_avg_entry_price, NEW);
+        assert_eq!(m.risk_price, NEW, "liquidation reads this; it must not lag the split");
+        assert_eq!(m.last_price, NEW);
+        assert_eq!(m.risk_step_rem, 0);
+        assert_eq!(m.split_epoch, 1);
+    }
+
+    #[test]
+    fn a_healthy_short_stays_healthy_across_a_split() {
+        let (mut m, p) = one_position(false, OLD);
+        rescale_market(&mut m, 1, 4).unwrap();
+        // The first post-split reading, one slot on: the oracle has the new
+        // price, and the risk price must already be there.
+        let oracle = px(NEW, 1_001);
+        let risk = m.accept_price(&oracle, 11).unwrap();
+        assert_eq!(risk, NEW);
+        let (trigger, close) = liquidation_fills(&m, &oracle, risk, false).unwrap();
+        let at_risk = settle(&p, &m, p.size_usd, trigger).unwrap();
+        assert!(!below_maintenance(&m, &at_risk, p.size_usd).unwrap());
+        // And a close now is flat but for the spread, not a wipe-out.
+        let s = settle(&p, &m, p.size_usd, close).unwrap();
+        assert!(s.equity_usd > 990_000_000, "equity {}", s.equity_usd);
+    }
+
+    #[test]
+    fn a_reverse_split_leaves_a_healthy_long_healthy() {
+        let (mut m, p) = one_position(true, NEW);
+        rescale_market(&mut m, 4, 1).unwrap();
+        let oracle = px(OLD, 1_001);
+        let risk = m.accept_price(&oracle, 11).unwrap();
+        assert_eq!(risk, OLD);
+        let (trigger, _) = liquidation_fills(&m, &oracle, risk, true).unwrap();
+        let at_risk = settle(&p, &m, p.size_usd, trigger).unwrap();
+        assert!(!below_maintenance(&m, &at_risk, p.size_usd).unwrap());
+    }
+
+    #[test]
+    fn a_stop_placed_before_a_split_fires_at_its_rebased_price() {
+        let (mut m, _) = one_position(true, OLD);
+        let mut o: Order =
+            AnchorDeserialize::deserialize(&mut &[0u8; Order::INIT_SPACE][..]).unwrap();
+        // A long's stop at $180, placed before the split.
+        o.trigger_price = 180_000_000;
+        o.trigger_above = false;
+        o.trigger_factor = m.price_factor;
+        rescale_market(&mut m, 1, 4).unwrap();
+        assert_eq!(o.trigger_at(m.price_factor).unwrap(), 45_000_000);
+        assert!(!o.is_triggered_at(NEW, m.price_factor).unwrap(), "$50 is above a $45 stop");
+        assert!(o.is_triggered_at(45_000_000, m.price_factor).unwrap());
+        // An order placed before orders carried a factor reads as placed
+        // under the neutral one.
+        o.trigger_factor = 0;
+        assert_eq!(o.trigger_at(m.price_factor).unwrap(), 45_000_000);
+    }
+
+    #[test]
+    fn an_open_batch_has_its_limits_rescaled_and_a_sealed_one_refuses() {
+        let mut b: Box<Batch> = Box::new(bytemuck::Zeroable::zeroed());
+        b.orders[0].price = OLD;
+        b.orders[0].is_bid = 1;
+        b.orders[0].active = 1;
+        b.orders[1].price = OLD + 1;
+        b.orders[1].is_bid = 0;
+        b.orders[1].active = 1;
+        b.order_count = 2;
+        rescale_batch(&mut b, 1, 4).unwrap();
+        assert_eq!(b.orders[0].price, NEW);
+        // A sell's floor rounds up, a buy's ceiling down: neither is loosened.
+        assert_eq!(b.orders[1].price, NEW + 1);
+        b.cleared_ts = 1;
+        b.unsettled = 1;
+        assert!(rescale_batch(&mut b, 1, 4).is_err(), "cleared at the old price; settle it first");
+    }
+
+    #[test]
+    fn an_observed_mark_moves_with_the_split() {
+        let mut o: Observation =
+            AnchorDeserialize::deserialize(&mut &[0u8; Observation::INIT_SPACE][..]).unwrap();
+        o.ewma_price = OLD;
+        o.last_spot = OLD;
+        rescale_observation(&mut o, 1, 4).unwrap();
+        assert_eq!((o.ewma_price, o.last_spot), (NEW, NEW));
     }
 }

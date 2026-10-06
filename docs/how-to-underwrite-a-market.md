@@ -72,7 +72,8 @@ back out in the same mix of tokens the pot holds.
 Every market settles in USDC. When a loss runs past the USDC behind a market,
 the liquidity pool covers the difference, and `sync_backing` then moves tokens
 worth the same amount, at the oracle, from the backers to the pool. From then
-on they count in the pool's assets. When a market recovers, the same
+on they count in the pool's assets, and an LP who leaves takes their part of
+them in kind (see [The pool](pool.md)). When a market recovers, the same
 instruction hands the backers back what the recovery earned. It is
 permissionless, since it only moves a market's backing to where the books
 already say it belongs.

@@ -59,7 +59,8 @@ winners are paid instead:
 * A reduce-only order always fills in full. A winning close is paid its
   collateral and its profit, cut to a fair share when the market cannot cover
   every winner: each is paid `available / winners` of what it is owed, where
-  `available` is the remaining budget (or the money behind it, if less). See
+  `available` is the remaining budget (or the money behind it, if less) and
+  `winners` is an upper bound on every winner's profit, counted gross. See
   [Profit haircuts](auto-deleveraging.md).
 
 So every batch settles, a market with no budget left stays open for exits,

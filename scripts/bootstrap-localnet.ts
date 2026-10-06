@@ -18,6 +18,7 @@ import * as path from "path";
 import { MARKETS as ALL_MARKETS, feedIdFor } from "./markets";
 import { createLookupTable, loadLookupTable, sendV0 } from "./alt";
 import { backingBookPda, ensureCustodies } from "./custodies";
+import { latestGeneration, marketGenerationsPda, marketPda } from "./market-address";
 import { fetchQuotes, fetchSessions, Session } from "./prices";
 import { MOCK_PYTH_ID, mockPythProgram, postQuotes, priceAccountFor, relayKeypair } from "./mock-pyth";
 
@@ -234,8 +235,16 @@ async function main() {
   const markets: Record<string, any> = {};
   for (const m of MARKETS) {
     const feedId = feedIdFor(m.symbol);
-    const market = pda([Buffer.from("market"), pool.toBuffer(), feedId]);
-    if (await conn.getAccountInfo(market)) {
+    // The newest generation already listed, or a market from before
+    // generations (generation 0), is reused; otherwise the next is listed.
+    const latest = await latestGeneration(program, pool, feedId);
+    const legacy = marketPda(program.programId, pool, feedId, 0);
+    const existing = latest > 0
+      ? marketPda(program.programId, pool, feedId, latest)
+      : (await conn.getAccountInfo(legacy)) ? legacy : null;
+    const generation = latest + 1;
+    const market = existing ?? marketPda(program.programId, pool, feedId, generation);
+    if (existing) {
       markets[m.symbol] = {
         market: market.toBase58(), feedId: m.feedId,
         batch: batchPda(market).toBase58(),
@@ -275,9 +284,10 @@ async function main() {
         // not cover points at one of those instead.
         priceSource: 0,
         observation: PublicKey.default,
-      })
+      }, generation)
       .accounts({
-        payer: authority.publicKey, pool, market,
+        payer: authority.publicKey, pool,
+        generations: marketGenerationsPda(program.programId, pool, feedId), market,
         systemProgram: SystemProgram.programId,
       })
       .rpc();

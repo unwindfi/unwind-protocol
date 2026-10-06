@@ -27,6 +27,7 @@ import * as os from "os";
 import * as path from "path";
 import { createLookupTable, loadLookupTable, sendV0 } from "../scripts/alt";
 import { MAX_COMPUTE_UNITS, packInstructions, withComputeLimit } from "../scripts/pack";
+import { marketGenerationsPda, marketPda } from "../scripts/market-address";
 
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
@@ -345,10 +346,14 @@ describe("system", () => {
     for (const s of SYMBOLS) {
       const feed = feedFor(s);
       await post(s, 100);
-      const market = pda([Buffer.from("market"), pool.toBuffer(), feed]);
+      const market = marketPda(perps.programId, pool, feed, 1);
       await perps.methods
-        .addMarket(marketParams(s))
-        .accounts({ payer: authority.publicKey, pool, market, systemProgram: SystemProgram.programId })
+        .addMarket(marketParams(s), 1)
+        .accounts({
+          payer: authority.publicKey, pool,
+          generations: marketGenerationsPda(perps.programId, pool, feed), market,
+          systemProgram: SystemProgram.programId,
+        })
         .rpc();
       markets.set(s, market);
 
@@ -1219,11 +1224,12 @@ describe("system", () => {
     };
 
     before(async () => {
-      market = pda([Buffer.from("market"), pool.toBuffer(), feedFor(SYM)]);
+      market = marketPda(perps.programId, pool, feedFor(SYM), 1);
       await perps.methods
-        .addMarket(marketParams(SYM, LISTED))
+        .addMarket(marketParams(SYM, LISTED), 1)
         .accounts({
-          payer: alice.publicKey, pool, market,
+          payer: alice.publicKey, pool,
+          generations: marketGenerationsPda(perps.programId, pool, feedFor(SYM)), market,
           systemProgram: SystemProgram.programId,
         })
         .signers([alice])
@@ -1232,17 +1238,53 @@ describe("system", () => {
 
     it("holds a hand-built listing to the site's bounds", async () => {
       const SYM2 = "KKX";
-      const m2 = pda([Buffer.from("market"), pool.toBuffer(), feedFor(SYM2)]);
+      const m2 = marketPda(perps.programId, pool, feedFor(SYM2), 1);
       for (const over of [{ maxLeverageBps: 100_000 }, { maxPriceAgeSec: 3_600 }, { openFeeBps: 0 }]) {
         try {
-          await perps.methods.addMarket(marketParams(SYM2, { ...LISTED, ...over }))
-            .accounts({ payer: alice.publicKey, pool, market: m2, systemProgram: SystemProgram.programId })
+          await perps.methods.addMarket(marketParams(SYM2, { ...LISTED, ...over }), 1)
+            .accounts({
+              payer: alice.publicKey, pool,
+              generations: marketGenerationsPda(perps.programId, pool, feedFor(SYM2)), market: m2,
+              systemProgram: SystemProgram.programId,
+            })
             .signers([alice]).rpc();
           assert.fail(`expected ${JSON.stringify(over)} to be refused`);
         } catch (e: any) {
           assert.include(e.toString(), "ListingOutOfBounds");
         }
       }
+    });
+
+    it("never lets the first lister hold a feed: anyone lists the next generation", async () => {
+      const feed = feedFor(SYM);
+      const generations = marketGenerationsPda(perps.programId, pool, feed);
+      const list = (who: Keypair, generation: number) => perps.methods
+        .addMarket(marketParams(SYM, LISTED), generation)
+        .accounts({
+          payer: who.publicKey, pool, generations,
+          market: marketPda(perps.programId, pool, feed, generation),
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([who]).rpc();
+      // A generation already taken, or one skipped ahead, is refused.
+      for (const g of [1, 3]) {
+        try {
+          await list(bob, g);
+          assert.fail(`expected generation ${g} to be refused`);
+        } catch (e: any) {
+          assert.match(e.toString(), /WrongGeneration|already in use/);
+        }
+      }
+      // Bob relists the feed alice listed, at its own address, next to hers.
+      await list(bob, 2);
+      const g: any = await perps.account.marketGenerations.fetch(generations);
+      assert.equal(g.latest, 2);
+      const relisted: any = await perps.account.market.fetch(marketPda(perps.programId, pool, feed, 2));
+      assert.equal(relisted.generation, 2);
+      assert.equal(relisted.deployer.toBase58(), bob.publicKey.toBase58());
+      const first: any = await perps.account.market.fetch(market);
+      assert.equal(first.generation, 1);
+      assert.equal(first.deployer.toBase58(), alice.publicKey.toBase58());
     });
 
     it("lists with no allowance at all", async () => {

@@ -77,7 +77,11 @@ or USDT and observed over time. Two kinds of pool can be read:
 
 Which kind a market reads is recorded when it is opened, and the pool is
 checked on every reading, so a market cannot be repointed at a pool someone
-has just created. The quote side is checked too: it must be USDC, USDT or the
+has just created. The observation is created by the market's lister and
+nobody else, and its settings are fixed from then on. A market observed with
+settings nobody wants is not fixed in place; the same pool can be listed again
+as the market's next generation (see
+[How to open a market](how-to-open-a-market.md)). The quote side is checked too: it must be USDC, USDT or the
 token the venue settles in, so a pool quoted in a token its lister minted is
 refused at listing.
 

@@ -27,7 +27,11 @@ pub struct ObservationParams {
 
 #[derive(Accounts)]
 pub struct CreateObservation<'info> {
-    #[account(mut)]
+    /// The market's lister, and nobody else. The observation's parameters
+    /// (fold rate, clamp, unit) are fixed for the market's life, so a
+    /// stranger who created it first, between the listing and the lister's
+    /// own call, would have chosen them.
+    #[account(mut, address = market.deployer @ PerpError::NotMarketDeployer)]
     pub payer: Signer<'info>,
 
     #[account(seeds = [POOL_SEED, pool.usdc_mint.as_ref()], bump = pool.bump)]
@@ -56,8 +60,8 @@ pub struct CreateObservation<'info> {
 
 /// Starts observing a pool for a market Pyth does not cover.
 ///
-/// Permissionless, and deliberately harmless: creating this account begins a
-/// clock and nothing else. The mark it builds cannot be traded against until
+/// Only the market's lister may call it, and it is deliberately harmless:
+/// creating this account begins a clock and nothing else. The mark it builds cannot be traded against until
 /// it is seasoned, so the cost of someone pointing a market at a bad pool is
 /// that the market never opens, not that it opens wrongly.
 ///

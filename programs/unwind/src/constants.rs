@@ -29,6 +29,8 @@ pub const POOL_SEED: &[u8] = b"pool";
 pub const POOL_VAULT_SEED: &[u8] = b"pool_vault";
 pub const LP_MINT_SEED: &[u8] = b"lp_mint";
 pub const MARKET_SEED: &[u8] = b"market";
+/// Per (pool, feed) listing counter; see `MarketGenerations`.
+pub const MARKET_GENERATION_SEED: &[u8] = b"market_generation";
 pub const POSITION_SEED: &[u8] = b"position";
 pub const ORDER_SEED: &[u8] = b"order";
 pub const OBSERVATION_SEED: &[u8] = b"observation";
@@ -50,6 +52,8 @@ pub const TRADER_SEED: &[u8] = b"trader";
 pub const REFERRAL_CODE_SEED: &[u8] = b"referral_code";
 pub const WITHDRAW_REQUEST_SEED: &[u8] = b"withdraw_request";
 pub const WITHDRAW_ESCROW_SEED: &[u8] = b"withdraw_escrow";
+/// Per owner and pool: LP-held tokens a withdrawal claim is owed in kind.
+pub const LP_TOKEN_CLAIM_SEED: &[u8] = b"lp_token_claim";
 
 /// Share of every trading fee routed back to the chain.
 ///

@@ -26,8 +26,8 @@ pub struct Liquidate<'info> {
     #[account(
         mut,
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 
@@ -137,6 +137,7 @@ pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
     apply_settlement_to_pool(
         &mut ctx.accounts.pool,
         &mut ctx.accounts.market,
+        &ctx.accounts.position,
         &settlement,
         payout,
         0,
@@ -217,8 +218,8 @@ pub struct StepRiskPrice<'info> {
     #[account(
         mut,
         has_one = pool @ PerpError::MarketPoolMismatch,
-        seeds = [MARKET_SEED, pool.key().as_ref(), market.feed_id.as_ref()],
-        bump = market.bump,
+        // Its own address for its generation (`Market::is_at`).
+        constraint = market.is_at(&market.key()) @ PerpError::MarketPoolMismatch,
     )]
     pub market: Box<Account<'info, Market>>,
 

@@ -118,4 +118,8 @@ pub enum PerpError {
     OraclePriceConflict,
     #[msg("Maintenance margin must cover the risk price's largest step plus the liquidation fee")]
     MarginEnvelope,
+    #[msg("That is not the next generation of this market; read its MarketGenerations account and list the one after `latest`")]
+    WrongGeneration,
+    #[msg("Only the market's lister may create its observation")]
+    NotMarketDeployer,
 }

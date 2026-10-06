@@ -101,8 +101,9 @@ claim:
 1. `request_withdraw` moves the xLP into an escrow account the pool controls.
    Nothing is paid yet.
 2. The shares wait 150 slots, about one minute.
-3. `claim_withdraw` burns them and pays USDC at what the pool is worth at the
-   claim, less the withdrawal fee.
+3. `claim_withdraw` burns them and pays their part of the pool at the claim,
+   less the withdrawal fee: USDC, and the same part of any tokens the pool
+   holds in kind (see below).
 
 Escrowed shares are not burned until the claim, so they stay in the share
 supply and take their part of every gain and loss for the whole wait. Example:
@@ -128,6 +129,45 @@ to an open request restarts the 150 slots for all of it.
 `cancel_withdraw` returns every escrowed share at any time, paused or not.
 Escrowed shares earn no points; a cancel puts them back on the wallet's
 points stake.
+
+### Tokens are paid out in kind
+
+When a market's losses run past its USDC backing, the backing pays the LPs in
+the tokens it was posted in (see
+[How to underwrite a market](how-to-underwrite-a-market.md)). Those tokens
+count in the pool's value, and they leave the pool the same way they came in:
+as tokens. A claim of `f` of the share supply is paid:
+
+1. USDC: `f` of what the pool is worth without those tokens, its USDC less
+   what traders are up.
+2. Tokens: `f` of what the LPs hold in each token, rounded down.
+
+Example: the pool holds $1,000,000 USDC and 2,000 SOL for 1,000,000 shares.
+A claim of 50,000 shares (5%) is paid $50,000 USDC and 100 SOL. Paid all in
+USDC, it took $50,000 plus the SOL's value out of the USDC, and the last LPs
+to leave were left with tokens and no USDC.
+
+The tokens owed are fixed at the claim, against the share supply that claim
+burns, and leave the pool's holdings with it. The next claim takes the same
+part per share of what remains; rounding leaves dust with the LPs who stay,
+never takes it from them. The last claim, of every share left, takes every
+token. The withdrawal fee comes off the tokens as it does off the USDC, and
+stays with the pool.
+
+If traders are up by more than the pool's USDC, the excess is a claim on the
+tokens too, and the tokens owed are cut by the same proportion, so a claim
+never takes more than its part of the pool's whole value. A claim that pays
+no USDC (all of the value is in tokens) still pays its tokens.
+
+Sending each token in the claim would mean carrying every token's vault in
+one transaction, so the claim records what it is owed instead and
+`claim_withdraw_tokens` sends one token at a time. Earn shows each one with a
+claim button. Only the owner can pull them, and nothing done after the claim
+changes the amounts.
+
+A deposit still pays for the tokens. Shares are priced against the USDC and
+the tokens together, at the price that makes the pool worth more, so a new LP
+buys into the tokens rather than being handed part of them.
 
 ## Batch reporting
 

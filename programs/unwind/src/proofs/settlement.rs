@@ -178,7 +178,10 @@ fn any_market() -> Market {
         last_price: 0,
         risk_price: 0,
         risk_slot: 0,
-        _reserved: [0; 32],
+        generation: 0,
+        _reserved: [0; 28],
+        long_moments: SideMoments::default(),
+        short_moments: SideMoments::default(),
         volume_usd: 0,
         deployer_synced_volume_usd: 0,
         deployer_rewards_usd: 0,
@@ -203,7 +206,8 @@ fn empty_position(is_long: bool, size_usd: u64) -> Position {
         closing_usd: 0,
         open_ts: 0,
         last_update_ts: 0,
-        _reserved: [0; 24],
+        q_epoch: 0,
+        _reserved: [0; 20],
     }
 }
 
@@ -355,7 +359,7 @@ fn a_forced_close_settles_inside_the_budget() {
     let is_long: bool = kani::any();
     let close_size = small(MAX_BAL);
 
-    let r = apply_settlement_to_pool(&mut p, &mut m, &s, payout, 0, close_size, is_long);
+    let r = apply_settlement_to_pool(&mut p, &mut m, &empty_position(is_long, 0), &s, payout, 0, close_size, is_long);
     assert!(r.is_ok());
     assert!(m.net_loss_usd <= m.loss_budget_usd as i64);
 }
@@ -413,7 +417,7 @@ fn a_forced_close_moves_exactly_the_payout_out_of_the_vault() {
     let before = p.clone();
     let net_loss = m.net_loss_usd;
 
-    if apply_settlement_to_pool(&mut p, &mut m, &s, payout, 0, close_size, is_long).is_ok() {
+    if apply_settlement_to_pool(&mut p, &mut m, &empty_position(is_long, 0), &s, payout, 0, close_size, is_long).is_ok() {
         assert_settlement_conserves(&before, &p, &s, payout);
         assert!(m.net_loss_usd as i128 - net_loss as i128
             == payout as i128 - s.collateral_share as i128);
@@ -501,9 +505,13 @@ fn a_haircut_pays_no_more_than_the_market_can() {
     let cash = m.backing_usd + p.liquidity_usd + p.insurance_usd;
     assert!(paid <= owed);
     assert!(paid <= m.remaining_budget_usd().min(cash));
-    // And in full whenever the market can cover every winner, this close's
-    // profit counted on top of its side's.
-    if m.winning_pnl_usd(fill).unwrap() + owed <= m.remaining_budget_usd().min(cash) {
+    // And in full whenever the market can cover every winner: each side at
+    // what `side_winners_usd` counts it (its moment bound when every position
+    // on it is tracked, its net profit when not), the closer's own side at no
+    // less than this close's profit.
+    let winners = m.side_winners_usd(is_long, fill).unwrap().max(owed)
+        + m.side_winners_usd(!is_long, fill).unwrap();
+    if winners <= m.remaining_budget_usd().min(cash) {
         assert!(paid == owed);
     }
 }

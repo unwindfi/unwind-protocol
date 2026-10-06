@@ -41,6 +41,7 @@ import {
 import { GET as mainnetPoolPreview } from "../api/pool/[address]";
 import { backingBookPda, baseUnits } from "./custodies";
 import { readTokenMeta } from "./token-meta";
+import { marketGenerationsPda, nextMarket, pickGeneration } from "./market-address";
 
 const ROOT = path.join(__dirname, "..");
 const PORT = Number(process.env.PORT || 3000);
@@ -679,6 +680,9 @@ for (const def of LIVE) {
 /// that only appears after a restart is a market the lister watches fail. The
 /// scan is a `getProgramAccounts` and therefore not cheap, which is why it
 /// runs on its own slow loop rather than inside the price tick.
+/// The market shown for each feed discovery has registered, by feed id hex.
+const shownByFeed = new Map<string, string>();
+
 async function discoverMarkets() {
   // This pool's markets only, filtered on-chain. On a cluster the program has
   // been deployed to before, an unfiltered scan also returns markets from
@@ -686,9 +690,30 @@ async function discoverMarkets() {
   const all = await program.account.market.all([
     { memcmp: { offset: 9, bytes: pool.toBase58() } },
   ]);
-  for (const { publicKey, account } of all) {
+  // One feed can be listed more than once: each listing is a generation with
+  // its own address (scripts/market-address.ts), so a market listed first
+  // with a bad source does not hold the feed. Show one per feed, the newest
+  // with backing, else the newest.
+  await loadBooks().catch(() => {});
+  const byFeed = new Map<string, { publicKey: PublicKey; account: any; generation: number; backed: boolean }[]>();
+  for (const { publicKey, account } of all as any[]) {
+    const feed = Buffer.from(account.feedId).toString("hex");
+    const rows = byFeed.get(feed) ?? [];
+    rows.push({ publicKey, account, generation: Number(account.generation ?? 0),
+                backed: potUsd(publicKey, account.backingUsd) > 0 });
+    byFeed.set(feed, rows);
+  }
+  for (const [feed, rows] of byFeed) {
+    const { publicKey, account } = pickGeneration(rows)!;
     const symbol = symbolOf(account.symbol);
-    if (!symbol || rt[symbol]) continue;
+    if (!symbol) continue;
+    const have = rt[symbol];
+    // Already shown. A different generation of the same feed replaces it;
+    // anything else holding the symbol (a catalogue market, another pool's
+    // market under the same name) keeps it, as before.
+    if (have && (have.address.equals(publicKey) || shownByFeed.get(feed) !== have.address.toBase58())) {
+      continue;
+    }
 
     // Priced off a feed but absent from the catalogue: we have no name, no
     // calendar and no candle source for it, and inventing them is worse than
@@ -703,6 +728,8 @@ async function discoverMarkets() {
     // product produces -- pick it up whenever the second half lands.
     if (!o) continue;
 
+    if (have) console.log(`${symbol}: showing generation ${account.generation} at ${publicKey.toBase58().slice(0, 8)}`);
+    shownByFeed.set(feed, publicKey.toBase58());
     register(null, symbol, publicKey, observation, {
       observation,
       source: new PublicKey(o.source),
@@ -1640,8 +1667,25 @@ async function requestWithdrawIx(owner: PublicKey, lp: number) {
 }
 async function claimWithdrawIx(owner: PublicKey, shares: BN, accounts: any[]) {
   return program.methods.claimWithdraw(shares, new BN(0))
-    .accounts({ ...withdrawAccounts(owner), checkpoint: aumCheckpointPda } as any)
+    .accounts({
+      ...withdrawAccounts(owner), checkpoint: aumCheckpointPda,
+      tokenClaim: lpTokenClaimPda(owner), systemProgram: SystemProgram.programId,
+    } as any)
     .remainingAccounts(accounts).instruction();
+}
+/// One per owner: the LP-held tokens a claim took in kind, waiting to be
+/// pulled one custody at a time.
+const lpTokenClaimPda = (owner: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("lp_token_claim"), pool.toBuffer(), owner.toBuffer()], program.programId)[0];
+async function claimWithdrawTokensIx(owner: PublicKey, c: CustodyRt) {
+  return program.methods.claimWithdrawTokens()
+    .accounts({
+      owner, pool, custody: c.address, mint: c.mint, vault: c.vault,
+      ownerToken: ata(owner, c.mint), tokenClaim: lpTokenClaimPda(owner),
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .instruction();
 }
 async function cancelWithdrawIx(owner: PublicKey) {
   return program.methods.cancelWithdraw().accounts(withdrawAccounts(owner)).instruction();
@@ -2245,13 +2289,27 @@ app.get("/api/markets", async (_req, res) => {
 });
 
 /// Mirrors `haircut_profit_usd`: the fraction of winners' profit the market
-/// can pay, as a percentage.
+/// can pay, as a percentage. Each side counts at `Market::side_winners_usd`:
+/// the bound on its gross winners from its moment sums when every position on
+/// it is tracked, and its net profit from the aggregates when not.
 function payoutPct(ma: any, p: any, price: number): number {
-  const side = (isLong: boolean, size: number, entry: number) =>
-    entry > 0 ? Math.max(0, size * ((price - entry) / entry) * (isLong ? 1 : -1)) : 0;
+  const side = (isLong: boolean, sizeRaw: number, entryRaw: number, mo: any) => {
+    const tracked = num(mo?.trackedUsd);
+    if (mo && tracked === sizeRaw) {
+      if (sizeRaw === 0) return 0;
+      // In raw units: size and price both at 1e6, sums at 1e18 and 1e24.
+      const P = price * 1e6;
+      const pu = (P * num(mo.invEntry)) / 1e18;
+      const m2 = Math.max(0, (P * P * num(mo.invEntrySq)) / 1e24 - 2 * pu + sizeRaw);
+      const net = isLong ? pu - sizeRaw : sizeRaw - pu;
+      return Math.max(0, (net + Math.sqrt(sizeRaw * m2)) / 2) / 1e6;
+    }
+    const size = sizeRaw / 1e6, entry = entryRaw / 1e6;
+    return entry > 0 ? Math.max(0, size * ((price - entry) / entry) * (isLong ? 1 : -1)) : 0;
+  };
   const winners =
-    side(true, num(ma.longSizeUsd) / 1e6, num(ma.longAvgEntryPrice) / 1e6) +
-    side(false, num(ma.shortSizeUsd) / 1e6, num(ma.shortAvgEntryPrice) / 1e6);
+    side(true, num(ma.longSizeUsd), num(ma.longAvgEntryPrice), ma.longMoments) +
+    side(false, num(ma.shortSizeUsd), num(ma.shortAvgEntryPrice), ma.shortMoments);
   const remaining = Math.max(0, num(ma.lossBudgetUsd) / 1e6 - Math.max(0, num(ma.netLossUsd) / 1e6));
   const cash = (num(ma.backingUsd) + num(p.liquidityUsd) + num(p.insuranceUsd)) / 1e6;
   const available = Math.min(remaining, cash);
@@ -2675,6 +2733,15 @@ async function accountView(owner: PublicKey) {
       program.account.withdrawRequest.fetchNullable(withdrawRequestPda(owner)).catch(() => null),
       conn.getSlot("confirmed").catch(() => null),
     ]);
+    const tokenClaim: any = await program.account.lpTokenClaim
+      .fetchNullable(lpTokenClaimPda(owner)).catch(() => null);
+    // Tokens past claims took in kind, by custody, waiting to be pulled.
+    const owed = tokenClaim
+      ? custodies
+        .map((c) => ({ symbol: c.symbol, mint: c.mint.toBase58(),
+                       amount: num(tokenClaim.owed[c.index]) / 10 ** c.decimals }))
+        .filter((o) => o.amount > 0)
+      : [];
     const orders = orderAccounts.map((e: any) => ({
       address: e.publicKey.toBase58(),
       symbol: Object.values(rt).find((m) => m.address.toBase58() === String(e.account.market))?.symbol,
@@ -2722,7 +2789,7 @@ async function accountView(owner: PublicKey) {
       liquidations,
       deleverages,
       orderFills,
-      lp: { held, price: lpPrice, value: held * lpPrice, pending },
+      lp: { held, price: lpPrice, value: held * lpPrice, pending, owed },
       pool: {
         aum, liquidity, locked, free: liquidity - locked,
         utilization: liquidity > 0 ? (locked / liquidity) * 100 : 0,
@@ -3349,6 +3416,17 @@ function discoverSoon() {
     });
 }
 
+/// Whether `market` is a listing the site would have made and can trade:
+/// backed, not paused, and observing with the settings `list-market` uses.
+/// Anything else (an unbacked or paused market, or one listed by hand with
+/// other observation settings) may be relisted from the site.
+async function liveSiteListing(market: PublicKey, unitExp: number): Promise<boolean> {
+  const m: any = await program.account.market.fetchNullable(market);
+  if (!m || m.paused || potUsd(market, m.backingUsd) <= 0) return false;
+  const o: any = await program.account.observation.fetchNullable(observationPda(market));
+  return !!o && o.alphaBps === 500 && o.maxMoveBps === 100 && (o.unitExp ?? 0) === unitExp;
+}
+
 app.post("/api/tx/list-market", async (req, res) => {
   try {
     const owner = ownerOf(req);
@@ -3363,17 +3441,20 @@ app.post("/api/tx/list-market", async (req, res) => {
       });
     }
 
-    // No feed, so the id is the hash of "amm:" and the pool's raw address,
-    // keyed to the pool so the same pool is the same market however many
-    // people try to list it. The program checks it (`observed_feed_id`), which
-    // keeps an AMM market off any address a Pyth feed would claim.
+    // No feed, so the id is the hash of "amm:" and the pool's raw address.
+    // The program checks it (`observed_feed_id`), which keeps an AMM market
+    // off any address a Pyth feed would claim.
     const feedId = crypto.createHash("sha256")
       .update(Buffer.concat([Buffer.from("amm:"), source.toBuffer()])).digest();
-    const market = PublicKey.findProgramAddressSync(
-      [Buffer.from("market"), pool.toBuffer(), feedId], program.programId)[0];
-    if (await conn.getAccountInfo(market)) {
+    // Each listing of a pool is a new generation at its own address, so a
+    // bad earlier listing never blocks this one. The site still refuses to
+    // list over a market it already shows as live: backed, not paused, and
+    // observing this pool with the site's own settings.
+    const shown = shownByFeed.get(feedId.toString("hex"));
+    if (shown && await liveSiteListing(new PublicKey(shown), p.unitExp)) {
       return res.status(400).json({ error: "that pool already has a market" });
     }
+    const { generation, market } = await nextMarket(program, pool, feedId);
     const observation = observationPda(market);
     const batch = batchPda(market);
 
@@ -3390,8 +3471,11 @@ app.post("/api/tx/list-market", async (req, res) => {
         }),
         priceSource: 1,
         observation,
+      }, generation)
+      .accounts({
+        payer: owner, pool, generations: marketGenerationsPda(program.programId, pool, feedId),
+        market, systemProgram: SystemProgram.programId,
       })
-      .accounts({ payer: owner, pool, market, systemProgram: SystemProgram.programId })
       .instruction();
 
     const observe = await program.methods
@@ -3441,6 +3525,7 @@ app.post("/api/tx/list-market", async (req, res) => {
       ...(await buildTx(owner, [list, observe, open, ...b.ixs])),
       symbol,
       market: market.toBase58(),
+      generation,
       observation: observation.toBase58(),
       budgetUsd: p.depthUsd,
       backedUsd: b.usd,
@@ -3889,11 +3974,32 @@ app.post("/api/tx/withdraw-claim", async (req, res) => {
     const owner = ownerOf(req);
     const r: any = await program.account.withdrawRequest.fetchNullable(withdrawRequestPda(owner));
     if (!r || num(r.shares) === 0) return res.status(400).json({ error: "nothing waiting to be claimed" });
-    const accounts = await allMarketAccounts();
+    // Writable: a claim takes its part of the LP-held tokens off each custody.
+    await allMarketAccounts();
+    const accounts = custodyPairs(true);
     const ix = await claimWithdrawIx(owner, new BN(r.shares.toString()), accounts);
     res.json(await buildTx(owner,
       [LIQUIDITY_CU, ...(await ataIxs(owner, [usdcMint])), ix],
       await tablesFor(accounts)));
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
+});
+
+/// Sends the tokens past claims took in kind from one custody (`symbol`).
+app.post("/api/tx/withdraw-claim-tokens", async (req, res) => {
+  try {
+    const owner = ownerOf(req);
+    const c = custodies.find((x) => x.symbol === String(req.body.symbol));
+    if (!c) return res.status(400).json({ error: "unknown token" });
+    const t: any = await program.account.lpTokenClaim.fetchNullable(lpTokenClaimPda(owner));
+    if (!t || num(t.owed[c.index]) === 0) return res.status(400).json({ error: "nothing owed in that token" });
+    const ownerToken = ata(owner, c.mint);
+    const sol = c.mint.equals(NATIVE_MINT);
+    res.json(await buildTx(owner, [
+      createAssociatedTokenAccountIdempotentInstruction(owner, ownerToken, owner, c.mint),
+      await claimWithdrawTokensIx(owner, c),
+      // Wrapped SOL goes back to the wallet as SOL.
+      ...(sol ? [createCloseAccountInstruction(ownerToken, owner, owner)] : []),
+    ]));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 

@@ -48,8 +48,10 @@ pub mod unwind {
         instructions::admin::initialize_pool(ctx, params)
     }
 
-    pub fn add_market(ctx: Context<AddMarket>, params: MarketParams) -> Result<()> {
-        instructions::admin::add_market(ctx, params)
+    /// Lists `generation` of `params.feed_id`, which must be one past the
+    /// feed's `MarketGenerations::latest` (1 for a feed never listed).
+    pub fn add_market(ctx: Context<AddMarket>, params: MarketParams, generation: u32) -> Result<()> {
+        instructions::admin::add_market(ctx, params, generation)
     }
 
     pub fn update_market_params(ctx: Context<UpdateMarket>, params: MarketParams) -> Result<()> {
@@ -200,7 +202,7 @@ pub mod unwind {
     /// `numerator / denominator` is what the price is multiplied by: a 4-for-1
     /// split passes `(1, 4)`. Requires the market to be paused.
     pub fn apply_corporate_action(
-        ctx: Context<UpdateMarket>,
+        ctx: Context<CorporateAction>,
         numerator: u64,
         denominator: u64,
         new_multiplier: u64,
@@ -255,14 +257,21 @@ pub mod unwind {
     }
 
     /// Burns escrowed shares once `WITHDRAW_COOLDOWN_SLOTS` have passed and
-    /// pays them at the pool's value now. `remaining_accounts` as for
-    /// `add_liquidity`.
+    /// pays them their part of the pool now: USDC, and the LP-held tokens in
+    /// kind, recorded for `claim_withdraw_tokens`. `remaining_accounts` as
+    /// for `add_liquidity`, custodies writable.
     pub fn claim_withdraw<'info>(
         ctx: Context<'_, '_, 'info, 'info, ClaimWithdraw<'info>>,
         lp_amount: u64,
         min_usd_out: u64,
     ) -> Result<()> {
         instructions::liquidity::claim_withdraw(ctx, lp_amount, min_usd_out)
+    }
+
+    /// Sends the owner the tokens their withdrawal claims are owed from one
+    /// custody.
+    pub fn claim_withdraw_tokens(ctx: Context<ClaimWithdrawTokens>) -> Result<()> {
+        instructions::liquidity::claim_withdraw_tokens(ctx)
     }
 
     // --- trading ---

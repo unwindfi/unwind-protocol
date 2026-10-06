@@ -228,6 +228,20 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   const verb = side === "in" ? (v.kind === "pool" ? "Deposit" : "Back")
     : v.kind === "pool" ? "Request withdrawal" : "Withdraw";
 
+  const owed = v.kind === "pool" ? account?.lp.owed ?? [] : [];
+
+  /// Pulls the tokens a claimed withdrawal took in kind from one custody.
+  const pull = async (symbol: string) => {
+    setBusy(true); setNote(null);
+    try {
+      const r = await signAndSend(wallet, "withdraw-claim-tokens", { symbol });
+      setNote(r.ok
+        ? { ok: true, text: `${symbol} sent to your wallet.` }
+        : { ok: false, text: r.error ?? "Not accepted. Try again." });
+      if (r.ok) onDone();
+    } finally { setBusy(false); }
+  };
+
   /// Claims or cancels the pool withdrawal waiting in escrow.
   const settle = async (how: "claim" | "cancel") => {
     setBusy(true); setNote(null);
@@ -350,6 +364,31 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {owed.length > 0 && (
+            <div className="mt-5 rounded-[12px] border border-line bg-panel2 px-4 py-3.5">
+              <span className="text-[13px] text-foreground">Tokens from your withdrawal</span>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                Your share of the tokens the pool held, paid in kind.
+              </p>
+              <div className="mt-3 space-y-2">
+                {owed.map((o) => (
+                  <div key={o.mint} className="flex items-center justify-between gap-3">
+                    <span className="n text-[13px] font-semibold">
+                      {o.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {o.symbol}
+                    </span>
+                    {owner && (
+                      <button type="button" onClick={() => pull(o.symbol)} disabled={busy || api.readOnly}
+                        className="press h-8 rounded-full bg-foreground px-4 text-[13px] font-medium text-background
+                                   transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-35">
+                        Claim {o.symbol}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

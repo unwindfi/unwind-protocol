@@ -21,6 +21,7 @@ import fs from "fs";
 import path from "path";
 import { SOL_USD_FEED, backingBookPda, custodyPda } from "./custodies";
 import { priceAccountFor } from "./mock-pyth";
+import { latestGeneration, marketGenerationsPda, marketPda, observationPda } from "./market-address";
 
 const ROOT = path.join(__dirname, "..");
 const S = JSON.parse(fs.readFileSync(path.join(ROOT, ".localnet-state.json"), "utf8"));
@@ -30,7 +31,10 @@ const USD = (n: number) => new BN(Math.round(n * 1e6));
 /// The cloned mainnet Raydium CLMM pool. SOL is token 0 at 9dp, USDC token 1
 /// at 6dp, so readings come out USD-per-SOL and need no inverting.
 const SOURCE = new PublicKey("3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv");
-const SYMBOL = process.argv[2] ?? "SOLp";
+const SYMBOL = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "SOLp";
+/// List a fresh generation even when this pool already has a market, for a
+/// market listed with the wrong source or parameters. See market-address.ts.
+const RELIST = process.argv.includes("--relist");
 
 /// Seasoning, from the program: 30 readings spanning 15 minutes. Both, because
 /// thirty crank calls in one block observe nothing.
@@ -51,18 +55,21 @@ const MIN_WINDOW_SEC = 900;
   const pda = (seeds: (Buffer | Uint8Array)[]) =>
     PublicKey.findProgramAddressSync(seeds, program.programId)[0];
 
-  // A market's address is keyed by its feed id. There is no Pyth feed here, so
-  // the id is the hash of "amm:" and the pool's raw address, which the
-  // program checks (`observed_feed_id`).
+  // A market's address is keyed by its feed id and generation. There is no
+  // Pyth feed here, so the id is the hash of "amm:" and the pool's raw
+  // address, which the program checks (`observed_feed_id`). Rerunning picks
+  // up the newest generation where it left off; --relist lists the next one.
   const feedId = crypto.createHash("sha256")
     .update(Buffer.concat([Buffer.from("amm:"), SOURCE.toBuffer()])).digest();
-  const market = pda([Buffer.from("market"), pool.toBuffer(), feedId]);
-  const observation = pda([Buffer.from("observation"), market.toBuffer()]);
+  const latest = await latestGeneration(program, pool, feedId);
+  const generation = latest === 0 || RELIST ? latest + 1 : latest;
+  const market = marketPda(program.programId, pool, feedId, generation);
+  const observation = observationPda(program.programId, market);
   const batch = pda([Buffer.from("batch"), market.toBuffer()]);
 
   console.log(`\nlisting ${SYMBOL}`);
   console.log(`  source      ${SOURCE.toBase58()}`);
-  console.log(`  market      ${market.toBase58()}`);
+  console.log(`  market      ${market.toBase58()} (generation ${generation})`);
   console.log(`  observation ${observation.toBase58()}`);
 
   // 3 first: the observation account is a PDA of the market, so the market has
@@ -96,9 +103,10 @@ const MIN_WINDOW_SEC = 900;
         borrowRateBpsPerHour: 1,
         priceSource: 1, // observed, not Pyth
         observation,
-      })
+      }, generation)
       .accounts({
-        payer: authority.publicKey, pool, market,
+        payer: authority.publicKey, pool,
+        generations: marketGenerationsPda(program.programId, pool, feedId), market,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
