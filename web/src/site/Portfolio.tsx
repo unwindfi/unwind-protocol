@@ -17,7 +17,7 @@ import { useState, type ReactNode } from "react";
 import "@/site/serif.css";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
+import { DOCS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
@@ -143,9 +143,6 @@ export default function PortfolioPage() {
                              tracking-[-.025em]">
                 Portfolio
               </h1>
-              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
-                Positions, orders, pool and backing for one wallet. Read from the chain.
-              </p>
 
               <div className="mt-7">
                 {!self ? (
@@ -173,7 +170,7 @@ export default function PortfolioPage() {
                 )}
                 {api.readOnly && (
                   <p className="mt-4 text-[12.5px] text-muted-foreground">
-                    Read-only. Devnet is not connected, so there is nothing to read.
+                    Devnet offline. Nothing to read.
                   </p>
                 )}
               </div>
@@ -235,13 +232,9 @@ export default function PortfolioPage() {
           </>
         ) : (
           /* Four cards each saying "connect a wallet" said it four times.
-             Once, with the two places to go. Connecting signs nothing. */
+             Once, with the two places to go. */
           <div className="mt-4 rounded-[24px] border border-line bg-panel px-6 py-14 text-center">
-            <h2 className="text-balance text-[20px] font-medium tracking-[-.01em]">Connect a wallet to see your portfolio</h2>
-            <p className="text-pretty mx-auto mt-2 max-w-[46ch] text-[14px] leading-[1.55] text-muted-foreground">
-              What you hold, what rests in a batch, what you back and how close a position is to
-              liquidation, read from the chain. Connecting signs nothing and moves nothing.
-            </p>
+            <h2 className="text-balance text-[20px] font-medium tracking-[-.01em]">Connect a wallet to see your portfolio.</h2>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
               {!api.readOnly && (
                 <button type="button" onClick={() => setVisible(true)} className={BTN}>Connect wallet</button>
@@ -560,9 +553,8 @@ function History({ fills, account, owner, loaded }: {
       )}
       {loaded && (
         <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">
-          The chain keeps positions, not a fill log. This is what the server has settled for
-          this wallet, up to the last 100. Fees and closed PnL come from each settlement's own
-          record, a moment after the fill; rows from before October 7, 2026 have neither.
+          Last 100 settled fills.{" "}
+          <a href={`${DOCS}/trading/portfolio`} target="_blank" rel="noreferrer" className={LINK}>Docs</a>
         </p>
       )}
     </Card>

@@ -24,7 +24,7 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import {
-  DOCS, PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, Shell, SiteFooter, SiteHeader,
+  DOCS, PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, RISKS, Shell, SiteFooter, SiteHeader,
 } from "@/site/Chrome";
 import { PayToken } from "@/components/PayToken";
 import { GlassMark } from "@/components/GlassMark";
@@ -505,9 +505,9 @@ export default function List() {
     : tooThin
     ? { title: "Too thin", body: "Pick a deeper pool." }
     : preview.opensAtListing
-    ? { title: "Live at listing", body: "Tradeable from the first price, within seconds of listing." }
+    ? { title: "Live at listing", body: "Trades within seconds." }
     : { title: `Opening auction in ~${Math.round(preview.seasonSec / 60)}m`,
-        body: "Opens after 15 minutes of price readings. Orders placed before then clear together." };
+        body: "Early orders clear together." };
 
   return (
     <div className="site relative min-h-full">
@@ -759,7 +759,7 @@ export default function List() {
                   <p className="mt-3 text-[12px] text-muted-foreground">
                     {previewErr
                       ? <span className="text-down">{previewErr}</span>
-                      : "Deepest USD pool. Price read on chain."}
+                      : "Deepest USD pool."}
                   </p>
                 </Fieldset>
 
@@ -798,14 +798,15 @@ export default function List() {
                       </button>
                     ))}
                   </div>
-                  <p className={`text-pretty mt-2.5 text-[12px] leading-relaxed ${
-                    underMin && seed.trim() !== "" ? "text-down" : "text-muted-foreground"}`}>
-                    {underMin && seed.trim() !== ""
-                      ? `At least ${money(MIN_LISTING_BACKING_USD, 0)} to list${
-                        payWith !== "USDC" && seedUsd > 0 ? `; this is about ${money(seedUsd, 0)}` : ""}.`
-                      : <>First loss, capped at what you post. Earns {backerShare}% of LP fees.
-                        {payWith === "SOL" ? " SOL counts at 80%." : ""}</>}
-                  </p>
+                  {(underMin && seed.trim() !== "" || payWith === "SOL") && (
+                    <p className={`text-pretty mt-2.5 text-[12px] leading-relaxed ${
+                      underMin && seed.trim() !== "" ? "text-down" : "text-muted-foreground"}`}>
+                      {underMin && seed.trim() !== ""
+                        ? `At least ${money(MIN_LISTING_BACKING_USD, 0)} to list${
+                          payWith !== "USDC" && seedUsd > 0 ? `; this is about ${money(seedUsd, 0)}` : ""}.`
+                        : "SOL counts at 80%."}
+                    </p>
+                  )}
                 </Fieldset>
 
                 {/* The limits default to the most the pool allows, which is
@@ -857,10 +858,12 @@ export default function List() {
                   </button>
                   <p className="text-pretty mt-3 text-[12px] leading-relaxed text-dim">
                     {offChain
-                      ? "Read from mainnet. This pool isn't on this chain."
+                      ? "This pool is mainnet only."
                       : signable === false
-                      ? "Read-only. Devnet is not connected, so listing is paused."
-                      : "One signature. Listing and backing land together. You pay the rent."}
+                      ? "Devnet offline. Listing paused."
+                      : <>One signature. You pay the rent.{" "}
+                        <a href={RISKS} target="_blank" rel="noreferrer"
+                          className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a></>}
                   </p>
                   {error && <p className="text-pretty mt-3 text-[12.5px] leading-relaxed text-down">{error}</p>}
                 </div>
@@ -869,7 +872,9 @@ export default function List() {
               /* ---------------------------------------------------- back */
               <div className="flex flex-col gap-3">
                 <p className="text-pretty text-[13px] leading-relaxed text-muted-foreground">
-                  Anyone can back these. First loss, {backerShare}% of LP fees.
+                  First loss · {backerShare}% of LP fees ·{" "}
+                  <a href={RISKS} target="_blank" rel="noreferrer"
+                    className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
                 </p>
                 <div role="radiogroup" aria-label="Pay with" className="flex flex-wrap gap-2">
                   {(Object.keys(PAY_TOKENS) as PayWith[]).map((k) => (
@@ -1025,10 +1030,6 @@ export default function List() {
                 </div>
               </div>
 
-              <p className="text-pretty mt-5 text-[12px] leading-relaxed text-dim lg:mt-0">
-                The program enforces every figure here. Listing gives you no control over
-                the market.
-              </p>
             </div>
           </aside>
         </div>

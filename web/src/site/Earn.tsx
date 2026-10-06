@@ -32,7 +32,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
+import { PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, RISKS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { useHasBackend } from "@/lib/api";
 import { GlassMark } from "@/components/GlassMark";
 import { TickerLogo } from "@/components/TickerLogo";
@@ -280,7 +280,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     const where = v.kind === "pool" ? "pool" : v.symbol;
     const t = side === "out" && v.kind === "pool"
       ? { label: `Request ${money(usd)} withdrawal`, done: `Requested ${money(usd)}`,
-          note: "Claim it in about a minute, at the pool's value then." }
+          note: "Claimable in about 1 min." }
       : side === "out"
       ? { label: `Withdraw ${sum} from ${where}`, done: `Withdrew ${sum} from ${where}` }
       : v.kind === "pool"
@@ -386,9 +386,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           {owed.length > 0 && (
             <div className="mt-5 rounded-[12px] border border-line bg-panel2 px-4 py-3.5">
               <span className="text-[13px] text-foreground">Tokens from your withdrawal</span>
-              <p className="mt-1 text-[12px] text-muted-foreground">
-                Your share of the tokens the pool held, paid in kind.
-              </p>
+              <p className="mt-1 text-[12px] text-muted-foreground">Paid in kind</p>
               <div className="mt-3 space-y-2">
                 {owed.map((o) => (
                   <div key={o.mint} className="flex items-center justify-between gap-3">
@@ -458,7 +456,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
             )}
             {api.readOnly && (
               <p className="mt-2.5 text-[12px] text-muted-foreground">
-                Read-only. Devnet is not connected, so deposits are paused.
+                Devnet offline. Deposits paused.
               </p>
             )}
           </div>
@@ -489,11 +487,12 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
           <p className="text-pretty border-t border-line pt-3.5 text-[12px] leading-relaxed text-dim">
             {v.kind === "pool"
               ? side === "out"
-                ? "Withdrawing takes two steps. Your xLP waits about a minute (150 slots) in escrow, still earning and losing with the pool, then pays out at the pool's value when you claim. Cancel any time before."
+                ? "Claimable in about 1 min (150 slots), at the pool's value then. Cancel any time."
                 : "The pool takes the other side of traders' net PnL. When they win, xLP is worth less."
-              : `Backing, not a trading position. First loss when this market's traders win. Earns half the LP fee share. Held as ${paying}, not swapped${
-                paying === "SOL" ? "; counts at 80%" : ""
-              }. Withdraw any time, in the same mix. Winners are paid only from what is left, so leaving early cuts their payout, not yours.`}
+              : `First loss when this market's traders win, for 50% of LP fees. Withdraw any time, in the mix held.${
+                paying === "SOL" ? " SOL counts at 80%." : ""}`}{" "}
+            <a href={RISKS} target="_blank" rel="noreferrer"
+              className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
           </p>
         </div>
       </motion.div>
@@ -636,14 +635,6 @@ export default function Earn() {
                              tracking-[-.025em]">
                 Earn
               </h1>
-              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
-                Back a market you believe in with{" "}
-                <span className="whitespace-nowrap">
-                  <PayToken k="SOL" size={17} className="font-medium text-foreground" />,
-                </span>{" "}
-                <PayToken k="USDC" size={17} className="font-medium text-foreground" /> or{" "}
-                <PayToken k="USDT" size={17} className="font-medium text-foreground" />.
-              </p>
               <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3">
                 <button type="button" onClick={toMarkets}
                   className="press h-[48px] rounded-full bg-foreground px-6 text-[14px]
@@ -664,10 +655,7 @@ export default function Earn() {
           {/* What the visitor holds, beside the way in. */}
           <aside className="flex min-w-0 flex-col border-t border-line bg-panel2 px-5 py-7
                             sm:px-9 sm:py-9 lg:border-l lg:border-t-0">
-            <h2 className="text-balance text-[16px] font-medium">The pool</h2>
-            <p className="text-pretty mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
-              One deposit across every market.
-            </p>
+            <h2 className="text-balance text-[16px] font-medium">Pool</h2>
 
             <div className="mt-4">
               <Stat k="In your wallet">
@@ -736,7 +724,7 @@ export default function Earn() {
           <Tile k="Total backed" v={<AnimatedNumber value={deposited} duration={0.9} format={compact} />}
             sub={`${vaults.length} vaults`} />
           <Tile k="Free liquidity" v={pool ? compact(pool.free) : "–"}
-            sub={pool ? `${pool.utilization.toFixed(1)}% of the pool in use` : devnet ? "Reading the chain" : "Connect to devnet"} />
+            sub={pool ? `${pool.utilization.toFixed(1)}% in use` : devnet ? "Loading" : "Devnet offline"} />
           <Tile k="Best APY" tone={best?.apy.tone}
             v={best?.apy.value != null ? `${best.apy.value.toFixed(2)}%` : "–"}
             sub={best?.apy.value != null ? `${best.title}, ${best.apy.note}` : "Measuring"} />
@@ -753,12 +741,12 @@ export default function Earn() {
           <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5 pt-7 sm:px-9">
             <div>
               <h2 className="text-balance text-[clamp(1.375rem,2.2vw,1.625rem)] font-medium tracking-[-.02em]">
-                Back a market
+                Markets
                 <span className="n ml-2 text-[14px] font-normal text-dim">{shown.length}</span>
               </h2>
               <p className="n mt-1 text-[12.5px] text-muted-foreground">
-                <AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} /> deposited.
-                Backing earns half a market's fees and takes the first loss when its traders win.
+                <AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} /> deposited
+                {" · "}First loss · 50% of LP fees
               </p>
             </div>
             <Tabs value={filter} onValueChange={(f) => setFilter(f as Filter)} variant="pill"

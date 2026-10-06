@@ -49,7 +49,7 @@ export function YourBacking({ backings, markets, onWithdraw, onAdd }: {
             <span className="n ml-2 text-[14px] font-normal text-dim">{backings.length}</span>
           </h2>
           <p className="mt-1 text-[12.5px] text-muted-foreground">
-            Not trades. Earns half each market's fees, takes the first loss when its traders win.
+            First loss · 50% of LP fees
           </p>
         </div>
         <div className="flex gap-6 text-right">

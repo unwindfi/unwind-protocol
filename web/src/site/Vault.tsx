@@ -10,7 +10,7 @@ import "@/site/serif.css";
 import { AnimatePresence } from "motion/react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { RISKS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
+import { DOCS, RISKS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { WalletActions } from "@/components/WalletActions";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
@@ -72,7 +72,7 @@ export default function VaultPage() {
 
         {!v ? (
           <div className="mt-6 rounded-[24px] border border-line bg-panel px-6 py-12 text-center text-[14px] text-muted-foreground">
-            {markets.length === 0 ? "Reading the chain." : <>No vault called <span className="font-mono">{id}</span>. <a href="/earn" className="underline underline-offset-4">Back to Earn</a></>}
+            {markets.length === 0 ? "Loading." : <>No vault called <span className="font-mono">{id}</span>. <a href="/earn" className="underline underline-offset-4">Back to Earn</a></>}
           </div>
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -85,8 +85,8 @@ export default function VaultPage() {
                   </h1>
                   <p className="mt-1.5 text-[14px] text-muted-foreground">
                     {v.kind === "pool"
-                      ? "Every market's liquidity. Takes what backers leave, after them."
-                      : `First-loss backing behind ${m?.name ?? v.id}, not a trading position.${v.listedByYou ? " You listed this market." : ""}`}
+                      ? "Liquidity for every market"
+                      : `First-loss backing for ${m?.name ?? v.id}${v.listedByYou ? " · You listed this" : ""}`}
                   </p>
                 </div>
               </div>
@@ -102,13 +102,7 @@ export default function VaultPage() {
 
               <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel">
                 <div className="flex flex-wrap items-baseline justify-between gap-3 px-6 pb-2 pt-5 sm:px-8">
-                  <div>
-                    <h2 className="text-balance text-[16px] font-medium">Value per share</h2>
-                    <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                      What one share of this vault is worth, as the server has watched it. Fees lift it; losses the
-                      market's traders took from it lower it.
-                    </p>
-                  </div>
+                  <h2 className="text-balance text-[16px] font-medium">Value per share</h2>
                   {points.length > 1 && (
                     <span className="n text-[12.5px] text-muted-foreground">
                       {new Date(points[0][0]).toLocaleDateString(undefined, { month: "short", day: "numeric" })} to today
@@ -162,10 +156,7 @@ export default function VaultPage() {
                     </>
                   )}
                 </div>
-                <p className="text-pretty mt-4 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  {v.kind === "pool"
-                    ? "The pool takes the losses backers do not, up to each market's budget, and earns the fees on every market."
-                    : "Backing takes this market's losses first, up to what you post, and earns half of the pool's share of its fees. Withdrawing pays the mix it holds."}{" "}
+                <p className="mt-4 text-[12.5px] text-muted-foreground">
                   <a href={RISKS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
                 </p>
               </div>
@@ -200,11 +191,15 @@ function Risk({ m }: { m: Market }) {
   const filled = m.lossBudgetUsd > 0 ? Math.min(100, (m.backingUsd / m.lossBudgetUsd) * 100) : 0;
   return (
     <section className="mt-5 overflow-hidden rounded-[24px] border border-line bg-panel px-6 py-5 sm:px-8">
-      <h2 className="text-balance text-[16px] font-medium">What this vault stands behind</h2>
-      <p className="text-pretty mt-1.5 text-[13.5px] leading-[1.55] text-muted-foreground">
-        Traders open {m.symbol} at up to {L.toFixed(L % 1 ? 1 : 0)}x and are liquidated under {mm.toFixed(1)}% margin.
-        Their losses come out of this backing first, up to its budget of {compact(m.lossBudgetUsd)}, then the pool.
-        Gains come back to it only up to what was drawn.
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-balance text-[16px] font-medium">Loss order</h2>
+        <a href={`${DOCS}/mechanism/loss-budget`} target="_blank" rel="noreferrer"
+          className="text-[12.5px] text-muted-foreground underline decoration-line underline-offset-4 hover:text-foreground">
+          Loss budget
+        </a>
+      </div>
+      <p className="n mt-1.5 text-[13.5px] text-muted-foreground">
+        Up to {L.toFixed(L % 1 ? 1 : 0)}x · Liq. under {mm.toFixed(1)}% · Budget {compact(m.lossBudgetUsd)}
       </p>
       <div className="mt-4 grid gap-x-8 sm:grid-cols-2">
         <KV k="Budget backed">{filled.toFixed(1)}%</KV>
@@ -237,7 +232,7 @@ function Chart({ points }: { points: [number, number][] }) {
     return { x, y, d, area: `${d}L${x(t1).toFixed(1)},${H}L${x(t0).toFixed(1)},${H}Z`, t0, t1, lo, hi };
   }, [points]);
   if (!geo) {
-    return <div className="grid h-[220px] place-items-center text-[13px] text-muted-foreground">Nothing recorded yet. The server writes a point every two minutes.</div>;
+    return <div className="grid h-[220px] place-items-center text-[13px] text-muted-foreground">No history yet.</div>;
   }
   const first = points[0][1], last = points[points.length - 1][1];
   const up = last >= first;

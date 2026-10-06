@@ -47,8 +47,8 @@ batch. It sells in one flow and buys in the other, so its net position from
 one batch never passes the cap.
 
 The site shows this figure as **Per batch**: in the markets table, beside the
-caps on the trade screen, and in the order ticket, which says when an order
-is larger and the rest would be refunded. A $2,000 market fills $100 a batch
+caps on the trade screen, and in the order ticket's Fill row, which adds
+"rest refunded" when an order is larger. A $2,000 market fills $100 a batch
 on each side however large its open interest caps are.
 
 On top of the cap, it takes trades that shrink the position it already holds

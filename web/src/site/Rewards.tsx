@@ -53,25 +53,22 @@ const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 /// Every rate, as the program counts it. Mirrors `constants.rs`.
 const RATES: { label: string; figure: string; line: string }[] = [
   { label: "Trading", figure: "2 points per $1 closed",
-    line: "On a position held 10 minutes or more. Up to 250,000 points a day." },
+    line: "Held 10m+. Max 250,000 a day." },
   { label: "Referrals", figure: "10% of their fees",
-    line: "Paid in USDC, out of our cut. Plus 10% of their points once they pass $1,000 held. They pay 10% less." },
+    line: "In USDC, plus 10% of their points past $1,000 held. They pay 10% less." },
   { label: "Markets", figure: "10% of every fee",
-    line: "On any market you open, for as long as it trades. Plus 10% of its traders' points. Half fees when you trade it yourself." },
+    line: "Plus 10% of its traders' points. Half fees on your own." },
   { label: "Backing", figure: "2 points per $1 a day",
-    line: "Backing takes first loss, so it earns double." },
+    line: "2x: first loss." },
   { label: "Pool", figure: "1 point per $1 a day",
-    line: "On xLP still in the wallet that minted it." },
+    line: "xLP in the minting wallet." },
 ];
 
-/// What the program will not do. Stated plainly, since these are what
-/// other points programs were caught doing.
+/// The three rules that matter most; the rest are in the docs.
 const PRINCIPLES = [
-  "No snapshots. No multipliers. No points changed after the fact.",
-  "Counted by the program, not by us. Anyone can check any wallet on chain.",
-  "Referral and market rewards come out of our cut. LPs, backers, insurance and the chain are paid in full.",
-  "A referrer is set once, before the first trade. It can't be bought later.",
-  "Points are not a token.",
+  "No snapshots or multipliers.",
+  "Counted on chain.",
+  "Referrer set once, before your first trade.",
 ];
 
 /// Seconds, ticking once a second while `on`.
@@ -186,10 +183,6 @@ export default function RewardsPage() {
                              tracking-[-.025em]">
                 Rewards
               </h1>
-              <p className="text-pretty mt-3.5 text-[15px] leading-[1.55] text-muted-foreground">
-                Points on every dollar you trade, back or deposit. USDC on every
-                trader you bring.
-              </p>
 
               <div className="mt-7">
                 {!self ? (
@@ -213,12 +206,11 @@ export default function RewardsPage() {
                 {self && owner && r?.canSetReferrer !== false && !r?.referrer && arrived
                   && arrived !== r?.code && (
                   <p className="text-pretty mt-4 text-[12.5px] leading-relaxed text-muted-foreground">
-                    Joined through <span className="font-medium text-foreground">{arrived}</span>.
-                    Your first order locks them in as your referrer and takes 10% off your fees.{" "}
+                    Invited by <span className="font-medium text-foreground">{arrived}</span>: 10% off fees.{" "}
                     <button type="button" disabled={!!busy} className={`${LINK} disabled:opacity-35`}
                       onClick={() => run("ref", "set-referrer", { code: arrived },
                         { label: `Set referrer ${arrived}`, done: `Referred by ${arrived}` })}>
-                      {busy === "ref" ? "Confirming" : "Lock in now"}
+                      {busy === "ref" ? "Confirming" : "Set referrer"}
                     </button>
                   </p>
                 )}
@@ -343,10 +335,10 @@ export default function RewardsPage() {
                 {PRINCIPLES.map((p) => <li key={p}>{p}</li>)}
               </ul>
               <p className="mt-6 text-[12.5px] text-muted-foreground">
-                Rules {RULES_VERSION}. They only change going forward, and every change is{" "}
+                Rules {RULES_VERSION} ·{" "}
                 <a href={`${RULES_URL}#rules-changelog`} target="_blank" rel="noreferrer" className={LINK}>
-                  logged
-                </a>.
+                  Changelog
+                </a>
               </p>
             </aside>
           </div>
@@ -484,8 +476,7 @@ function CreatorBoard({ c, owner, self, who }: {
       {rows.map((row) => <Line key={row.wallet} row={row} />)}
       {rows.length === 0 && <Empty>No markets from testers yet.</Empty>}
       <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">
-        A wallet counts once in each market where it has filled {money(c.minVolumeUsd, 0)} or more.
-        The market's deployer never counts. Summed over a creator's markets.
+        Traders with {money(c.minVolumeUsd, 0)}+ filled. Deployer excluded.
       </p>
     </Card>
   );
@@ -540,7 +531,7 @@ function Markets({ r, self }: { r: Rewards; self: boolean }) {
     }>
       {r.listed.length === 0 ? (
         <Empty>
-          {self ? <>No markets yet. <a href="/list" className={LINK}>Open one</a> and earn 10% of its fees.</>
+          {self ? <>No markets yet. <a href="/list" className={LINK}>Open one</a></>
             : "No markets yet."}
         </Empty>
       ) : (
@@ -579,7 +570,7 @@ function YourLink({ link, copied, onCopy }: { link: string; copied: boolean; onC
         </button>
       </div>
       <p className="mt-2.5 text-[12.5px] text-muted-foreground">
-        They pay 10% less. You get 10% of what they pay, in USDC.
+        They pay 10% less. You get 10%, in USDC.
       </p>
     </div>
   );

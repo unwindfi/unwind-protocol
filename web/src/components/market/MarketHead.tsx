@@ -184,17 +184,17 @@ export function StatTiles({ m, dense = false }: {
         </Stat>
       )}
       {m.paused && (
-        <Stat label="Status" help="Paused by the pool's authority. Open positions can still be closed; nothing new can be opened.">
+        <Stat label="Status" help="Paused by the pool's authority. Close only.">
           <span className="text-down">Exits only</span>
         </Stat>
       )}
       {/* Only when it binds: at 100% every winner is paid in full. */}
       {m.payoutPct != null && m.payoutPct < 99.95 && (
-        <Stat label="Profit paid" help="This market can't cover every winner in full right now. A winning close is paid this share of its profit; losses are collected in full.">
+        <Stat label="Profit paid" help="Share of profit paid on a winning close. Losses collected in full.">
           <span className="text-down">{m.payoutPct.toFixed(1)}%</span>
         </Stat>
       )}
-      <Stat label="Spread" help="Bid to ask. A long closes at the bid, a short at the ask; PnL is taken there.">
+      <Stat label="Spread" help="Bid to ask. Longs close at the bid, shorts at the ask.">
         {(m.spreadBps / 50).toFixed(3)}%
       </Stat>
       <Stat label="24h change" help="Since the session opened.">

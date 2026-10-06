@@ -38,6 +38,7 @@ const BTN = "press inline-flex h-12 flex-1 items-center justify-center rounded-f
   "transition-opacity disabled:pointer-events-none disabled:opacity-35";
 const SOLID = `${BTN} bg-foreground text-background hover:opacity-85`;
 const GHOST = `${BTN} bg-panel2 text-foreground hover:bg-panel3`;
+const LINK = "underline decoration-line underline-offset-4 hover:text-foreground";
 
 /// Tells the server a wallet connected, once a browser session, so it can
 /// count them (docs/devnet.md). A failed report changes nothing on the page.
@@ -108,7 +109,7 @@ export function Welcome() {
     } finally { setBusy(false); }
   };
 
-  const titles = ["Welcome to unwind", "How do you want to start?", "Before you start"];
+  const titles = ["unwind", "Start with", "Before you start"];
 
   return (
     <div ref={dialog} className="fixed inset-0 z-[90] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm
@@ -132,22 +133,14 @@ export function Welcome() {
               <img src="/waitlist/logo-glass-mark.webp" alt="" aria-hidden
                 className="absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2" />
             </div>
-            <p className="mt-5 text-[14px] text-muted-foreground">Permissionless perpetuals on Solana</p>
-            <h3 className="mt-1.5 text-[26px] font-semibold leading-tight tracking-[-.02em]">
-              Every market clears by auction.
-            </h3>
-            <p className="text-pretty mt-2.5 text-[15px] leading-[1.55] text-muted-foreground">
-              Anyone can list a market. unwind never holds your funds: every order is a
-              transaction you sign, and every fill clears at one price for everyone in the batch.
-            </p>
-            <div className="mt-5 flex flex-col">
-              <Fact n={1} title="You keep custody"
-                line="Margin sits in the program's vault on chain, never in an unwind wallet." />
-              <Fact n={2} title="One price per batch"
-                line="Orders rest for a second and clear together. Nobody is front-run; nobody pays a spread to the house." />
-              <Fact n={3} title="Every parameter is public"
-                line="Fees, leverage, the pool's budget and the price source are on chain and in the docs." />
+            <div className="mt-4 flex flex-col">
+              <Fact n={1} title="You sign every order" />
+              <Fact n={2} title="One price per batch" />
+              <Fact n={3} title="Every parameter on chain" />
             </div>
+            <p className="mt-2 text-[13px] text-muted-foreground">
+              <a href={`${DOCS}/about-unwind/about`} target="_blank" rel="noreferrer" className={LINK}>Docs</a>
+            </p>
             <div className="mt-6 flex gap-3">
               <button type="button" onClick={skip} className={GHOST}>Skip</button>
               <button type="button" onClick={() => setStep(1)} className={SOLID}>Continue</button>
@@ -157,16 +150,11 @@ export function Welcome() {
 
         {step === 1 && (
           <div className="px-6 pb-6 pt-5">
-            <p className="text-[15px] text-muted-foreground">Two independent paths. You can combine them later.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Path on={path === "trade"} onClick={() => setPath("trade")} tag="Trade" tone="text-up bg-up/10"
-                title="Trade a market"
-                line="Stocks, crypto and anything with a pool. Orders fill in the next batch, a second away."
-                figure={markets.length ? `${markets.length} markets, up to ${maxLev}x today` : "Markets are loading"} />
+                figure={markets.length ? `${markets.length} markets, up to ${maxLev}x` : "Loading markets"} />
               <Path on={path === "earn"} onClick={() => setPath("earn")} tag="Earn" tone="text-foreground bg-panel3"
-                title="Back a market"
-                line="Post SOL, USDC or USDT behind one market, or hold the pool behind all of them, and earn its fees."
-                figure={apy?.pool?.apy != null ? `Pool APY ${apy.pool.apy.toFixed(2)}% today` : "Pool APY is not measured yet"} />
+                figure={apy?.pool?.apy != null ? `Pool APY ${apy.pool.apy.toFixed(2)}%` : "Pool APY not measured yet"} />
             </div>
             <div className="mt-6 flex gap-3">
               <button type="button" onClick={() => setStep(0)} className={GHOST}>Back</button>
@@ -184,31 +172,26 @@ export function Welcome() {
               <p>
                 <span className="font-medium">{devnet ? "Devnet." : "Read-only."}</span>{" "}
                 {devnet
-                  ? "Everything here runs on test USDC from the faucet; nothing has value. The program is unaudited and parameters can change. Mainnet opens later, and what you do here counts toward it under rules set before then."
-                  : "Devnet is not connected. Prices are live; trading is paused."}
+                  ? "Test USDC, no value. Unaudited. Devnet activity counts toward mainnet rewards."
+                  : "Devnet offline. Prices live, trading paused."}
               </p>
             </div>
             <div className="mt-3 flex flex-col gap-2.5">
-              <Risk n={1} title="Positions can be liquidated"
-                line="Past the maintenance margin a position is closed by the keeper. Your margin pays for it first; the pool covers what is left." />
-              <Risk n={2} title="Backing takes first loss"
-                line="If a market loses, the backers' money goes first, then the pool. Neither capital nor yield is guaranteed." />
-              <Risk n={3} title="Prices come from a feed"
-                line="A stale or wrong feed means a stale or wrong fill. Orders pause when the feed is behind, and the mark is what it says." />
+              <Risk n={1} title="Liquidation can take your whole margin." />
+              <Risk n={2} title="Backers lose first, then the pool." />
+              <Risk n={3} title="Orders pause when the price feed lags." />
             </div>
             <Checkbox checked={agreed} onCheckedChange={setAgreed} className="mt-4 items-start gap-3 [&_span]:text-[14px] [&_span]:leading-[1.5]"
-              label="I have read the risk notes and the docs. I understand this is devnet, unaudited, and not investment advice." />
+              label="I understand: devnet, unaudited, not investment advice." />
             <p className="text-pretty mt-3 text-[13px] leading-[1.5] text-muted-foreground">
-              Your wallet will ask you to sign a message recording this. It is not a transaction and costs nothing.{" "}
-              <a href={RISKS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Risks</a>
-              {" · "}
-              <a href={DOCS} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:text-foreground">Docs</a>
+              Signing is free.{" "}
+              <a href={RISKS} target="_blank" rel="noreferrer" className={LINK}>Risks</a>
             </p>
             {note && <p className="mt-2 text-[13px] text-down">{note}</p>}
             <div className="mt-6 flex gap-3">
               <button type="button" onClick={() => setStep(1)} className={GHOST}>Back</button>
               <button type="button" onClick={finish} disabled={!agreed || busy} className={SOLID}>
-                {busy ? "Waiting for your wallet" : path === "earn" ? "Open Earn" : path === "trade" ? "Open the terminal" : "Start"}
+                {busy ? "Waiting for your wallet" : path === "earn" ? "Earn" : path === "trade" ? "Trade" : "Start"}
               </button>
             </div>
           </div>
@@ -218,43 +201,35 @@ export function Welcome() {
   );
 }
 
-/// One fact: its name, and one line under it. Numbered rows on a hairline,
-/// rather than three icon-in-a-tile cards.
-function Fact({ n, title, line }: { n: number; title: string; line: string }) {
+/// One fact, by name. Numbered rows on a hairline, rather than three
+/// icon-in-a-tile cards; the reasons live in the docs.
+function Fact({ n, title }: { n: number; title: string }) {
   return (
     <div className="flex gap-4 border-t border-line py-3.5 first:border-t-0">
       <span className="n w-5 flex-none pt-0.5 text-[13px] text-dim">{String(n).padStart(2, "0")}</span>
-      <div>
-        <div className="text-[15px] font-medium">{title}</div>
-        <div className="mt-0.5 text-[13.5px] leading-[1.5] text-muted-foreground">{line}</div>
-      </div>
+      <div className="text-[15px] font-medium">{title}</div>
     </div>
   );
 }
 
-function Path({ on, onClick, tag, tone, title, line, figure }: {
-  on: boolean; onClick: () => void; tag: string; tone: string; title: string; line: string; figure: string;
+function Path({ on, onClick, tag, tone, figure }: {
+  on: boolean; onClick: () => void; tag: string; tone: string; figure: string;
 }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={on}
       className={`flex flex-col rounded-[16px] border p-4 text-left transition-colors ${
         on ? "border-foreground bg-panel2" : "border-line hover:bg-panel2"}`}>
       <span className={`w-full rounded-[8px] px-3 py-2 text-[14px] font-medium ${tone}`}>{tag}</span>
-      <span className="mt-3 text-[17px] font-semibold tracking-[-.01em]">{title}</span>
-      <span className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">{line}</span>
       <span className="n mt-3 text-[13.5px] font-medium">{figure}</span>
     </button>
   );
 }
 
-function Risk({ n, title, line }: { n: number; title: string; line: string }) {
+function Risk({ n, title }: { n: number; title: string }) {
   return (
-    <div className="flex gap-4 rounded-[14px] border border-line px-4 py-3.5">
+    <div className="flex items-center gap-4 rounded-[14px] border border-line px-4 py-3">
       <span className="n grid size-8 flex-none place-items-center rounded-full bg-panel2 text-[13px]">{n}</span>
-      <div>
-        <div className="text-[15px] font-medium">{title}</div>
-        <div className="mt-0.5 text-[13.5px] leading-[1.5] text-muted-foreground">{line}</div>
-      </div>
+      <div className="text-[15px] font-medium">{title}</div>
     </div>
   );
 }

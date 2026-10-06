@@ -360,10 +360,6 @@ export function Chart({
         <div className="absolute inset-0 z-10 grid place-items-center bg-panel px-6 text-center">
           <div className="max-w-[300px]">
             <p className="text-[14px] font-medium text-foreground">Too little history to chart</p>
-            <p className="mt-1.5 text-pretty text-[12.5px] leading-relaxed text-muted-foreground">
-              This price comes from the market's pool, which has barely traded. The chart fills
-              in a bar at a time.
-            </p>
           </div>
         </div>
       )}

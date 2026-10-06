@@ -134,9 +134,7 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
     // come back yet (devnet's RPC rate-limits at busy times), not a missing chain.
     return (
       <div className="px-5 py-8 text-center text-[12.5px] leading-relaxed text-dim">
-        {backend === false ? "Read-only. Devnet is not connected." : backend === null ? "Loading the batch." : (
-          <>Reading this batch from devnet.<br />The page keeps trying; it fills in when the read lands.</>
-        )}
+        {backend === false ? "Devnet offline." : "Loading batch"}
       </div>
     );
   }
@@ -331,7 +329,7 @@ export function BookPanel({
                 <p className="text-pretty mt-3 text-[12px] leading-relaxed text-muted-foreground">
                   {statusOf(m).detail}. {m.observed.budgetUsd > 0
                     ? "Orders clear together at open, at one price."
-                    : "Opens after 15 minutes of readings and once it is backed."}
+                    : "Opens after 15m of readings, once backed."}
                 </p>
               </div>
             ) : (

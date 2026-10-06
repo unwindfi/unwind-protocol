@@ -36,13 +36,13 @@ export function FundPrompt({ onFunded }: { onFunded?: () => void }) {
   // Claimed today: no button, which would only be refused; the line says when.
   const wait = faucetWaitHours(owner);
   const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+  const next = wait ? ` Next claim in ${wait}h.` : "";
   const message = !noUsdc
-    ? `This wallet has too little SOL for rent and fees. ${wait ? `Next test funds in ${wait}h.` : "A claim tops it up, once a day."}`
+    ? `Low SOL for fees.${next}`
     : placed > 0
-      ? `No test USDC left in this wallet: ${usd(placed)} is in your backing, margin and LP. `
-        + (wait ? `Next test funds in ${wait}h.` : "One claim a day gives 10,000 more.")
-      : wait ? `No test USDC in this wallet. Next test funds in ${wait}h.`
-      : "This wallet has no test funds yet. One claim a day gives 10,000 test USDC, and SOL for rent and fees.";
+      ? `No free USDC. ${usd(placed)} in use.${next}`
+      : wait ? `No test USDC.${next}`
+      : "No test funds. 10,000 USDC a day.";
 
   async function claim() {
     setBusy(true);

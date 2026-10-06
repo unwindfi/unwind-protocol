@@ -93,9 +93,6 @@ function WalletPicker({ onClose }: { onClose: () => void }) {
         </button>
 
         <h2 id="wallet-picker-title" className="text-center text-[16px] font-medium">Connect wallet</h2>
-        <p className="text-pretty mx-auto mt-1 max-w-[280px] text-center text-[13px] leading-[1.5] text-muted-foreground">
-          Trade, list and back markets on Solana.
-        </p>
 
         <div className="mt-5 divide-y divide-line overflow-hidden rounded-[16px] bg-panel2">
           {ready.map((w) => (

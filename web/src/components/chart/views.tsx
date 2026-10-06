@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import type { Batch, Market, RestingOrder } from "@/lib/api";
 import { compact, hhmmss, price, tone } from "@/lib/format";
+import { DOCS } from "@/site/Chrome";
+
+const LINK = "underline decoration-line underline-offset-4 hover:text-foreground";
 
 function Row({ k, children, hint }: { k: string; children: ReactNode; hint?: string }) {
   return (
@@ -59,9 +62,9 @@ function DepthRow({ l, max, bid }: { l: Level; max: number; bid: boolean }) {
 export function DepthView({ m, batch, hasBackend }: {
   m: Market; batch: Batch | null | undefined; hasBackend: boolean | null;
 }) {
-  if (hasBackend === false) return <Note>Read-only. Devnet is not connected, so there is no batch to show.</Note>;
-  if (!batch) return <Note>Reading the batch.</Note>;
-  if (!batch.exists) return <Note>No batch is open for this market yet.</Note>;
+  if (hasBackend === false) return <Note>Devnet offline. No batch to show.</Note>;
+  if (!batch) return <Note>Loading batch</Note>;
+  if (!batch.exists) return <Note>No open batch yet.</Note>;
 
   const asks = levels(batch.resting, false);
   const bids = levels(batch.resting, true);
@@ -146,9 +149,8 @@ export function FundingView({ m, samples }: { m: Market; samples: FundingSample[
       </Row>
       <Row k="Last accrual seen">{b ? hhmmss(b.t) : <span className="text-dim">Not yet</span>}</Row>
       <p className="text-pretty border-t border-line pt-3 text-[12px] leading-relaxed text-muted-foreground">
-        Funding accrues on every trade and on each keeper pass. The heavier side
-        pays the lighter one, plus a borrow charge on both. History is not
-        recorded yet.
+        Heavier side pays, plus borrow on both.{" "}
+        <a href={`${DOCS}/trading/funding`} target="_blank" rel="noreferrer" className={LINK}>Funding</a>
       </p>
     </div>
   );
@@ -158,7 +160,7 @@ const SESSIONS = ["Regular", "Extended", "Closed"];
 const bps = (n: number) => `${(n / 100).toFixed(2)}%`;
 
 /// The market's parameters as the program holds them: a grid of facts, then
-/// the band a position lives in and what $100 of margin does here.
+/// the band a position lives in, with what $100 of margin opens.
 export function InfoView({ m }: { m: Market }) {
   const o = m.observed;
   return (
@@ -194,8 +196,8 @@ export function InfoView({ m }: { m: Market }) {
 /*
  * Where a position stands, as a bar: open while its margin is above the
  * initial requirement, held but not grown between that and the maintenance
- * margin, liquidatable under it. The figures are the market's own, so the
- * sentence under it is arithmetic rather than a disclaimer.
+ * margin, liquidatable under it. The figures are the market's own; the
+ * mechanism is in the docs.
  */
 function Band({ m }: { m: Market }) {
   const L = m.maxLeverage;
@@ -205,13 +207,14 @@ function Band({ m }: { m: Market }) {
   const lev = L.toFixed(L % 1 ? 1 : 0);
   return (
     <div className="mt-3 rounded-[10px] border border-line px-4 py-4">
-      <div className="text-[14px] font-medium">What $100 of margin does here</div>
-      <p className="text-pretty mt-1.5 text-[12.5px] leading-[1.55] text-muted-foreground">
-        Opens up to {compact(100 * L)} of {m.symbol} at {lev}x. Above {initial.toFixed(1)}% margin you can add
-        to it; between {initial.toFixed(1)}% and {mm.toFixed(1)}% you can hold or reduce but not add; under{" "}
-        {mm.toFixed(1)}% it can be liquidated, which at {lev}x is a move of about {move.toFixed(1)}% against you.
-        The liquidation fee comes out of what is left, never out of the pool.
-      </p>
+      <div className="mb-1 flex items-baseline justify-between gap-4">
+        <span className="text-[14px] font-medium">$100 of margin</span>
+        <a href={`${DOCS}/trading/margining`} target="_blank" rel="noreferrer"
+          className={`text-[12px] text-muted-foreground ${LINK}`}>Margining</a>
+      </div>
+      <Row k={`Position at ${lev}x`}>{compact(100 * L)}</Row>
+      <Row k="Add above">{initial.toFixed(1)}%</Row>
+      <Row k="Liquidated under">{mm.toFixed(1)}% <span className="text-dim">(~{move.toFixed(1)}% move)</span></Row>
       <div className="mt-3 flex h-9 gap-1 text-[11.5px] font-medium">
         <span className="flex flex-[3] items-center rounded-[7px] bg-up/10 px-3 text-up">Above {initial.toFixed(1)}% · open</span>
         <span className="flex flex-[1.2] items-center rounded-[7px] bg-[#f5b8201f] px-3 text-[#d9a21b]">Hold only</span>

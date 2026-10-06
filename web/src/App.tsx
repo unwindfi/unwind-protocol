@@ -39,8 +39,7 @@ const TFS = [
 /// Closing is an order like any other now, and saying "Closed" the moment one
 /// is accepted would be the same small lie as telling someone they are long
 /// while they are still queued.
-const CLOSE_NOTE = "Exits clear in the next batch, same price as entries. "
-  + "A crowded batch may fill part of it; the rest stays open.";
+const CLOSE_NOTE = "Fills next batch. Any unfilled part stays open.";
 
 export default function App() {
   // A link names the market in the path: `/trade/HYPE`.
@@ -207,8 +206,7 @@ export default function App() {
       pendingClose.current = null;
       showToast({
         title: `${c.symbol} partly closed`,
-        description: `Closed ${money(c.size - p.size)} of ${money(c.size)}: the batch could not match it all. `
-          + "Close again for the rest.",
+        description: `Closed ${money(c.size - p.size)} of ${money(c.size)}. Close again for the rest.`,
         status: "info",
       });
     }
@@ -267,7 +265,7 @@ export default function App() {
           onReduce={({ size }) => act("/close", { symbol: market.symbol, size }, {
             label: `Reduce ${market.symbol} by ${money(size, 0)}`,
             done: `Reduce ${market.symbol} by ${money(size, 0)} queued`,
-            note: "Exits clear in the next batch, same price as entries.",
+            note: "Fills next batch.",
           })}
           onMaker={(a) => act("/order", { symbol: market.symbol, ...a }, {
             label: `Maker ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} ${market.symbol}`,
@@ -292,7 +290,7 @@ export default function App() {
           done: `${isLong ? "Long" : "Short"} ${money(size, 0)} ${market.symbol} queued`,
           note: market.observed && !market.observed.seasoned
             ? "Clears in the opening auction."
-            : "Fills when the next batch clears, in a few seconds.",
+            : "Fills next batch, in seconds.",
         });
       }}
       /* The pool is Earn's job on a wide screen, where the rail links to it.

@@ -344,9 +344,7 @@ export function OrderTicket({
    * placed rather than after.
    */
   const fillCap = poolFill(m);
-  const fillNote = !maker && !reduceOnly && size > fillCap
-    ? `This market fills up to ${money(fillCap, 0)} a batch. The rest of this order is refunded unless makers take it.`
-    : "";
+  const overCap = !maker && !reduceOnly && size > fillCap;
 
   const cta = onConnect ? "Connect wallet"
     : submitLabel
@@ -447,8 +445,7 @@ export function OrderTicket({
           // Claimed today: the button would only be refused. Say when it
           // comes back, and where USDC already put to work can be taken out.
           <p className="text-pretty mt-4 text-[12.5px] leading-relaxed text-muted-foreground">
-            No USDC in this wallet. Next test funds in {faucetWaitHours(account.address)}h;
-            backing and LP can be withdrawn on <a href="/earn" className="text-foreground underline-offset-2 hover:underline">Earn</a>.
+            No USDC. Next test funds in {faucetWaitHours(account.address)}h.
           </p>
         )}
         {onFund && account && avail === 0 && !faucetWaitHours(account.address) && (
@@ -535,17 +532,13 @@ export function OrderTicket({
 
         {onMaker && (
           <div className="mt-4">
-            <Checkbox
-              checked={postOnly && mode === "limit"} onCheckedChange={setPostOnly}
-              // A maker names its own price; at market there is none to rest at.
-              disabled={mode !== "limit" || reduceOnly}
-              label="Post only" aria-label="Post only" className={CHECK}
-              aria-describedby={mode === "limit" ? `${uid}-post-hint` : undefined} />
-            {mode === "limit" && (
-              <p id={`${uid}-post-hint`} className="mt-1 pl-[28px] text-[12px] text-dim">
-                Rests as a maker. Trades only against takers, never the pool.
-              </p>
-            )}
+            <Tooltip content="Maker only. Never fills against the pool." side="top">
+              <Checkbox
+                checked={postOnly && mode === "limit"} onCheckedChange={setPostOnly}
+                // A maker names its own price; at market there is none to rest at.
+                disabled={mode !== "limit" || reduceOnly}
+                label="Post only" aria-label="Post only, maker only" className={CHECK} />
+            </Tooltip>
           </div>
         )}
 
@@ -683,8 +676,8 @@ export function OrderTicket({
                       ${onConnect ? "bg-foreground" : side === "long" ? "bg-up" : "bg-down"}`}>
           {cta}
         </button>
-        {!onConnect && (warn || limitNote || fillNote) && (
-          <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote || fillNote}</p>
+        {!onConnect && (warn || limitNote) && (
+          <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
         )}
       </div>
 
@@ -697,7 +690,7 @@ export function OrderTicket({
         {/* A listed market still seasoning holds every order for its opening
             batch, so "within a second" would be the wrong promise. */}
         <KV k="Fill">{maker ? "This batch, if a taker crosses"
-          : m.observed && !m.observed.seasoned ? "Opening auction" : `Next batch, up to ${money(fillCap, 0)}`}</KV>
+          : m.observed && !m.observed.seasoned ? "Opening auction" : `Next batch, up to ${money(fillCap, 0)}${overCap ? " · rest refunded" : ""}`}</KV>
         <KV k="Fees">{(m.openFeeBps / 100).toFixed(4)}% / {money(calc.fee)}</KV>
       </div>
 
