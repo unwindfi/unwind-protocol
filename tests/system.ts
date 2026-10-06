@@ -1571,13 +1571,13 @@ describe("system", () => {
       // 6 bps on $10,000 is $6; a referee pays 10% less, $5.40.
       const fee = 5.4e6;
       assert.equal(t.volumeUsd.toNumber(), USD(10_000).toNumber());
-      assert.equal(t.points.toNumber(), 10_000e6, "a point a dollar");
+      assert.equal(t.points.toNumber(), 0, "an open earns no points until it is closed");
       assert.equal(t.feesSavedUsd.toNumber(), 0.6e6);
       assert.equal(t.referrerRewardsOwed.toNumber(), fee * 0.1);
-      assert.equal(t.referrerPointsOwed.toNumber(), 1_000e6);
+      assert.equal(t.referrerPointsOwed.toNumber(), 0);
       // Running totals for the page, kept past the sync that empties the owed lines.
       assert.equal(t.givenToReferrerUsd.toNumber(), fee * 0.1);
-      assert.equal(t.givenToReferrerPoints.toNumber(), 1_000e6);
+      assert.equal(t.givenToReferrerPoints.toNumber(), 0);
       assert.equal(m.deployerEarnedUsd.sub(m0.deployerEarnedUsd).toNumber(), fee * 0.1);
       // The market was listed by the authority, so its deployer is owed 10%.
       assert.equal(m.deployerRewardsUsd.sub(m0.deployerRewardsUsd).toNumber(), fee * 0.1);
@@ -1600,7 +1600,7 @@ describe("system", () => {
         .rpc();
       const d: any = await perps.account.trader.fetch(traderPda(dave.publicKey));
       assert.equal(d.rewardsUsd.toNumber(), 0.54e6);
-      assert.equal(d.points.toNumber(), 1_000e6);
+      assert.equal(d.points.toNumber(), 0, "no points were earned to share");
       assert.equal(d.referredVolumeUsd.toNumber(), USD(10_000).toNumber());
       const c: any = await perps.account.trader.fetch(traderPda(carol.publicKey));
       assert.equal(c.referrerRewardsOwed.toNumber(), 0);
@@ -1622,6 +1622,25 @@ describe("system", () => {
       assert.equal(d2.rewardsClaimedUsd.toNumber(), 0.54e6);
     });
 
+    it("earns nothing on a round trip closed inside ten minutes", async () => {
+      await close(SYM, carol);
+      const t: any = await perps.account.trader.fetch(traderPda(carol.publicKey));
+      assert.equal(t.volumeUsd.toNumber(), USD(20_000).toNumber(), "both legs are volume");
+      assert.equal(t.points.toNumber(), 0, "but a quick round trip earns no points");
+      assert.equal(t.tradingPoints.toNumber(), 0);
+      assert.equal(t.heldVolumeUsd.toNumber(), 0);
+      assert.equal(t.referrerPointsOwed.toNumber(), 0);
+      assert.isAbove(t.referrerRewardsOwed.toNumber(), 0, "the referrer's fee share does not wait");
+
+      // A wallet already at the current size is left as it is.
+      const before = (await conn.getAccountInfo(traderPda(carol.publicKey)))!.data.length;
+      await perps.methods.resizeTrader()
+        .accounts({ payer: authority.publicKey, trader: traderPda(carol.publicKey), systemProgram: SystemProgram.programId })
+        .rpc();
+      const after = (await conn.getAccountInfo(traderPda(carol.publicKey)))!.data.length;
+      assert.equal(after, before);
+    });
+
     it("pays a market's deployer their share and points on its volume", async () => {
       await perps.methods.createTrader()
         .accounts({ owner: authority.publicKey, trader: traderPda(authority.publicKey) })
@@ -1635,11 +1654,14 @@ describe("system", () => {
       const a: any = await perps.account.trader.fetch(traderPda(authority.publicKey));
       assert.equal(a.rewardsUsd.sub(a0.rewardsUsd).toNumber(), m0.deployerRewardsUsd.toNumber());
       assert.equal(a.listingEarnedUsd.sub(a0.listingEarnedUsd).toNumber(), m0.deployerRewardsUsd.toNumber());
-      const traded = m0.volumeUsd.sub(m0.deployerSyncedVolumeUsd).toNumber();
-      assert.equal(a.points.sub(a0.points).toNumber(), Math.floor(traded / 10),
-        "a tenth of a point per dollar traded");
+      // Everything here was closed inside ten minutes, so nothing is owed in
+      // points: the deployer earns a tenth of what traders are credited.
+      assert.equal(m0.volumeUsd.sub(m0.deployerSyncedVolumeUsd).toNumber(), 0);
+      assert.equal(m0.deployerPointsOwed.toNumber(), 0);
+      assert.equal(a.points.sub(a0.points).toNumber(), 0);
       const m: any = await perps.account.market.fetch(markets.get(SYM)!);
       assert.equal(m.deployerRewardsUsd.toNumber(), 0);
+      assert.equal(m.deployerPointsOwed.toNumber(), 0);
       assert.equal(m.deployerSyncedVolumeUsd.toNumber(), m0.volumeUsd.toNumber());
 
       // A second sync has nothing left to move.

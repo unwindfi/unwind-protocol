@@ -761,8 +761,13 @@ pub fn open_trader(trader: &mut Trader, owner: Pubkey, bump: u8, now: i64) {
 }
 
 /// The owner's `Trader`, if it exists.
+///
+/// One from before `Trader` grew, and not yet grown by `resize_trader`, is
+/// treated as missing: it is too short to read or write back, and failing
+/// here would hold the whole batch. Its order settles at the full fee and
+/// earns nothing.
 fn load_trader(info: &AccountInfo) -> Result<Option<Trader>> {
-    if info.owner != &crate::ID || info.data_is_empty() {
+    if info.owner != &crate::ID || info.data_len() < 8 + Trader::INIT_SPACE {
         return Ok(None);
     }
     let data = info.try_borrow_data()?;
@@ -776,6 +781,13 @@ fn store_trader(info: &AccountInfo, trader: &Trader) -> Result<()> {
 
 /// Books the referral and listing side of one fill: the rewards carved out of
 /// the protocol's cut, the points, and the market's volume.
+///
+/// `held_secs` is how long the size closed was held, for a close, and `None`
+/// for an open, which earns no points. A close earns the trader points on both
+/// legs if it was held `MIN_HOLD_SECS` (`Trader::credit_held_close`), and the
+/// deployer `DEPLOYER_POINTS_BPS` of what the trader was credited, unless the
+/// trader is the deployer.
+#[allow(clippy::too_many_arguments)]
 fn credit_fill(
     pool: &mut Pool,
     market: &mut Market,
@@ -786,6 +798,8 @@ fn credit_fill(
     filled_usd: u64,
     fee_usd: u64,
     full_fee_usd: u64,
+    held_secs: Option<i64>,
+    now: i64,
 ) -> Result<()> {
     if filled_usd == 0 {
         return Ok(());
@@ -799,11 +813,11 @@ fn credit_fill(
         route,
     )?;
     market.volume_usd = market.volume_usd.saturating_add(filled_usd);
-    if pool.no_points {
-        // Counted as synced at once, so the deployer earns no points on it.
-        market.deployer_synced_volume_usd =
-            market.deployer_synced_volume_usd.saturating_add(filled_usd);
-    }
+    // Counted as synced at once: the deployer's points come from
+    // `deployer_points_owed` now, and the gap between the two is only what
+    // was traded before that existed.
+    market.deployer_synced_volume_usd =
+        market.deployer_synced_volume_usd.saturating_add(filled_usd);
     market.deployer_rewards_usd = market
         .deployer_rewards_usd
         .checked_add(to_deployer)
@@ -813,6 +827,16 @@ fn credit_fill(
     if let Some(t) = trader {
         if !pool.no_points {
             t.credit_fill(filled_usd, saved)?;
+            if let Some(held) = held_secs {
+                let credited = t.credit_held_close(filled_usd, held, now)?;
+                let deployer = market.deployer;
+                if deployer != Pubkey::default() && owner != deployer {
+                    market.deployer_points_owed = market
+                        .deployer_points_owed
+                        .checked_add(bps_of(credited, DEPLOYER_POINTS_BPS)?)
+                        .ok_or(PerpError::MathOverflow)?;
+                }
+            }
         }
         t.referrer_rewards_owed = t
             .referrer_rewards_owed
@@ -1022,6 +1046,8 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
             filled,
             open_fee,
             full_fee,
+            None,
+            now,
         )?;
         if let Some(t) = &trader {
             store_trader(&trader_info, t)?;
@@ -1100,6 +1126,8 @@ fn settle_close(
     }
 
     if close_size > 0 {
+        // Read before the close, which resets the clock of a position it empties.
+        let held_secs = ctx.accounts.position.held_secs(now);
         let closed = book_close_at(
             &mut ctx.accounts.pool,
             &mut ctx.accounts.market,
@@ -1175,6 +1203,8 @@ fn settle_close(
             close_size,
             closed.fee_usd,
             full_fee,
+            Some(held_secs),
+            now,
         )?;
     }
 
@@ -1215,6 +1245,9 @@ mod tests {
     use super::*;
     use crate::instructions::trade::tests as t;
 
+    const FILL: u64 = 1_000_000_000_000; // $1m
+    const NOON: i64 = 20_000 * 86_400 + 43_200;
+
     /// S2-05. A pool someone other than the upgrade authority created earns
     /// nobody points: not the trader's volume, not the referrer's cut of it,
     /// and not the deployer's on the market's volume.
@@ -1223,22 +1256,101 @@ mod tests {
         let (mut p, mut m) = (t::pool(), t::market());
         let mut tr = crate::state::trader::tests::trader();
         tr.referrer = Pubkey::new_unique();
+        tr.held_volume_usd = REFERRAL_MIN_HELD_VOLUME_USD;
         let owner = tr.owner;
         m.deployer = Pubkey::new_unique();
         let route = FeeRoute { referrer: false, deployer: true, discount_bps: 0 };
-        const FILL: u64 = 1_000_000_000_000; // $1m
         p.no_points = true;
         credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
-                    owner, FILL, 0, 0).unwrap();
+                    owner, FILL, 0, 0, Some(3_600), NOON).unwrap();
         assert_eq!((tr.points, tr.referrer_points_owed), (0, 0));
         assert_eq!(m.volume_usd, FILL, "the market's volume is still counted");
         assert_eq!(m.deployer_synced_volume_usd, m.volume_usd, "but owes its deployer no points");
+        assert_eq!(m.deployer_points_owed, 0);
 
-        // The same fill in a pool that earns pays them all.
+        // The same close in a pool that earns pays them all.
         p.no_points = false;
         credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
-                    owner, FILL, 0, 0).unwrap();
+                    owner, 100_000_000, 0, 0, Some(3_600), NOON).unwrap();
         assert!(tr.points > 0 && tr.referrer_points_owed > 0);
-        assert_eq!(m.volume_usd - m.deployer_synced_volume_usd, FILL);
+        assert_eq!(m.deployer_points_owed, tr.points / 10);
+    }
+
+    #[test]
+    fn an_open_earns_nobody_points() {
+        let (mut p, mut m) = (t::pool(), t::market());
+        let mut tr = crate::state::trader::tests::trader();
+        m.deployer = Pubkey::new_unique();
+        let owner = tr.owner;
+        let route = FeeRoute { referrer: false, deployer: true, discount_bps: 0 };
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, FILL, 0, 0, None, NOON).unwrap();
+        assert_eq!((tr.points, tr.volume_usd), (0, FILL));
+        assert_eq!(m.deployer_points_owed, 0);
+        assert_eq!(m.volume_usd, m.deployer_synced_volume_usd, "nothing for the deployer to sync");
+    }
+
+    #[test]
+    fn a_deployer_earns_nothing_on_their_own_trades() {
+        let (mut p, mut m) = (t::pool(), t::market());
+        let mut tr = crate::state::trader::tests::trader();
+        let owner = tr.owner;
+        m.deployer = owner;
+        let route = FeeRoute::for_trade(&tr, &owner, &m.deployer);
+        assert!(!route.deployer, "no USDC share of their own fees");
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, 1_000_000_000, 1_000_000, 2_000_000, Some(3_600), NOON).unwrap();
+        assert_eq!(tr.points, 2_000_000_000, "the deployer still earns as a trader");
+        assert_eq!(m.deployer_points_owed, 0, "and nothing as the deployer");
+        assert_eq!(m.deployer_rewards_usd, 0);
+        assert_eq!(m.volume_usd, 1_000_000_000, "the volume is still shown");
+
+        // Somebody else's close on the same market pays the deployer a tenth.
+        let mut other = crate::state::trader::tests::trader();
+        let who = other.owner;
+        let route = FeeRoute::for_trade(&other, &who, &m.deployer);
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut other), &route,
+                    who, 1_000_000_000, 1_000_000, 1_000_000, Some(3_600), NOON).unwrap();
+        assert_eq!(m.deployer_points_owed, 200_000_000);
+    }
+
+    #[test]
+    fn a_quick_close_earns_the_deployer_nothing_either() {
+        let (mut p, mut m) = (t::pool(), t::market());
+        let mut tr = crate::state::trader::tests::trader();
+        m.deployer = Pubkey::new_unique();
+        let owner = tr.owner;
+        let route = FeeRoute::for_trade(&tr, &owner, &m.deployer);
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, FILL, 0, 0, Some(MIN_HOLD_SECS - 1), NOON).unwrap();
+        assert_eq!((tr.points, m.deployer_points_owed), (0, 0));
+    }
+
+    /// Opens through the booking a settlement uses, adds, and closes: the
+    /// add moves the held clock, so the close earns only once the blended
+    /// size has been held ten minutes.
+    #[test]
+    fn an_add_then_a_close_is_timed_from_the_weighted_open() {
+        let (mut p, mut m) = (t::pool(), t::market());
+        let mut pos = t::position();
+        let owner = Pubkey::new_unique();
+        let size = 1_000_000_000; // $1,000
+        book_cleared_open(&mut p, &mut m, &mut pos, owner, 1, true, size / 2, 0,
+                          Pubkey::new_unique(), size, t::PX, NOON).unwrap();
+        assert_eq!(pos.held_ts, NOON);
+        // As much again, ten minutes later: held five minutes on average.
+        book_cleared_open(&mut p, &mut m, &mut pos, owner, 1, true, size / 2, 0,
+                          Pubkey::new_unique(), size, t::PX, NOON + 600).unwrap();
+        assert_eq!(pos.held_ts, NOON + 300);
+        assert_eq!(pos.held_secs(NOON + 600), 300);
+
+        let mut tr = crate::state::trader::tests::trader();
+        let route = FeeRoute::default();
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, size, 0, 0, Some(pos.held_secs(NOON + 600)), NOON + 600).unwrap();
+        assert_eq!(tr.points, 0, "five minutes is not ten");
+        credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
+                    owner, size, 0, 0, Some(pos.held_secs(NOON + 900)), NOON + 900).unwrap();
+        assert_eq!(tr.points, 2 * size, "ten minutes on the blended clock");
     }
 }

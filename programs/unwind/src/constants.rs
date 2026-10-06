@@ -248,15 +248,39 @@ pub const REFERRER_FEE_SHARE_BPS: u16 = 1_000; // 10%
 pub const DEPLOYER_FEE_SHARE_BPS: u16 = 1_000; // 10%
 
 /// Points are fixed point at this scale, the same as USD: one point per
-/// dollar of notional is a one-to-one copy of the fill.
+/// dollar of notional is a one-to-one copy of the notional.
 pub const POINTS_SCALE: u128 = 1_000_000;
 
 /// Of a referee's trading points, also credited to their referrer. The
-/// referee keeps all of theirs.
+/// referee keeps all of theirs. Owed only on points earned once the referee
+/// has `REFERRAL_MIN_HELD_VOLUME_USD` of held volume.
 pub const REFERRER_POINTS_BPS: u16 = 1_000; // 10%
 
-/// Of every dollar traded on a market, credited as points to its deployer.
+/// Of the trading points a market's traders are credited, also credited to
+/// its deployer. Nothing on the deployer's own trades.
 pub const DEPLOYER_POINTS_BPS: u16 = 1_000; // 10%
+
+/// Seconds a position must be held before closing it earns trading points.
+///
+/// An open earns nothing when it fills. A close earns points on both legs,
+/// twice the notional closed, when the size closed has been open at least
+/// this long, and nothing when it has not. Adding to a position moves its
+/// clock forward in proportion to the size added (`Position::held_ts`), so a
+/// fresh add cannot borrow the age of what was already there. Liquidations
+/// and deleveraging earn nothing.
+pub const MIN_HOLD_SECS: i64 = 600; // 10 minutes
+
+/// Most trading points one wallet is credited in a UTC day, in
+/// `POINTS_SCALE`: $250,000 of notional at one point a dollar. What a close
+/// would earn past it is not credited, and is not carried to the next day.
+pub const DAILY_VOLUME_POINTS_CAP: u64 = 250_000 * POINTS_SCALE as u64;
+
+/// Held volume, in `USD_SCALE`, a referee must have before its trading
+/// points pay its referrer `REFERRER_POINTS_BPS`. Held volume is the round
+/// trip notional of closes that met `MIN_HOLD_SECS`. Points earned before
+/// the referee reaches it owe the referrer nothing, then or later. The
+/// referrer's USDC fee share does not wait for it.
+pub const REFERRAL_MIN_HELD_VOLUME_USD: u64 = 1_000 * USD_SCALE as u64;
 
 /// Points a dollar of market backing earns per day. Backing takes first loss,
 /// so it earns twice what LP capital does.

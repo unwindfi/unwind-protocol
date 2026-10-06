@@ -847,6 +847,35 @@ pub fn resize_pool(ctx: Context<ResizePool>) -> Result<()> {
     )
 }
 
+#[derive(Accounts)]
+pub struct ResizeTrader<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: Owned by this program and carrying `Trader`'s discriminator,
+    /// both checked in the handler. Not an `Account<Trader>`, for the reason
+    /// `ResizeMarket` gives.
+    #[account(mut, owner = crate::ID)]
+    pub trader: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Grows a wallet's `Trader` from before it gained the daily points cap, the
+/// held volume and the points breakdown to the current size, zero-filling the
+/// new bytes; the payer covers the rent.
+///
+/// Permissionless for the same reason `resize_market` is. Zero is right for
+/// each new field: no points counted today, no held volume yet, and nothing
+/// in the breakdown, which counts from here on.
+pub fn resize_trader(ctx: Context<ResizeTrader>) -> Result<()> {
+    grow_account(
+        &ctx.accounts.trader.to_account_info(),
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        Trader::DISCRIMINATOR,
+        8 + Trader::INIT_SPACE,
+    )
+}
+
 /// Grows `account`, which must carry `discriminator`, to `target` bytes,
 /// topping its rent up from `payer`. Leaves an account already that size
 /// alone.

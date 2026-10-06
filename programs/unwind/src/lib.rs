@@ -70,6 +70,12 @@ pub mod unwind {
         instructions::admin::resize_pool(ctx)
     }
 
+    /// Grows a wallet's `Trader` from before the account gained the daily
+    /// points cap and held volume. Permissionless; the payer covers the rent.
+    pub fn resize_trader(ctx: Context<ResizeTrader>) -> Result<()> {
+        instructions::admin::resize_trader(ctx)
+    }
+
     /// 0 = regular hours, 1 = extended, 2 = closed.
     pub fn set_session(ctx: Context<UpdateMarket>, session: u8) -> Result<()> {
         instructions::admin::set_session(ctx, session)

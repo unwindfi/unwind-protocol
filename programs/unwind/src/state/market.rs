@@ -196,7 +196,11 @@ pub struct Market {
     /// LPs has moved, wrapping, since it last gained open interest. Zero while
     /// it has none. Was eight bytes of `_reserved`.
     pub aum_drift_usd: i64,
-    pub _reserved: [u8; 20],
+    /// Points owed to the deployer and not yet moved to their `Trader`:
+    /// `DEPLOYER_POINTS_BPS` of the trading points this market's traders are
+    /// credited, the deployer's own excluded. Was eight bytes of `_reserved`.
+    pub deployer_points_owed: u64,
+    pub _reserved: [u8; 12],
 
     // Added after `_reserved`, which grew the account again; run
     // `resize_market` on a market listed before. Zero reads as "no position
@@ -1348,7 +1352,8 @@ mod tests {
             risk_slot: 0,
             generation: 0,
             aum_drift_usd: 0,
-            _reserved: [0; 20],
+            deployer_points_owed: 0,
+            _reserved: [0; 12],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
             long_funding: SideFunding::default(),

@@ -191,6 +191,7 @@ pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
     position.entry_price_factor = 0;
     position.entry_funding = 0;
     position.open_ts = 0;
+    position.held_ts = 0;
     position.last_update_ts = clock.unix_timestamp;
 
     emit!(PositionLiquidated {

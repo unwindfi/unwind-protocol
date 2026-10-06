@@ -1,14 +1,16 @@
 /*
- * Grows every pool created before `Pool` gained `aum_drift_usd`, and every
+ * Grows every pool created before `Pool` gained `aum_drift_usd`, every
  * market listed before `Market` gained its price-ordering and risk-price
- * fields, to the current size.
+ * fields, and every wallet's `Trader` from before it gained the daily points
+ * cap and held volume, to the current size.
  *
  *   CLUSTER=devnet [RPC=https://...] npx ts-node scripts/resize-markets.ts
  *
  * Run once, right after deploying a build that grew either account: until a
- * pool or market is grown, every instruction that reads it fails to
+ * pool, market or wallet is grown, every instruction that reads it fails to
  * deserialise it. Idempotent: an account already at the current size is
- * skipped. The authority pays the extra rent, about 0.0004 SOL a market.
+ * skipped. The authority pays the extra rent, about 0.0004 SOL a market and
+ * 0.0004 SOL a wallet.
  */
 import * as anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, SystemProgram } from "@solana/web3.js";
@@ -65,4 +67,21 @@ const STATE = path.join(ROOT, `.${CLUSTER}-state.json`);
     console.log(`grew ${pubkey.toBase58()} from ${info.data.length} to ${target} bytes`);
   }
   console.log(`${grown} of ${found.length} markets grown`);
+
+  const traderDisc = Buffer.from(idl.accounts.find((a: any) => a.name === "Trader").discriminator);
+  const traderTarget = program.account.trader.size;
+  const traders = await conn.getProgramAccounts(program.programId, {
+    filters: [{ memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(traderDisc) } }],
+    dataSlice: { offset: 0, length: 0 },
+  });
+  let wallets = 0;
+  for (const { pubkey } of traders) {
+    const info = await conn.getAccountInfo(pubkey);
+    if (!info || info.data.length >= traderTarget) continue;
+    await program.methods.resizeTrader()
+      .accounts({ payer: authority.publicKey, trader: pubkey, systemProgram: SystemProgram.programId })
+      .rpc();
+    wallets++;
+  }
+  console.log(`${wallets} of ${traders.length} wallets grown`);
 })().catch((e) => { console.error(e); process.exit(1); });

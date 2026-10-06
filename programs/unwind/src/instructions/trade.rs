@@ -334,6 +334,8 @@ fn book_planned(
         .checked_add(net_collateral)
         .ok_or(PerpError::MathOverflow)?;
 
+    // Before the size changes: the held clock weighs the size already there.
+    position.add_held(size_usd, now);
     if !position.is_open() {
         position.bump = position_bump;
         position.owner = owner;
@@ -793,6 +795,7 @@ pub fn book_close_at(
         position.collateral_usd = 0;
         position.locked_usd = 0;
         position.open_ts = 0;
+        position.held_ts = 0;
     } else {
         // Roll the surviving size onto today's price factor, so the next
         // settlement starts from a clean baseline. The funding index stays:
@@ -992,7 +995,8 @@ pub(crate) mod tests {
             risk_slot: 0,
             generation: 0,
             aum_drift_usd: 0,
-            _reserved: [0; 20],
+            deployer_points_owed: 0,
+            _reserved: [0; 12],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
             long_funding: SideFunding::default(),
@@ -1019,7 +1023,8 @@ pub(crate) mod tests {
             closing_usd: 0,
             q_epoch: 0,
             f_epoch: 0,
-            _reserved: [0; 16],
+            held_ts: 0,
+            _reserved: [0; 8],
         }
     }
 

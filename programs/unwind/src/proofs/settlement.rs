@@ -225,7 +225,8 @@ fn any_market() -> Market {
         risk_slot: 0,
         generation: 0,
         aum_drift_usd: 0,
-        _reserved: [0; 20],
+        deployer_points_owed: 0,
+        _reserved: [0; 12],
         long_moments: SideMoments::default(),
         short_moments: SideMoments::default(),
         long_funding: SideFunding::default(),
@@ -256,7 +257,8 @@ fn empty_position(is_long: bool, size_usd: u64) -> Position {
         last_update_ts: 0,
         q_epoch: 0,
         f_epoch: 0,
-        _reserved: [0; 16],
+        held_ts: 0,
+        _reserved: [0; 8],
     }
 }
 

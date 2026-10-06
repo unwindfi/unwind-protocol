@@ -71,6 +71,26 @@ pub struct Trader {
     /// one. `Pubkey::default()` until the first credit. Took the space that
     /// was `_reserved`, so the account layout is unchanged.
     pub rewards_pool: Pubkey,
+
+    // Everything below was added after the first wallets traded, which grew
+    // the account. `resize_trader` grows an older one; each new field reads
+    // zero as "nothing recorded yet".
+
+    /// The UTC day, `unix_ts / 86_400`, that `points_today` counts.
+    pub points_day: i64,
+    /// Trading points credited on `points_day`, at most
+    /// `DAILY_VOLUME_POINTS_CAP`.
+    pub points_today: u64,
+    /// Round trip notional of closes held at least `MIN_HOLD_SECS`, in
+    /// `USD_SCALE`, whether or not the daily cap let them earn.
+    pub held_volume_usd: u64,
+    /// Points credited for trading, after the daily cap.
+    pub trading_points: u64,
+    /// Points moved here from referees by `sync_referral`.
+    pub referral_points: u64,
+    /// Points moved here from listed markets by `sync_deployer`.
+    pub listing_points: u64,
+    pub _reserved: [u8; 32],
 }
 
 /// The on-chain name behind a referral link: `unwindfi.xyz/?ref=<code>`.
@@ -166,29 +186,59 @@ impl Trader {
         self.code[0] != 0
     }
 
-    /// Credits a fill: the trader's own points and volume, the fee they saved,
-    /// and what their referrer is now owed in points.
+    /// Credits a fill: the trader's volume, the fee they saved, and the volume
+    /// their referrer is shown as having brought. No points: an open earns
+    /// none, and a close earns them through `credit_held_close`.
     pub fn credit_fill(&mut self, filled_usd: u64, saved_usd: u64) -> Result<()> {
-        let points = volume_points(filled_usd);
-        self.points = self.points.checked_add(points).ok_or(PerpError::MathOverflow)?;
         self.volume_usd = self
             .volume_usd
             .checked_add(filled_usd)
             .ok_or(PerpError::MathOverflow)?;
         self.fees_saved_usd = self.fees_saved_usd.saturating_add(saved_usd);
         if self.has_referrer() {
-            let to_referrer = bps_of(points, REFERRER_POINTS_BPS)?;
-            self.referrer_points_owed = self
-                .referrer_points_owed
-                .checked_add(to_referrer)
-                .ok_or(PerpError::MathOverflow)?;
-            self.given_to_referrer_points = self.given_to_referrer_points.saturating_add(to_referrer);
             self.referrer_volume_owed = self
                 .referrer_volume_owed
                 .checked_add(filled_usd)
                 .ok_or(PerpError::MathOverflow)?;
         }
         Ok(())
+    }
+
+    /// Credits the points for closing `closed_usd` of a position held for
+    /// `held_secs`, at `now`, and returns how many were credited.
+    ///
+    /// Nothing unless the size closed was held `MIN_HOLD_SECS`. Then points
+    /// on both legs of the round trip, twice the notional closed, up to what
+    /// is left of the day's `DAILY_VOLUME_POINTS_CAP`. A referrer is owed
+    /// its tenth of what was credited only once this wallet already had
+    /// `REFERRAL_MIN_HELD_VOLUME_USD` of held volume before this close.
+    pub fn credit_held_close(&mut self, closed_usd: u64, held_secs: i64, now: i64) -> Result<u64> {
+        if closed_usd == 0 || held_secs < MIN_HOLD_SECS {
+            return Ok(0);
+        }
+        let round_trip = closed_usd.saturating_mul(2);
+        let day = now.div_euclid(SECONDS_PER_DAY as i64);
+        if day != self.points_day {
+            self.points_day = day;
+            self.points_today = 0;
+        }
+        let room = DAILY_VOLUME_POINTS_CAP.saturating_sub(self.points_today);
+        let credited = volume_points(round_trip).min(room);
+        self.points_today += credited;
+        self.points = self.points.checked_add(credited).ok_or(PerpError::MathOverflow)?;
+        self.trading_points = self.trading_points.saturating_add(credited);
+
+        let held_before = self.held_volume_usd;
+        self.held_volume_usd = held_before.saturating_add(round_trip);
+        if self.has_referrer() && held_before >= REFERRAL_MIN_HELD_VOLUME_USD {
+            let to_referrer = bps_of(credited, REFERRER_POINTS_BPS)?;
+            self.referrer_points_owed = self
+                .referrer_points_owed
+                .checked_add(to_referrer)
+                .ok_or(PerpError::MathOverflow)?;
+            self.given_to_referrer_points = self.given_to_referrer_points.saturating_add(to_referrer);
+        }
+        Ok(credited)
     }
 
     /// Brings backing points up to `now` at the backing held since the last
@@ -369,6 +419,13 @@ pub(crate) mod tests {
             given_to_referrer_usd: 0,
             given_to_referrer_points: 0,
             rewards_pool: Pubkey::default(),
+            points_day: 0,
+            points_today: 0,
+            held_volume_usd: 0,
+            trading_points: 0,
+            referral_points: 0,
+            listing_points: 0,
+            _reserved: [0; 32],
         }
     }
 
@@ -440,19 +497,89 @@ pub(crate) mod tests {
         assert_eq!(carve_rewards(&mut protocol, &mut rewards, 0, 1_000, &route).unwrap(), (0, 0));
     }
 
-    #[test]
-    fn a_fill_credits_the_trader_and_owes_the_referrer_a_tenth() {
-        let mut t = trader();
-        t.credit_fill(1_000_000_000, 0).unwrap();
-        assert_eq!(t.points, 1_000_000_000, "1,000 points for $1,000");
-        assert_eq!(t.referrer_points_owed, 0);
+    const DAY: i64 = 86_400;
+    /// Noon on some UTC day.
+    const NOON: i64 = 20_000 * DAY + DAY / 2;
+    const K: u64 = 1_000_000_000; // $1,000
 
+    #[test]
+    fn a_fill_counts_volume_and_savings_but_earns_no_points() {
+        let mut t = trader();
         t.referrer = Pubkey::new_unique();
-        t.credit_fill(1_000_000_000, 100_000).unwrap();
-        assert_eq!(t.points, 2_000_000_000, "the referee keeps all of theirs");
-        assert_eq!(t.referrer_points_owed, 100_000_000);
-        assert_eq!(t.referrer_volume_owed, 1_000_000_000);
+        t.credit_fill(K, 100_000).unwrap();
+        assert_eq!(t.points, 0, "an open earns nothing up front");
+        assert_eq!((t.referrer_points_owed, t.given_to_referrer_points), (0, 0));
+        assert_eq!(t.volume_usd, K);
+        assert_eq!(t.referrer_volume_owed, K, "the referrer is still shown the volume");
         assert_eq!(t.fees_saved_usd, 100_000);
+    }
+
+    #[test]
+    fn a_quick_round_trip_earns_nothing() {
+        let mut t = trader();
+        assert_eq!(t.credit_held_close(K, MIN_HOLD_SECS - 1, NOON).unwrap(), 0);
+        assert_eq!(t.credit_held_close(K, 0, NOON).unwrap(), 0);
+        assert_eq!((t.points, t.trading_points, t.held_volume_usd, t.points_today), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_close_held_ten_minutes_earns_both_legs() {
+        let mut t = trader();
+        let got = t.credit_held_close(K, MIN_HOLD_SECS, NOON).unwrap();
+        assert_eq!(got, 2_000_000_000, "2,000 points for a $1,000 round trip");
+        assert_eq!((t.points, t.trading_points), (got, got));
+        assert_eq!(t.held_volume_usd, 2 * K);
+        assert_eq!((t.points_day, t.points_today), (NOON / DAY, got));
+    }
+
+    #[test]
+    fn trading_points_stop_at_the_daily_cap_and_start_again_the_next_day() {
+        let mut t = trader();
+        // $100,000 closed is $200,000 of round trip: under the cap.
+        assert_eq!(t.credit_held_close(100_000 * 1_000_000, 3_600, NOON).unwrap(), 200_000 * 1_000_000);
+        // The next $100,000 would be $200,000 more; only $50,000 is left today.
+        assert_eq!(t.credit_held_close(100_000 * 1_000_000, 3_600, NOON + 60).unwrap(), 50_000 * 1_000_000);
+        assert_eq!(t.points, DAILY_VOLUME_POINTS_CAP);
+        assert_eq!(t.credit_held_close(K, 3_600, NOON + 120).unwrap(), 0, "capped for the day");
+        assert_eq!(t.points, DAILY_VOLUME_POINTS_CAP);
+        assert_eq!(t.held_volume_usd, 402_000 * 1_000_000, "held volume is counted past the cap");
+        // Midnight UTC starts a new day.
+        let tomorrow = (NOON / DAY + 1) * DAY;
+        assert_eq!(t.credit_held_close(K, 3_600, tomorrow - 1).unwrap(), 0);
+        assert_eq!(t.credit_held_close(K, 3_600, tomorrow).unwrap(), 2 * K);
+        assert_eq!(t.points_today, 2 * K);
+        assert_eq!(t.points, DAILY_VOLUME_POINTS_CAP + 2 * K);
+    }
+
+    #[test]
+    fn a_referrer_is_owed_nothing_until_the_referee_has_a_thousand_dollars_held() {
+        let mut t = trader();
+        t.referrer = Pubkey::new_unique();
+        // $400 closed is $800 held: not there yet.
+        t.credit_held_close(400_000_000, 3_600, NOON).unwrap();
+        assert_eq!(t.referrer_points_owed, 0);
+        // $1,600 held after this one, but it was $800 when it closed.
+        t.credit_held_close(400_000_000, 3_600, NOON).unwrap();
+        assert_eq!(t.referrer_points_owed, 0, "what was earned below the line is not owed later");
+        // Past the line: a tenth of what this close earned.
+        t.credit_held_close(100_000_000, 3_600, NOON).unwrap();
+        assert_eq!(t.referrer_points_owed, 20_000_000, "10% of 200 points");
+        assert_eq!(t.given_to_referrer_points, 20_000_000);
+        assert_eq!(t.points, 1_800_000_000, "the referee keeps all of theirs");
+        // A quick close adds nothing to the held volume, nor to the referrer.
+        t.credit_held_close(K, 10, NOON).unwrap();
+        assert_eq!((t.held_volume_usd, t.referrer_points_owed), (1_800_000_000, 20_000_000));
+    }
+
+    #[test]
+    fn a_referrer_is_owed_a_tenth_of_the_capped_credit_only() {
+        let mut t = trader();
+        t.referrer = Pubkey::new_unique();
+        t.held_volume_usd = REFERRAL_MIN_HELD_VOLUME_USD;
+        t.points_day = NOON / DAY;
+        t.points_today = DAILY_VOLUME_POINTS_CAP - 1_000_000;
+        assert_eq!(t.credit_held_close(K, 3_600, NOON).unwrap(), 1_000_000);
+        assert_eq!(t.referrer_points_owed, 100_000);
     }
 
     #[test]

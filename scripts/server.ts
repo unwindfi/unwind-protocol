@@ -3903,7 +3903,8 @@ async function syncRewards() {
     // A deployer with no `Trader` has nowhere to be paid; it waits on the
     // market until they make one.
     if (!known.has(acc.deployer.toBase58())) continue;
-    if (num(acc.deployerRewardsUsd) === 0 && num(acc.volumeUsd) === num(acc.deployerSyncedVolumeUsd)) continue;
+    if (num(acc.deployerRewardsUsd) === 0 && num(acc.deployerPointsOwed) === 0
+      && num(acc.volumeUsd) === num(acc.deployerSyncedVolumeUsd)) continue;
     ixs.push(await program.methods.syncDeployer()
       .accounts({ market: m.address, deployer: traderPda(acc.deployer) })
       .instruction());
@@ -3997,7 +3998,8 @@ app.get("/api/rewards", async (req, res) => {
         volume: num(acc.volumeUsd) / 1e6,
         earned: num(acc.deployerEarnedUsd) / 1e6,
         pending: num(acc.deployerRewardsUsd) / 1e6,
-        pendingPoints: (num(acc.volumeUsd) - num(acc.deployerSyncedVolumeUsd)) / 1e6 * 0.1,
+        pendingPoints: (num(acc.volumeUsd) - num(acc.deployerSyncedVolumeUsd)) / 1e6 * 0.1
+          + num(acc.deployerPointsOwed) / 1e6,
         traders: countedTraders(m.address.toBase58(), owner.toBase58(), HOUSE),
       });
     }
@@ -4039,12 +4041,12 @@ app.get("/api/rewards", async (req, res) => {
       referrerCode = r && r.code[0] ? codeText(r.code) : null;
     }
     const points = livePoints(t, now) + listingPendingPoints;
-    // Where the total came from. Trading and referral points are exact; the
-    // listing share is what has been synced plus what is waiting; the stakes
-    // are the rest, which is what time in backing and the pool has earned.
-    const trading = num(t.volumeUsd) / 1e6;
-    const referrals = num(t.referredVolumeUsd) / 1e6 * 0.1;
-    const listing = listed.reduce((a, m) => a + (m.volume * 0.1), 0);
+    // Where the total came from, as the program counts it: trading points
+    // after the hold rule and the daily cap, referral and listing points as
+    // synced, plus listing points still waiting. The stakes are the rest.
+    const trading = num(t.tradingPoints) / 1e6;
+    const referrals = num(t.referralPoints) / 1e6;
+    const listing = num(t.listingPoints) / 1e6 + listingPendingPoints;
     res.json({
       ...base,
       exists: true,
@@ -4060,7 +4062,7 @@ app.get("/api/rewards", async (req, res) => {
         trading, referrals, listing,
         stakes: Math.max(0, points - trading - referrals - listing),
       },
-      volume: trading,
+      volume: num(t.volumeUsd) / 1e6,
       referredVolume: num(t.referredVolumeUsd) / 1e6,
       feesSaved: num(t.feesSavedUsd) / 1e6,
       claimable: num(t.rewardsUsd) / 1e6 + listingPending,

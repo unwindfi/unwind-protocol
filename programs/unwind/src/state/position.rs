@@ -47,12 +47,52 @@ pub struct Position {
     /// written before those sums existed. Was the next four bytes of
     /// `_reserved`.
     pub f_epoch: u32,
-    pub _reserved: [u8; 16],
+    /// When the size now open counts as held from, for `MIN_HOLD_SECS`: the
+    /// open's time, moved forward on every add in proportion to the size
+    /// added. Untouched by a partial close. Zero on a position written before
+    /// it existed, which reads `open_ts` instead. Was the first eight bytes
+    /// of `_reserved`.
+    pub held_ts: i64,
+    pub _reserved: [u8; 8],
 }
 
 impl Position {
     pub fn is_open(&self) -> bool {
         self.size_usd > 0
+    }
+
+    /// When the open size counts as held from.
+    pub fn held_since(&self) -> i64 {
+        if self.held_ts != 0 {
+            self.held_ts
+        } else {
+            self.open_ts
+        }
+    }
+
+    /// Seconds the open size has been held at `now`.
+    pub fn held_secs(&self, now: i64) -> i64 {
+        now.saturating_sub(self.held_since()).max(0)
+    }
+
+    /// Moves the held clock for `add_usd` more size filled at `now`. Called
+    /// before the size changes. An empty position starts the clock at `now`;
+    /// an open one takes the size-weighted time, rounded up, so adding to an
+    /// old position cannot lend the new size its age.
+    pub fn add_held(&mut self, add_usd: u64, now: i64) {
+        if !self.is_open() {
+            self.held_ts = now;
+            return;
+        }
+        let old = self.size_usd as i128;
+        let add = add_usd as i128;
+        let total = old + add;
+        if total == 0 {
+            return;
+        }
+        let num = (self.held_since() as i128) * old + (now as i128) * add;
+        // Rounded up: a second's doubt goes against the points, not for them.
+        self.held_ts = num.div_euclid(total) as i64 + i64::from(num.rem_euclid(total) != 0);
     }
 
     /// Size this position could still promise to a new closing order.
@@ -142,7 +182,8 @@ mod tests {
             last_update_ts: 0,
             q_epoch: 0,
             f_epoch: 0,
-            _reserved: [0; 16],
+            held_ts: 0,
+            _reserved: [0; 8],
         }
     }
 
@@ -156,6 +197,38 @@ mod tests {
         assert_eq!(p.closable_in(false, 600, 200), 600, "the long it was placed against");
         p.open_ts = 260;
         assert_eq!(p.closable_in(false, 600, 200), 0, "a long opened at this batch's settlement");
+    }
+
+    #[test]
+    fn an_add_moves_the_held_clock_by_the_size_it_adds() {
+        let mut p = position(true, 0);
+        p.add_held(1_000, 1_000);
+        assert_eq!(p.held_ts, 1_000, "a new position starts its clock at the fill");
+        p.size_usd = 1_000;
+        // As much again, 600 seconds later: held from halfway between.
+        p.add_held(1_000, 1_600);
+        assert_eq!(p.held_ts, 1_300);
+        p.size_usd = 2_000;
+        assert_eq!(p.held_secs(1_600), 300, "the add is not ten minutes old");
+        assert_eq!(p.held_secs(1_900), 600);
+        // A small add to a large old position moves it a little, rounded up.
+        p.add_held(1, 1_900);
+        assert_eq!(p.held_ts, 1_301);
+        // A partial close leaves the clock alone; an empty position restarts it.
+        p.size_usd = 0;
+        p.add_held(500, 5_000);
+        assert_eq!(p.held_ts, 5_000);
+    }
+
+    #[test]
+    fn a_position_from_before_the_held_clock_reads_its_open_time() {
+        let mut p = position(true, 1_000);
+        p.open_ts = 100;
+        assert_eq!(p.held_since(), 100);
+        assert_eq!(p.held_secs(700), 600);
+        p.add_held(1_000, 700);
+        assert_eq!(p.held_ts, 400);
+        assert_eq!(p.held_secs(50), 0, "never negative");
     }
 
     #[test]

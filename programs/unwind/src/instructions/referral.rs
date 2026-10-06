@@ -178,6 +178,9 @@ pub fn sync_referral(ctx: Context<SyncReferral>) -> Result<()> {
         .points
         .checked_add(referee.referrer_points_owed)
         .ok_or(PerpError::MathOverflow)?;
+    referrer.referral_points = referrer
+        .referral_points
+        .saturating_add(referee.referrer_points_owed);
     referrer.referred_volume_usd = referrer
         .referred_volume_usd
         .saturating_add(referee.referrer_volume_owed);
@@ -210,8 +213,8 @@ pub struct SyncDeployer<'info> {
 }
 
 /// Moves a market's listing rewards to whoever listed it: their share of its
-/// fees and points on its volume since the last sync. Permissionless: it can
-/// only pay the market's own deployer.
+/// fees and of the trading points its traders were credited since the last
+/// sync. Permissionless: it can only pay the market's own deployer.
 ///
 /// The USDC sits in the market's pool's vault, so it moves only to a deployer
 /// tied to that pool (`Trader::rewards_pool`); otherwise it stays on the
@@ -219,10 +222,17 @@ pub struct SyncDeployer<'info> {
 pub fn sync_deployer(ctx: Context<SyncDeployer>) -> Result<()> {
     let market = &mut ctx.accounts.market;
     let deployer = &mut ctx.accounts.deployer;
+    // Volume traded before `deployer_points_owed` existed still earns a
+    // tenth of a point a dollar; everything since is counted as synced when
+    // it fills and earns through `deployer_points_owed` instead.
     let new_volume = market.volume_usd.saturating_sub(market.deployer_synced_volume_usd);
-    let points = crate::math::bps_of(volume_points(new_volume), DEPLOYER_POINTS_BPS)?;
+    let points = crate::math::bps_of(volume_points(new_volume), DEPLOYER_POINTS_BPS)?
+        .checked_add(market.deployer_points_owed)
+        .ok_or(PerpError::MathOverflow)?;
     deployer.points = deployer.points.checked_add(points).ok_or(PerpError::MathOverflow)?;
+    deployer.listing_points = deployer.listing_points.saturating_add(points);
     market.deployer_synced_volume_usd = market.volume_usd;
+    market.deployer_points_owed = 0;
 
     let owed = market.deployer_rewards_usd;
     if owed > 0 && deployer.bind_rewards_pool(market.pool) {

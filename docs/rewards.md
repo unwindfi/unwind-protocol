@@ -21,14 +21,36 @@ referral code.
 
 | Activity | Points |
 | --- | --- |
-| Trading | 1 point per $1 of notional filled, opens and closes both |
-| Referring | 10 percent of the points your referees earn from trading |
-| Opening a market | 0.1 points per $1 traded on a market you opened |
+| Trading | 2 points per $1 closed, for a position held 10 minutes or more |
+| Referring | 10 percent of a referee's trading points, once they have $1,000 of held volume |
+| Opening a market | 10 percent of the trading points earned on a market you opened, except your own |
 | Backing a market | 2 points per $1 of backing, per day |
 | Providing liquidity | 1 point per $1 deposited in the pool, per day |
 
 A referee keeps all of their own points. The referrer's share is extra, not
 taken from them.
+
+## Trading points
+
+1. **An open earns nothing when it fills.** Points are paid on the close, for
+   both legs: $1,000 closed earns 2,000 points.
+2. **10 minutes.** The size closed must have been open at least 600 seconds.
+   A close sooner than that earns 0 points, and the open it closes earned 0
+   too.
+3. **Adding moves the clock.** A position's held time is size-weighted:
+   adding $1,000 to $1,000 held for 10 minutes puts it at 5 minutes held, so
+   the whole position needs 5 more. A partial close leaves the clock alone.
+   A position emptied and opened again starts from zero.
+4. **Liquidations and deleveraging earn 0.**
+5. **250,000 points a day.** Trading points credited to one wallet stop at
+   250,000 per UTC day, which is $125,000 closed. What a close would earn past
+   that is not credited and is not carried over. The count starts again at
+   00:00 UTC.
+
+Volume still counts every fill, opens and closes, for the wallet and the
+market. Only points follow the rules above. The program keeps each wallet's
+count on its `Trader`: `trading_points`, `points_today` and `held_volume_usd`,
+the round trip notional of closes held 10 minutes or more.
 
 Backing earns twice the pool's rate because backing takes first loss on its
 market (see [How to underwrite a market](how-to-underwrite-a-market.md)).
@@ -59,8 +81,11 @@ the wallet itself.
 Once referred, a wallet:
 
 * pays **10 percent less** on every open and close fee, and
-* its referrer is owed **10 percent of every fee it pays**, in USDC, plus 10
-  percent of its trading points.
+* its referrer is owed **10 percent of every fee it pays**, in USDC, and
+* once it has **$1,000 of held volume** (a $500 position held 10 minutes and
+  closed is $1,000), 10 percent of the trading points it earns from then on.
+  Points it earned before that owe the referrer nothing, then or later. The
+  USDC share does not wait.
 
 Liquidation fees are not discounted and carry no referral share.
 
@@ -70,7 +95,10 @@ Whoever opens a market (its `deployer`, see
 [How to open a market](how-to-open-a-market.md)) is owed:
 
 * **10 percent of every fee** paid on that market, in USDC, and
-* 0.1 points per dollar traded on it.
+* 10 percent of the trading points its traders are credited.
+
+Neither is paid on the deployer's own trades. The deployer earns trading
+points on them like anyone else, and nothing as the deployer.
 
 They also trade their own market at **half the fee**. The discount applies
 only to the market they opened: a discount on every market would make opening
@@ -101,7 +129,8 @@ What a trade earns them is left on the referee's `Trader` account and on the
 market, and two permissionless instructions move it across:
 
 * `sync_referral` moves a referee's owed points and USDC to their referrer.
-* `sync_deployer` moves a market's owed USDC and volume points to its deployer.
+* `sync_deployer` moves a market's owed USDC and points (`deployer_points_owed`)
+  to its deployer.
 
 Neither can pay anyone but the account the program says is owed. The devnet
 server runs both every minute, and claiming from the Rewards page syncs the
@@ -146,11 +175,15 @@ A referred trader opens $10,000 on a market with a 10 basis point open fee,
 which somebody else opened.
 
 1. The full fee would be $10. With the referral discount it is $9.
-2. The trader earns 10,000 points; their referrer is owed 1,000.
+2. The open earns 0 points.
 3. The protocol's 20 percent of $9 is $1.80. Of it, $0.90 goes to the
    referrer and $0.90 to the market's deployer.
 4. The chain ($0.90), insurance fund ($0.90) and pool ($5.40, shared with
    backers if the market has any) are paid as usual.
+5. 20 minutes later the trader closes all $10,000. The close earns 20,000
+   points. The trader already has $1,000 of held volume from earlier trades,
+   so the referrer is owed 2,000 and the deployer 2,000.
+6. Closed after 5 minutes instead, it would earn 0, and so would they.
 
 ## Leaderboard
 
@@ -168,4 +201,5 @@ and every change is listed here with the date it took effect.
 
 | Version | From | Change |
 | --- | --- | --- |
-| v1 | Season 1 | The rules on this page. |
+| v1 | Season 1 | 1 point per $1 filled, opens and closes; 10 percent to referrers and deployers. |
+| v2 | 2026-10-06 | Points on closes only, 2 per $1 closed after 10 minutes held. 250,000 trading points per wallet per UTC day. Referrers earn points only once a referee has $1,000 of held volume. Deployers earn 10 percent of trading points credited, nothing on their own trades. |

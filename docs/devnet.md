@@ -120,6 +120,22 @@ nothing. The acceptance is kept in that browser for that wallet; closing the
 screens without signing is kept too, so they are not shown again. The text
 is in `web/src/components/Welcome.tsx`.
 
+## Points on devnet
+
+Devnet USDC comes from a faucet, so trading fees cost nothing real and a
+round trip between two of your own wallets would otherwise be free points.
+Devnet runs the same rules as mainnet (see [Referrals and points](rewards.md)):
+
+1. 0 points for an open. 2 points per $1 closed after 10 minutes held, 0
+   before.
+2. 250,000 trading points per wallet per UTC day.
+3. Referrers earn points only after a referee has $1,000 of held volume.
+4. Deployers earn nothing on their own trades.
+
+Wallets from before these rules have their `Trader` account grown once by
+`resize_trader`, which anyone may send; `scripts/resize-markets.ts` does it
+for all of them after a deploy.
+
 ## What differs from mainnet
 
 - Prices for the equities come from a relay that posts Jupiter quotes on
