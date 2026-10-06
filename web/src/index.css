@@ -243,6 +243,10 @@
      root's, and it dragged the sticky nav with it. `none` on body does not
      reach it; it has to sit on the scrolling element. */
   html:has(.site) { overscroll-behavior-y: none; }
+  /* With scrollbars always shown (a Mac with a mouse, Windows), a tab or page
+     shorter than the window dropped the scrollbar, and everything centred
+     jumped sideways by half its width. The gutter is kept either way. */
+  html:has(.site) { scrollbar-gutter: stable; }
 
   /*
    * The site pages are the app's palette at reading sizes: the body font-size
