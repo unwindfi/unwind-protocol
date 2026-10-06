@@ -51,12 +51,12 @@ const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 /// Every rate, as the program counts it. Mirrors `constants.rs`.
 const RATES: { label: string; figure: string; line: string }[] = [
-  { label: "Trading", figure: "1 point per $1",
-    line: "Every fill, open or close, maker or taker." },
+  { label: "Trading", figure: "2 points per $1 closed",
+    line: "On a position held 10 minutes or more. Up to 250,000 points a day." },
   { label: "Referrals", figure: "10% of their fees",
-    line: "Paid in USDC, out of our cut. Plus 10% of their points. They pay 10% less." },
+    line: "Paid in USDC, out of our cut. Plus 10% of their points once they pass $1,000 held. They pay 10% less." },
   { label: "Markets", figure: "10% of every fee",
-    line: "On any market you open, for as long as it trades. Half fees when you trade it yourself." },
+    line: "On any market you open, for as long as it trades. Plus 10% of its traders' points. Half fees when you trade it yourself." },
   { label: "Backing", figure: "2 points per $1 a day",
     line: "Backing takes first loss, so it earns double." },
   { label: "Pool", figure: "1 point per $1 a day",
