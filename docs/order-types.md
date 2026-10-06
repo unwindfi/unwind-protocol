@@ -25,6 +25,12 @@ collateral, since the position it acts on has already posted its own. A close
 order whose size is left at zero closes the entire position, which is what a
 stop loss almost always intends.
 
+A close fills like any other taker order: in full when the batch can match it,
+and pro rata with the rest of its flow when it cannot (see
+[Auction](auction.md)). What a crowded batch does not fill is not carried
+over; the rest of the position stays open, and the trade screen says how much
+closed so the trader can close again.
+
 ## Makers and takers
 
 Every order that reaches a batch is a maker or a taker, and that decides which

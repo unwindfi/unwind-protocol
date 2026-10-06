@@ -38,7 +38,8 @@ const TFS = [
 /// Closing is an order like any other now, and saying "Closed" the moment one
 /// is accepted would be the same small lie as telling someone they are long
 /// while they are still queued.
-const CLOSE_NOTE = "Exits clear in the next batch, same price as entries.";
+const CLOSE_NOTE = "Exits clear in the next batch, same price as entries. "
+  + "A crowded batch may fill part of it; the rest stays open.";
 
 export default function App() {
   // A link from the landing page names the market it was clicked on.
@@ -182,6 +183,31 @@ export default function App() {
     }
   }, [showToast, wallet, openWallet]);
 
+  /// A close fills at the batch's price for as much as the batch can match.
+  /// In a crowded batch that can be part of the position, and the rest stays
+  /// open: say so, rather than leave a smaller position on the screen.
+  const pendingClose = useRef<{ symbol: string; size: number; at: number } | null>(null);
+  useEffect(() => {
+    const c = pendingClose.current;
+    if (!c || !account) return;
+    const p = account.positions[c.symbol];
+    if (!p || Date.now() - c.at > 30_000) { pendingClose.current = null; return; }
+    if (p.size < c.size - 0.5) {
+      pendingClose.current = null;
+      showToast({
+        title: `${c.symbol} partly closed`,
+        description: `Closed ${money(c.size - p.size)} of ${money(c.size)}: the batch could not match it all. `
+          + "Close again for the rest.",
+        status: "info",
+      });
+    }
+  }, [account, showToast]);
+  const onCloseAll = (s: string) => {
+    const p = account?.positions[s];
+    if (p) pendingClose.current = { symbol: s, size: p.size, at: Date.now() };
+    return act("/close", { symbol: s }, `Close ${s} queued`, undefined, CLOSE_NOTE);
+  };
+
   /// Funds a freshly connected wallet with test USDC, and SOL when it has
   /// too little for fees. The server says how much, since it differs by
   /// cluster and the testnet caps the SOL.
@@ -316,8 +342,7 @@ export default function App() {
           )}
           {view === "positions" && (
             <BottomPanel account={account} trades={trades} busy={busy} mobile
-              onClose={(s) => act("/close", { symbol: s }, `Close ${s} queued`,
-                undefined, CLOSE_NOTE)} />
+              onClose={onCloseAll} />
           )}
           {view === "account" && (
             <div className="pane-scroll min-h-0 flex-1">{ticket}</div>
@@ -338,8 +363,6 @@ export default function App() {
     );
   }
 
-  const onCloseAll = (s: string) => act("/close", { symbol: s }, `Close ${s} queued`,
-    undefined, CLOSE_NOTE);
   const positions = (
     <BottomPanel account={account} trades={trades} busy={busy} docked={isWide}
       markets={markets} market={market} owner={owner}
