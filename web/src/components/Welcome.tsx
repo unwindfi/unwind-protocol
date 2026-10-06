@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { TriangleAlert, X } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Checkbox } from "@/components/motion/checkbox";
-import { getApy, getMarkets, useHasBackend, usePoll } from "@/lib/api";
+import { getApy, getMarkets, post, useHasBackend, usePoll } from "@/lib/api";
 import { DOCS, RISKS } from "@/site/Chrome";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
 import { humanError } from "@/lib/errors";
@@ -39,6 +39,18 @@ const BTN = "press inline-flex h-12 flex-1 items-center justify-center rounded-f
 const SOLID = `${BTN} bg-foreground text-background hover:opacity-85`;
 const GHOST = `${BTN} bg-panel2 text-foreground hover:bg-panel3`;
 
+/// Tells the server a wallet connected, once a browser session, so it can
+/// count them (docs/devnet.md). A failed report changes nothing on the page.
+const report = (body: { wallet: string; message?: string; signature?: string }) =>
+  void post("/seen", body).catch(() => {});
+const reportOnce = (wallet: string) => {
+  try {
+    if (sessionStorage.getItem(`unwind.seen:${wallet}`)) return;
+    sessionStorage.setItem(`unwind.seen:${wallet}`, "1");
+  } catch { /* reported again next load */ }
+  report({ wallet });
+};
+
 export function Welcome() {
   const { publicKey, signMessage } = useWallet();
   const wallet = publicKey?.toBase58() ?? null;
@@ -57,6 +69,7 @@ export function Welcome() {
   useEffect(() => {
     if (preview) { setOpen(true); return; }
     if (!wallet) { setOpen(false); return; }
+    reportOnce(wallet);
     if (read(wallet)?.v === VERSION) return;
     setStep(0); setPath(null); setAgreed(false); setNote(null);
     setOpen(true);
@@ -81,9 +94,10 @@ export function Welcome() {
     try {
       let signature: string | undefined;
       if (signMessage && wallet) {
-        const bytes = new TextEncoder().encode(accept(wallet, new Date()));
-        const sig = await signMessage(bytes);
+        const message = accept(wallet, new Date());
+        const sig = await signMessage(new TextEncoder().encode(message));
         signature = btoa(String.fromCharCode(...sig));
+        if (!preview) report({ wallet, message, signature });
       }
       if (!preview) write(who, { v: VERSION, at: Date.now(), signature });
       setOpen(false);

@@ -5266,6 +5266,79 @@ async function humanCheck(token: unknown, ip: string): Promise<boolean> {
     return false;
   }
 }
+/*
+ * Wallets that have connected to the site, for counting them.
+ *
+ * The site reports a wallet once a session when it connects, and again with
+ * the welcome screen's signature once it signs. Only the address and the
+ * times are kept, never the caller's address. A connect is the caller's
+ * word, so one address may add at most SEEN_NEW_PER_IP_PER_DAY wallets a
+ * day; a signed one is checked against the wallet's own key, so `signed` is
+ * the figure nobody can inflate. GET /api/wallets gives the counts.
+ */
+type Seen = { first: number; last: number; signed?: number };
+const SEEN_FILE = path.join(ROOT, ".cache", `${CLUSTER}-wallets.json`);
+const SEEN_NEW_PER_IP_PER_DAY = 10;
+let seen: Record<string, Seen> = {};
+try { seen = JSON.parse(fs.readFileSync(SEEN_FILE, "utf8")); } catch { seen = {}; }
+const seenByIp = new Map<string, number[]>();
+let seenSaving: NodeJS.Timeout | null = null;
+const saveSeen = () => {
+  seenSaving ??= setTimeout(() => {
+    seenSaving = null;
+    try {
+      fs.mkdirSync(path.dirname(SEEN_FILE), { recursive: true });
+      fs.writeFileSync(SEEN_FILE, JSON.stringify(seen));
+    } catch (e: any) { console.warn(`wallets: ${e?.message ?? e}`); }
+  }, 5_000);
+};
+/// An ed25519 signature by `wallet` over `message`, both as the site sends them.
+const ED25519_SPKI = Buffer.from("302a300506032b6570032100", "hex");
+function signedBy(wallet: PublicKey, message: string, signature: string) {
+  try {
+    const key = crypto.createPublicKey({
+      key: Buffer.concat([ED25519_SPKI, wallet.toBuffer()]), format: "der", type: "spki",
+    });
+    return crypto.verify(null, Buffer.from(message), key, Buffer.from(signature, "base64"));
+  } catch { return false; }
+}
+
+app.post("/api/seen", (req, res) => {
+  let wallet: PublicKey;
+  try { wallet = new PublicKey(String(req.body?.wallet ?? "")); }
+  catch { return res.status(400).json({ ok: false, error: "not a wallet address" }); }
+  const key = wallet.toBase58();
+  const now = Date.now();
+  const { message, signature } = req.body ?? {};
+  const signed = typeof message === "string" && typeof signature === "string"
+    && message.length < 1_000 && message.includes(`Wallet: ${key}`) && signedBy(wallet, message, signature);
+  if (!seen[key]) {
+    if (!signed) {
+      const ip = clientIp(req);
+      const recent = (seenByIp.get(ip) ?? []).filter((t) => now - t < DAY_MS);
+      if (recent.length >= SEEN_NEW_PER_IP_PER_DAY) return res.json({ ok: true });
+      seenByIp.set(ip, [...recent, now]);
+    }
+    seen[key] = { first: now, last: now };
+  }
+  seen[key].last = now;
+  if (signed) seen[key].signed ??= now;
+  saveSeen();
+  res.json({ ok: true });
+});
+
+app.get("/api/wallets", (_req, res) => {
+  const all = Object.values(seen);
+  const since = (ms: number) => all.filter((w) => Date.now() - w.last < ms).length;
+  res.json({
+    connected: all.length,
+    signed: all.filter((w) => w.signed).length,
+    active24h: since(DAY_MS),
+    active7d: since(7 * DAY_MS),
+    since: all.length ? Math.min(...all.map((w) => w.first)) : null,
+  });
+});
+
 type Claim = { owner: string; ip: string; t: number; sol: number; usdc?: number };
 let claims: Claim[] = [];
 try { claims = JSON.parse(fs.readFileSync(FAUCET_FILE, "utf8")); } catch { claims = []; }

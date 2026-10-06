@@ -132,6 +132,14 @@ nothing. The acceptance is kept in that browser for that wallet; closing the
 screens without signing is kept too, so they are not shown again. The text
 is in `web/src/components/Welcome.tsx`.
 
+The site also tells the server a wallet's address when it connects (once a
+browser session) and sends the signed message once it is signed, so
+connected wallets can be counted. The server keeps only the address, when it
+was first and last seen, and when it signed; it checks the signature against
+the wallet's key. One caller can add at most 10 unsigned wallets a day.
+`GET /api/wallets` returns the counts: `connected`, `signed`, `active24h`,
+`active7d`, and `since`, the time of the first record.
+
 ## Points on devnet
 
 Devnet USDC comes from a faucet, so trading fees cost nothing real and a
