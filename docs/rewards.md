@@ -207,6 +207,9 @@ publishes the share of points the top 20 wallets hold. Wallets the venue
 runs (the pool authority, devnet's market maker, the demo trader, the price
 relay) earn points like anyone else and are left off the ranking.
 
+Both rankings show each wallet by its short address, never by its referral
+code.
+
 Below it, devnet creators are ranked by distinct traders (see
 [Devnet](devnet.md)).
 

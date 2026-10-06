@@ -148,7 +148,10 @@ export default function RewardsPage() {
   };
   const explorer = (address: string) =>
     `https://solscan.io/account/${address}${testnet ? "?cluster=devnet" : ""}`;
-  const who = (address: string, code?: string | null) => code ?? short(address);
+  // Wallets on the boards read as addresses, never as their referral codes:
+  // a code is a link to share, and on a public ranking it read as a name
+  // the wallet's owner had not chosen to show.
+  const who = (address: string, _code?: string | null) => short(address);
 
   return (
     <div className="site min-h-full">
