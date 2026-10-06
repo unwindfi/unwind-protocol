@@ -183,6 +183,11 @@ export function StatTiles({ m, dense = false }: {
           {price(m.price)}
         </Stat>
       )}
+      {m.paused && (
+        <Stat label="Status" help="Paused by the pool's authority. Open positions can still be closed; nothing new can be opened.">
+          <span className="text-down">Exits only</span>
+        </Stat>
+      )}
       {/* Only when it binds: at 100% every winner is paid in full. */}
       {m.payoutPct != null && m.payoutPct < 99.95 && (
         <Stat label="Profit paid" help="This market can't cover every winner in full right now. A winning close is paid this share of its profit; losses are collected in full.">

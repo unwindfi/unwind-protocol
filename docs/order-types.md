@@ -109,7 +109,8 @@ A trigger order is checked twice. When it is placed, an open must fit the
 same caps as an open submitted by hand: the side the position holds, the
 market's maximum leverage and its open interest cap, all as they stand then.
 Nothing can be placed on a paused pool, and only close orders on a paused
-market. When it fires, an open is checked again against the position, the
+market. A paused market shows as "Exits only" in its header, and one nobody
+holds a position in is left off the markets list. When it fires, an open is checked again against the position, the
 market and the opens already resting in the batch, because any of them may
 have changed since. A trigger that fails either check never reaches the
 batch, so it never moves a clearing price. One that fails when it fires

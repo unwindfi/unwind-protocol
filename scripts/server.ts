@@ -2356,6 +2356,8 @@ async function marketsView() {
           (ma.session === 2 ? ma.closedSessionLeverageBps : ma.maxLeverageBps) / BPS,
           ma.priceSource === 1 ? Math.max(ma.depthLeverageX, DEPTH_LEVERAGE_TIERS[0][1]) : Infinity),
         session: ma.session,
+        // Paused by the pool's authority: no new opens or backing, exits only.
+        paused: !!ma.paused,
         oi: total,
         longShare: total > 0 ? (longSize / total) * 100 : 50,
         fundingLong: Number(ma.cumulativeLongFunding.toString()),
@@ -2425,7 +2427,11 @@ async function marketsView() {
         sparkline: sparklineFor(m),
       };
     }));
-    return out;
+    // A paused market nobody holds a position in is left off the list: it
+    // takes no new trades, and the load test's throwaway listings were
+    // cluttering /markets. One with open interest stays, so its holders can
+    // find it and close.
+    return out.filter((o: any) => !(o.paused && o.oi === 0));
   }
 }
 

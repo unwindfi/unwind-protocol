@@ -25,6 +25,8 @@ export interface Market {
   /// what the market can still pay over what every winning side is up. 100
   /// when it covers them all; below that, profit is cut to a fair share.
   payoutPct?: number;
+  /// Paused by the pool's authority: no new opens or backing, exits only.
+  paused?: boolean;
   sparkline: number[];
   /// Age of the price this market last posted on chain, and the age at which
   /// the program starts rejecting orders against it.
