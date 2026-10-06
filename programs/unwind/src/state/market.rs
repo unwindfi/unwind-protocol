@@ -207,6 +207,18 @@ pub struct Market {
     /// See `side_winners_bound_usd`.
     pub long_moments: SideMoments,
     pub short_moments: SideMoments,
+
+    // Added after the moments, which grew the account again; run
+    // `resize_market` on a market listed before. Zero reads as "no position
+    // tracked yet". A position is in these when its `Position::f_epoch` is
+    // `q_tag`, which no position written before them carries.
+
+    /// Each side's funding sums over the positions it tracks, which let the
+    /// pool count the funding and borrow its open positions owe it before
+    /// they close (`funding_owed_usd`), and bound the bad debt a side can
+    /// hold (`side_bad_debt_bound_usd`).
+    pub long_funding: SideFunding,
+    pub short_funding: SideFunding,
 }
 
 /// Sums over one side's tracked positions, each held at its entry in today's
@@ -224,6 +236,54 @@ pub struct SideMoments {
     pub inv_entry: u128,
     /// Sum of `ceil(ceil(size * MOMENT_Q_STEP / entry) * MOMENT_Q_STEP / entry)`.
     pub inv_entry_sq: u128,
+}
+
+/// Funding sums over one side's tracked positions. Membership is the
+/// moments' (`q_tag`), carried in `Position::f_epoch` so a position tracked
+/// in the moments before these sums existed is not counted as if it were in
+/// them. `tracked_usd` and `size_entry_funding` are replaced a position's
+/// whole term at a time (`Market::retrack_funding`), so they always equal a
+/// fresh recomputation; `min_cover` and `worst_entry` only ever move toward
+/// the worse value while anything is tracked, and start again from the next
+/// position once nothing is.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, PartialEq, Eq, Debug, InitSpace)]
+pub struct SideFunding {
+    /// Sum of tracked sizes, `USD_SCALE`.
+    pub tracked_usd: u64,
+    /// Sum of `size * entry_funding`, wrapping: only `tracked_usd * index`
+    /// less this is read, and that difference is exact whenever it fits.
+    pub size_entry_funding: i128,
+    /// The least, over every position tracked since the side last held none,
+    /// of `floor(collateral * FUNDING_SCALE / size) + entry_funding`: the
+    /// funding index at which that position's collateral is used up by
+    /// funding alone. A partial close never lowers a position's value, so
+    /// it stays at or under every tracked position's.
+    pub min_cover: i128,
+    /// The worst entry tracked since the side last held none, in today's
+    /// price factor: the highest on the long side, the lowest on the short.
+    pub worst_entry: u64,
+}
+
+/// One position's term in its side's `SideFunding`.
+#[derive(Clone, Copy, Debug)]
+pub struct FundingTerm {
+    pub size: u64,
+    pub entry_funding: i128,
+    pub collateral: u64,
+    /// Entry in today's price factor.
+    pub entry: u64,
+}
+
+impl FundingTerm {
+    /// `floor(collateral * FUNDING_SCALE / size) + entry_funding`. None when
+    /// it does not fit, in which case the position is simply not tracked.
+    pub fn cover(&self) -> Option<i128> {
+        if self.size == 0 {
+            return None;
+        }
+        let ratio = (self.collateral as i128).checked_mul(FUNDING_SCALE)? / self.size as i128;
+        ratio.checked_add(self.entry_funding)
+    }
 }
 
 /// Fixed point of `SideMoments::inv_entry`.
@@ -652,11 +712,45 @@ impl Market {
     /// whoever could move the mark price LP shares at a value the pool would
     /// never collect.
     pub fn lp_pnl_usd(&self, price: u64) -> Result<i64> {
+        Ok(self.lp_from_net(self.trader_net_usd(price)?))
+    }
+
+    /// What traders are owed net at `price`: their PnL less the funding and
+    /// borrow they owe (`funding_owed_usd`), which a close takes out of their
+    /// equity and leaves with the pool. Funding counts only while both sides
+    /// are tracked: skew funding is paid by one side to the other, and one
+    /// side's half alone would count a payment the pool passes straight on.
+    pub fn trader_net_usd(&self, price: u64) -> Result<i64> {
         let pnl = self.trader_pnl_usd(price)?;
+        let owed = self.funding_owed_usd().unwrap_or(0);
+        pnl.checked_sub(owed).ok_or_else(|| PerpError::MathOverflow.into())
+    }
+
+    /// `lp_pnl_usd` as a claim reads it: never counting more of the losers'
+    /// loss than the pool can collect from each of them. Traders are taken
+    /// to be owed `side_bad_debt_bound_usd` more on each side, an upper
+    /// bound on what losers there owe past their own collateral, which
+    /// `lp_pnl_usd` nets against everybody else's collateral. So a claim is
+    /// paid at most what the book is worth, and while any position could be
+    /// past its collateral, somewhat less. A side whose positions are not
+    /// all tracked adds nothing, the old rule, until they are gone.
+    pub fn lp_claim_pnl_usd(&self, price: u64) -> Result<i64> {
+        let net = self.trader_net_usd(price)? as i128;
+        let bad = [true, false]
+            .iter()
+            .map(|&l| self.side_bad_debt_bound_usd(l, price).unwrap_or(0) as i128)
+            .sum::<i128>();
+        let owed = net.saturating_add(bad).min(i64::MAX as i128) as i64;
+        Ok(self.lp_from_net(owed))
+    }
+
+    /// What the LPs owe on a net trader claim of `pnl`, after the caps (see
+    /// `lp_pnl_usd`). Never decreases as `pnl` grows.
+    fn lp_from_net(&self, pnl: i64) -> i64 {
         if pnl >= 0 {
             let paid = (pnl as u64).min(self.remaining_budget_usd());
             // At most `pnl`, so it fits.
-            return Ok(paid.saturating_sub(self.backing_usd) as i64);
+            return paid.saturating_sub(self.backing_usd) as i64;
         }
         let collected = pnl.unsigned_abs().min(self.collateral_usd);
         let restored = if self.backing_shares == 0 {
@@ -664,7 +758,7 @@ impl Market {
         } else {
             collected.min(self.backing_drawn_usd)
         };
-        Ok(-((collected - restored) as i64))
+        -((collected - restored) as i64)
     }
 
     /// The most `lp_pnl_usd` can be at any price: winners paid everything
@@ -847,6 +941,110 @@ impl Market {
         }
     }
 
+    /// The size and entry funding `position` put into its side's
+    /// `SideFunding`, when it did.
+    pub fn tracked_funding_term(&self, position: &Position) -> Option<(u64, i128)> {
+        (position.is_open() && position.f_epoch == self.q_tag())
+            .then_some((position.size_usd, position.entry_funding))
+    }
+
+    /// Replaces one position's term in its side's funding sums: takes out
+    /// `old`, what `tracked_funding_term` said it put in, and puts in `new`.
+    /// Returns whether `new` went in, which is what the position's `f_epoch`
+    /// must then say. Never fails: a term that does not fit is left out.
+    pub fn retrack_funding(
+        &mut self,
+        is_long: bool,
+        old: Option<(u64, i128)>,
+        new: Option<FundingTerm>,
+    ) -> bool {
+        let side = if is_long { &mut self.long_funding } else { &mut self.short_funding };
+        if let Some((size, e)) = old {
+            side.tracked_usd = side.tracked_usd.saturating_sub(size);
+            side.size_entry_funding =
+                side.size_entry_funding.wrapping_sub((size as i128).wrapping_mul(e));
+        }
+        let Some(t) = new.filter(|t| t.size > 0 && t.entry > 0) else {
+            return false;
+        };
+        let (Some(cover), Some(tracked)) = (t.cover(), side.tracked_usd.checked_add(t.size)) else {
+            return false;
+        };
+        if side.tracked_usd == 0 {
+            side.min_cover = cover;
+            side.worst_entry = t.entry;
+        } else {
+            side.min_cover = side.min_cover.min(cover);
+            side.worst_entry = if is_long {
+                side.worst_entry.max(t.entry)
+            } else {
+                side.worst_entry.min(t.entry)
+            };
+        }
+        side.tracked_usd = tracked;
+        side.size_entry_funding =
+            side.size_entry_funding.wrapping_add((t.size as i128).wrapping_mul(t.entry_funding));
+        true
+    }
+
+    /// Funding and borrow every open position owes at the current index,
+    /// signed as `math::funding_owed_usd`: positive is owed to the pool. A
+    /// close takes it from the trader's equity and leaves it with the pool,
+    /// so it is the pool's before then. Skew funding nets to about zero
+    /// across the sides; borrow, which both sides pay, does not.
+    ///
+    /// None unless both sides are tracked in full. The sum is rounded once
+    /// rather than per position, so it may differ from what the closes pay
+    /// by a unit a position.
+    pub fn funding_owed_usd(&self) -> Option<i64> {
+        let mut total: i128 = 0;
+        for (size, f, index) in [
+            (self.long_size_usd, &self.long_funding, self.cumulative_long_funding),
+            (self.short_size_usd, &self.short_funding, self.cumulative_short_funding),
+        ] {
+            if f.tracked_usd != size {
+                return None;
+            }
+            // Exact whenever the true value fits, however the sums wrapped.
+            total = total.wrapping_add(
+                (size as i128).wrapping_mul(index).wrapping_sub(f.size_entry_funding),
+            );
+        }
+        i64::try_from(total / FUNDING_SCALE).ok()
+    }
+
+    /// An upper bound on what the positions on one side owe at `price` past
+    /// their own collateral: `sum max(loss + funding owed - collateral, 0)`,
+    /// the bad debt a close or liquidation could not collect. None while the
+    /// side holds a position its sums do not track.
+    ///
+    /// Per USD of size, a position with entry e is short of its collateral
+    /// by t = z - (cover - I), with z its loss return (1 - p/e on a long,
+    /// p/e - 1 on a short), cover its `FundingTerm::cover` and I the index
+    /// now. Every tracked position has cover >= `min_cover` and an entry no
+    /// better than `worst_entry`, so with k = min_cover - I, t <= z - k and
+    /// t <= t_max = z(worst_entry) - k. When t_max <= 0 nobody can be short,
+    /// and the bound is zero. Otherwise it is the smaller of S * t_max and
+    /// the moment bound on `sum s max(z - k, 0)`: on a long side that is
+    /// (1 - k) times the gross profit a short would hold over the same sums
+    /// at p / (1 - k) (`winners_bound`), on a short side (1 + k) times a
+    /// long's at p / (1 + k). Every piece is rounded up, and anything that
+    /// does not fit is the largest bound there is.
+    pub fn side_bad_debt_bound_usd(&self, is_long: bool, price: u64) -> Option<u64> {
+        let (size, m, f, index) = if is_long {
+            (self.long_size_usd, &self.long_moments, &self.long_funding, self.cumulative_long_funding)
+        } else {
+            (self.short_size_usd, &self.short_moments, &self.short_funding, self.cumulative_short_funding)
+        };
+        if m.tracked_usd != size || f.tracked_usd != size {
+            return None;
+        }
+        if size == 0 {
+            return Some(0);
+        }
+        Some(bad_debt_bound(size, m, f, index, price, is_long).unwrap_or(u64::MAX))
+    }
+
     /// A side's average entry from its moment sums, when they track every
     /// position on it: `size / sum(size / entry)`, the same harmonic mean
     /// `blend_entry_price` keeps, but recomputed rather than carried.
@@ -881,12 +1079,29 @@ impl Market {
         let mut new_avg = old_avg;
         if close_size > 0 && position.is_open() {
             let entry = self.adjust_entry_price(position.entry_price, position.entry_price_factor)?;
+            let left = position.size_usd.saturating_sub(close_size);
+            let mut kept = false;
             if let Some(old_term) = self.tracked_term(position) {
-                let left = position.size_usd.saturating_sub(close_size);
                 // A smaller size at the same entry always fits where the
                 // larger did.
-                let kept = self.retrack(is_long, Some(old_term), left, entry);
+                kept = self.retrack(is_long, Some(old_term), left, entry);
                 debug_assert!(kept == (left > 0));
+            }
+            // The funding term goes the same way, with the collateral the
+            // close leaves behind, as `settle` takes it.
+            if let Some(old_f) = self.tracked_funding_term(position) {
+                let taken = mul_div_u64(
+                    position.collateral_usd,
+                    close_size.min(position.size_usd) as u128,
+                    position.size_usd as u128,
+                )?;
+                let rest = FundingTerm {
+                    size: left,
+                    entry_funding: position.entry_funding,
+                    collateral: position.collateral_usd - taken,
+                    entry,
+                };
+                self.retrack_funding(is_long, Some(old_f), kept.then_some(rest));
             }
             if new_size > 0 && old_avg > 0 && entry > 0 {
                 let removed = close_size.min(position.size_usd) as u128;
@@ -925,6 +1140,8 @@ impl Market {
     pub fn reset_moments(&mut self) {
         self.long_moments = SideMoments::default();
         self.short_moments = SideMoments::default();
+        self.long_funding = SideFunding::default();
+        self.short_funding = SideFunding::default();
     }
 
     /// An upper bound on the profit the winners on one side hold at `price`,
@@ -971,6 +1188,53 @@ impl Market {
         }
         Ok(position_pnl_usd(is_long, size, entry, price)?.max(0) as u64)
     }
+}
+
+/// See `Market::side_bad_debt_bound_usd`. None on overflow.
+fn bad_debt_bound(
+    size: u64,
+    m: &SideMoments,
+    f: &SideFunding,
+    index: i128,
+    price: u64,
+    is_long: bool,
+) -> Option<u64> {
+    let fs = FUNDING_SCALE;
+    let fsu = fs as u128;
+    let (s, p, e) = (size as u128, price as u128, f.worst_entry as u128);
+    if e == 0 {
+        return None;
+    }
+    let k = f.min_cover.checked_sub(index)?;
+    // Per-USD loss of the worst entry, rounded up, in FUNDING_SCALE.
+    let z = if is_long {
+        fs.checked_sub(i128::try_from(mul_div_u128(p, fsu, e).ok()?).ok()?)?
+    } else {
+        i128::try_from(div_ceil_u128(p.checked_mul(fsu)?, e)).ok()?.checked_sub(fs)?
+    };
+    let t_max = z.checked_sub(k)?;
+    if t_max <= 0 {
+        return Some(0);
+    }
+    let cap = div_ceil_u128(s.checked_mul(t_max as u128)?, fsu);
+    // The scale (1 - k) or (1 + k), positive on a long since it exceeds t_max.
+    let scale = if is_long { fs.checked_sub(k)? } else { fs.checked_add(k)? };
+    let moments = if scale <= 0 {
+        None
+    } else {
+        let scale = scale as u128;
+        // A long's bound falls as the price rises, a short's rises with it.
+        let shifted = if is_long {
+            mul_div_u128(p, fsu, scale).ok()?
+        } else {
+            div_ceil_u128(p.checked_mul(fsu)?, scale)
+        };
+        winners_bound(s, m.inv_entry, m.inv_entry_sq, shifted, !is_long)
+            .and_then(|w| (w as u128).checked_mul(scale))
+            .map(|x| div_ceil_u128(x, fsu))
+    };
+    let bound = moments.map_or(cap, |b| b.min(cap));
+    u64::try_from(bound).ok()
 }
 
 /// `(net + sqrt(S * M2)) / 2` from a side's sums, rounded up throughout.
@@ -1087,6 +1351,8 @@ mod tests {
             _reserved: [0; 20],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
+            long_funding: SideFunding::default(),
+            short_funding: SideFunding::default(),
         }
     }
 

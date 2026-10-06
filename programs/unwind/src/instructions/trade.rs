@@ -281,7 +281,20 @@ fn book_planned(
     // before anything below changes the position: what it put in comes out,
     // and the grown position goes in at its blended entry.
     let old_term = market.tracked_term(position);
+    let old_funding = market.tracked_funding_term(position);
     let tracked = market.retrack(is_long, old_term, new_size, new_entry);
+    // Its funding term the same way, and only alongside the moments: the
+    // bad-debt bound reads both (`Market::side_bad_debt_bound_usd`).
+    let funding_tracked = market.retrack_funding(
+        is_long,
+        old_funding,
+        tracked.then_some(FundingTerm {
+            size: new_size,
+            entry_funding: new_entry_funding,
+            collateral: new_collateral,
+            entry: new_entry,
+        }),
+    );
     if is_long {
         market.long_avg_entry_price = blend_entry_price(
             market.long_size_usd,
@@ -334,6 +347,7 @@ fn book_planned(
     position.entry_price_factor = market.price_factor;
     position.entry_funding = new_entry_funding;
     position.q_epoch = if tracked { market.q_tag() } else { 0 };
+    position.f_epoch = if funding_tracked { market.q_tag() } else { 0 };
     position.locked_usd = position
         .locked_usd
         .checked_add(extra_lock)
@@ -981,6 +995,8 @@ pub(crate) mod tests {
             _reserved: [0; 20],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
+            long_funding: SideFunding::default(),
+            short_funding: SideFunding::default(),
         };
         m.last_funding_ts = 0;
         m
@@ -1002,7 +1018,8 @@ pub(crate) mod tests {
             last_update_ts: 0,
             closing_usd: 0,
             q_epoch: 0,
-            _reserved: [0; 20],
+            f_epoch: 0,
+            _reserved: [0; 16],
         }
     }
 
@@ -2130,6 +2147,144 @@ mod moment_tests {
             }
         }
         assert!(winning_closes > 50, "the haircut bound in only {winning_closes} closes");
+    }
+
+    /// SP-1 and SP-2. Funding accrues both ways while positions open, grow,
+    /// shrink, close and are liquidated: after every step the funding sums
+    /// equal a recomputation from the positions, the pool's funding equals
+    /// what each position owes, and the bad-debt bound is above the bad
+    /// debt at prices across the range.
+    #[test]
+    fn the_funding_sums_match_the_positions_and_bound_their_bad_debt() {
+        let (mut bounded, mut owed_read) = (0, 0);
+        for seed in 1..=60u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let (mut p, mut m) = (pool(), market());
+            m.borrow_rate_bps_per_hour = 50;
+            p.liquidity_usd = 20_000_000_000; // $20k, so utilization is high
+            let mut positions: Vec<Position> = (0..6).map(|_| position()).collect();
+            let (mut price, mut now) = (PX, 0i64);
+            for _ in 0..250 {
+                let i = rng.below(positions.len() as u64) as usize;
+                match rng.below(12) {
+                    0..=1 => {
+                        let step = (price / 20).max(1);
+                        price = if rng.below(2) == 0 { price + step } else { price - step };
+                        price = price.clamp(40 * PX / 100, 250 * PX / 100);
+                    }
+                    2..=3 => {
+                        now += rng.below(8 * 3_600) as i64;
+                        let u = m.utilization_bps(p.liquidity_usd);
+                        m.accrue_funding(now, u).unwrap();
+                    }
+                    4..=6 => {
+                        let is_long = if positions[i].is_open() {
+                            positions[i].is_long
+                        } else {
+                            rng.below(2) == 0
+                        };
+                        let size = 10_000_000 + rng.below(5_000_000_000);
+                        // From 10x to 2x.
+                        let collateral = size / 10 + rng.below(size / 2);
+                        let _ = book_open(&mut p, &mut m, &mut positions[i], Pubkey::default(), 1,
+                                          is_long, collateral, 0, Pubkey::default(), size, price, now);
+                    }
+                    7..=8 => {
+                        if !positions[i].is_open() {
+                            continue;
+                        }
+                        let full = positions[i].size_usd;
+                        let size = if rng.below(2) == 0 { full } else { 1 + rng.below(full) };
+                        book_close(&mut p, &mut m, &mut positions[i], size, price, now).unwrap();
+                    }
+                    9 => {
+                        if !positions[i].is_open() {
+                            continue;
+                        }
+                        let pos = positions[i].clone();
+                        let s = settle(&pos, &m, pos.size_usd, price).unwrap();
+                        let payout = payable_usd(&m, &s);
+                        apply_settlement_to_pool(&mut p, &mut m, &pos, &s, payout, 0,
+                                                 pos.size_usd, pos.is_long).unwrap();
+                        let pos = &mut positions[i];
+                        pos.size_usd = 0;
+                        pos.collateral_usd = 0;
+                        pos.entry_price = 0;
+                        pos.entry_price_factor = 0;
+                        pos.entry_funding = 0;
+                    }
+                    10 if rng.below(8) == 0 => {
+                        // A corporate action untracks everything open.
+                        m.split_epoch += 1;
+                        m.reset_moments();
+                    }
+                    _ => {}
+                }
+
+                let index = |l: bool| m.cumulative_funding(l);
+                for is_long in [true, false] {
+                    let side = if is_long { m.long_funding } else { m.short_funding };
+                    let tracked: Vec<&Position> = positions.iter()
+                        .filter(|q| q.is_long == is_long && m.tracked_funding_term(q).is_some())
+                        .collect();
+                    let size: u64 = tracked.iter().map(|q| q.size_usd).sum();
+                    let sum: i128 = tracked.iter().map(|q| q.size_usd as i128 * q.entry_funding).sum();
+                    assert_eq!(side.tracked_usd, size, "seed {seed}: tracked size");
+                    assert_eq!(side.size_entry_funding, sum, "seed {seed}: size x entry funding");
+                    for q in &tracked {
+                        let entry = m.adjust_entry_price(q.entry_price, q.entry_price_factor).unwrap();
+                        let cover = FundingTerm {
+                            size: q.size_usd, entry_funding: q.entry_funding,
+                            collateral: q.collateral_usd, entry,
+                        }.cover().unwrap();
+                        assert!(side.min_cover <= cover, "seed {seed}: min cover");
+                        assert!(if is_long { side.worst_entry >= entry } else { side.worst_entry <= entry },
+                                "seed {seed}: worst entry");
+                    }
+                    // Every tracked position is in the moments too.
+                    for q in &tracked {
+                        assert!(m.tracked_term(q).is_some(), "seed {seed}: funding without moments");
+                    }
+                }
+
+                // The pool's funding is what the positions owe, to a unit each.
+                if let Some(owed) = m.funding_owed_usd() {
+                    let each: i64 = positions.iter().filter(|q| q.is_open())
+                        .map(|q| funding_owed_usd(q.size_usd, q.entry_funding, index(q.is_long)).unwrap())
+                        .sum();
+                    assert!((owed - each).abs() <= positions.len() as i64 + 1,
+                            "seed {seed}: owed {owed} vs {each}");
+                    if each != 0 {
+                        owed_read += 1;
+                    }
+                }
+
+                // The bound is above the bad debt, at prices across the range.
+                for at in [price, price * 6 / 10, price * 8 / 10, price * 12 / 10, price * 15 / 10] {
+                    for is_long in [true, false] {
+                        let Some(bound) = m.side_bad_debt_bound_usd(is_long, at) else { continue };
+                        let bad: u64 = positions.iter()
+                            .filter(|q| q.is_open() && q.is_long == is_long)
+                            .map(|q| {
+                                let e = m.adjust_entry_price(q.entry_price, q.entry_price_factor).unwrap();
+                                let pnl = position_pnl_usd(is_long, q.size_usd, e, at).unwrap() as i128;
+                                let f = funding_owed_usd(q.size_usd, q.entry_funding, index(is_long))
+                                    .unwrap() as i128;
+                                (f - pnl - q.collateral_usd as i128).max(0) as u64
+                            })
+                            .sum();
+                        assert!(bound >= bad, "seed {seed}: bound {bound} under bad debt {bad}");
+                        if bad > 0 {
+                            bounded += 1;
+                        }
+                    }
+                    // And a claim never reads the book worth more than a deposit.
+                    assert!(m.lp_claim_pnl_usd(at).unwrap() >= m.lp_pnl_usd(at).unwrap(), "seed {seed}");
+                }
+            }
+        }
+        assert!(bounded > 100, "bad debt seen in only {bounded} readings");
+        assert!(owed_read > 1_000, "funding read in only {owed_read} steps");
     }
 
     #[test]

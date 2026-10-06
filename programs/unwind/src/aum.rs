@@ -197,10 +197,13 @@ pub fn fold_checkpoint<'info>(
         // oracle and the risk price makes the pool worth more, a claim at
         // whichever makes it worth less.
         let (deposit_pnl, claim_pnl) = match market_price(&pair[1], pool, &market, pair[0].key) {
-            Ok(oracle) => (
-                lp_pnl_against_the_mover(&market, oracle.price, Unpriced::Refuse)?,
-                lp_pnl_against_the_mover(&market, oracle.price, Unpriced::AtWorst)?,
-            ),
+            Ok(oracle) => {
+                let valued = accrued_to(&market, pool, now)?;
+                (
+                    lp_pnl_against_the_mover(&valued, oracle.price, Unpriced::Refuse)?,
+                    lp_pnl_against_the_mover(&valued, oracle.price, Unpriced::AtWorst)?,
+                )
+            }
             Err(e) if price_unusable(&e) => {
                 c.pass_unpriced += 1;
                 let worst = market.lp_worst_pnl_usd();
@@ -231,6 +234,25 @@ pub fn fold_checkpoint<'info>(
         c.pass_open = false;
     }
     Ok(())
+}
+
+/// `market` with its funding index brought up to `now`, exactly as the
+/// permissionless `accrue_funding` crank would bring it, without writing it.
+///
+/// What a market owes the LPs includes the funding and borrow its positions
+/// owe (`Market::funding_owed_usd`), and the index only moves when somebody
+/// accrues it. Read at the stored index, a reading after a long quiet spell
+/// would leave out everything since the last accrual, and the next reading
+/// after a crank would step the pool's value up by all of it at once, which
+/// a depositor could buy in ahead of. A reading is a reading: nothing
+/// accrued after it counts until the next one, the same as a price move, and
+/// the drift (`book_lp_drift`) is measured within each write, at one index,
+/// so it stays exact either way.
+pub fn accrued_to(market: &Market, pool: &Pool, now: i64) -> Result<Market> {
+    let mut m = market.clone();
+    let utilization = m.utilization_bps(pool.liquidity_usd);
+    m.accrue_funding(now, utilization)?;
+    Ok(m)
 }
 
 /// Tokens the LPs own in the pool's custodies, at the oracle.
@@ -278,12 +300,19 @@ pub fn lp_in_kind<'info>(
 /// (`Refuse`) counts the pool at the higher of the two values, and buys fewer
 /// shares; a claim (`AtWorst`) counts it at the lower, and is paid less. A
 /// market with no risk price on record yet is valued at the oracle.
+///
+/// A claim also reads each price through `Market::lp_claim_pnl_usd`, which
+/// does not count a loser's loss past its own collateral as collectable.
 pub fn lp_pnl_against_the_mover(market: &Market, target: u64, unpriced: Unpriced) -> Result<i64> {
-    let at_target = market.lp_pnl_usd(target)?;
+    let read = |price: u64| match unpriced {
+        Unpriced::Refuse => market.lp_pnl_usd(price),
+        Unpriced::AtWorst => market.lp_claim_pnl_usd(price),
+    };
+    let at_target = read(target)?;
     if market.risk_price == 0 || market.risk_price == target {
         return Ok(at_target);
     }
-    let at_risk = market.lp_pnl_usd(market.risk_price)?;
+    let at_risk = read(market.risk_price)?;
     Ok(match unpriced {
         // Less owed is more pool value.
         Unpriced::Refuse => at_target.min(at_risk),
@@ -541,6 +570,116 @@ mod tests {
         assert!(!m1.has_open_interest());
         assert_eq!(m1.aum_drift_usd, 0);
         assert_eq!(p.aum_drift_usd, m2.aum_drift_usd);
+    }
+
+    /// SP-2. Borrow accrues to the pool while positions are open, and used
+    /// to count only when they closed, which stepped the pool's value up by
+    /// all of it at once: a depositor could buy in just before for a share.
+    /// $110k of longs on $1m of liquidity is 11% utilization, 1 bp an hour
+    /// at a 10 bp rate; 30 days of it is $7,920, $7,200 of it A's.
+    #[test]
+    fn accrued_borrow_counts_before_the_close_and_the_close_does_not_step_it() {
+        use crate::instructions::trade::{book_close, book_open, tests as t};
+        const D: u64 = 1_000_000;
+        let (mut p, mut m) = (t::pool(), t::market());
+        p.liquidity_usd = 1_000_000 * D;
+        m.borrow_rate_bps_per_hour = 10;
+        let (mut a, mut b) = (t::position(), t::position());
+        book_open(&mut p, &mut m, &mut a, Pubkey::new_unique(), 1, true,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        book_open(&mut p, &mut m, &mut b, Pubkey::new_unique(), 1, true,
+                  2_000 * D, 0, Pubkey::new_unique(), 10_000 * D, t::PX, 0).unwrap();
+        m.last_price = t::PX;
+        let eight_hours = 8 * 3_600;
+        for k in 1..=90 {
+            let u = m.utilization_bps(p.liquidity_usd);
+            assert_eq!(u, 1_100);
+            m.accrue_funding(k * eight_hours, u).unwrap();
+        }
+        // The price has not moved: what the longs owe is the borrow.
+        let owed = m.lp_pnl_usd(t::PX).unwrap();
+        assert_eq!(owed, -7_920 * D as i64, "the pool is owed $7,920");
+
+        let (version, set) = (p.oi_version, p.markets_with_oi);
+        let (key, before) = pool_account(&p);
+        let c = done(key, version, set, checkpoint_pnl_of(&m, owed), 5);
+        let then = pool_aum_usd(&before, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap();
+        assert_eq!(then, 1_007_920 * D);
+
+        // Another 8 hours accrue after the reading, then A closes flat and
+        // pays its borrow, $7,200 and the 8 hours on top. The checkpoint is
+        // a reading: its value stays where it was until the next one.
+        let u = m.utilization_bps(p.liquidity_usd);
+        m.accrue_funding(91 * eight_hours, u).unwrap();
+        book_close(&mut p, &mut m, &mut a, 100_000 * D, t::PX, 91 * eight_hours).unwrap();
+        assert_eq!(p.liquidity_usd, 1_007_280 * D);
+        assert_eq!((p.oi_version, p.markets_with_oi), (version, set));
+        let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
+        for side in [Unpriced::Refuse, Unpriced::AtWorst] {
+            assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), side).unwrap(), then, "{side:?}");
+        }
+        // And a fresh reading counts what B owes now, $728.
+        let fresh = checkpoint_pnl_of(&m, m.lp_pnl_usd(t::PX).unwrap());
+        let c2 = done(key, version, set, fresh, 5);
+        assert_eq!(pool_aum_usd(&after, &c2, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(),
+                   1_008_008 * D);
+    }
+
+    /// A reading values the index as a crank would bring it to now, so a
+    /// crank after the reading cannot step the pool's value. And a side with
+    /// a position written before the funding sums counts no funding at all.
+    #[test]
+    fn a_reading_accrues_like_the_crank_and_an_untracked_side_counts_no_funding() {
+        use crate::instructions::trade::{book_open, tests as t};
+        const D: u64 = 1_000_000;
+        let (mut p, mut m) = (t::pool(), t::market());
+        p.liquidity_usd = 1_000_000 * D;
+        m.borrow_rate_bps_per_hour = 10;
+        let mut a = t::position();
+        book_open(&mut p, &mut m, &mut a, Pubkey::new_unique(), 1, true,
+                  20_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        let read = accrued_to(&m, &p, 8 * 3_600).unwrap();
+        let u = m.utilization_bps(p.liquidity_usd);
+        m.accrue_funding(8 * 3_600, u).unwrap();
+        assert_eq!(read.cumulative_long_funding, m.cumulative_long_funding);
+        assert_eq!(read.last_funding_ts, m.last_funding_ts);
+        // 8 hours at 1 bp on $100k.
+        assert_eq!(m.lp_pnl_usd(t::PX).unwrap(), -80 * D as i64);
+        // Untracked: the old rule, price PnL only.
+        a.f_epoch = 0;
+        m.long_funding = SideFunding::default();
+        assert_eq!(m.funding_owed_usd(), None);
+        assert_eq!(m.lp_pnl_usd(t::PX).unwrap(), 0);
+    }
+
+    /// SP-1. A long past its own collateral is bad debt, and netting it
+    /// against another long's collateral counted it as collectable. A: $100k
+    /// from $100 on $10k; B: $100k from $100 on $50k. At $85 each is down
+    /// $15k, but A can pay only $10k: the pool collects $25k, not $30k. A
+    /// claim must never count more than $25k; a deposit keeps the higher
+    /// figure, which makes the pool dearer to buy into.
+    #[test]
+    fn a_claim_never_counts_a_loss_past_the_loser_s_own_collateral() {
+        use crate::instructions::trade::{book_open, tests as t};
+        const D: u64 = 1_000_000;
+        let (mut p, mut m) = (t::pool(), t::market());
+        let (mut a, mut b) = (t::position(), t::position());
+        book_open(&mut p, &mut m, &mut a, Pubkey::new_unique(), 1, true,
+                  10_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        book_open(&mut p, &mut m, &mut b, Pubkey::new_unique(), 1, true,
+                  50_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
+        let down = t::PX * 85 / 100;
+        let claim = lp_pnl_against_the_mover(&m, down, Unpriced::AtWorst).unwrap();
+        let deposit = lp_pnl_against_the_mover(&m, down, Unpriced::Refuse).unwrap();
+        assert_eq!(deposit, -30_000 * D as i64);
+        assert!(claim >= -25_000 * D as i64, "claim counts {claim}, past the $25k the pool can collect");
+        // The bound charges every long at A's collateral ratio: $20k.
+        assert_eq!(claim, -20_000 * D as i64);
+
+        // At $95 nobody is past their collateral, and both read the same.
+        let near = t::PX * 95 / 100;
+        assert_eq!(lp_pnl_against_the_mover(&m, near, Unpriced::AtWorst).unwrap(), -10_000 * D as i64);
+        assert_eq!(lp_pnl_against_the_mover(&m, near, Unpriced::Refuse).unwrap(), -10_000 * D as i64);
     }
 
     #[test]

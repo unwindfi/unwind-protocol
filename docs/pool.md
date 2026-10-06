@@ -66,6 +66,31 @@ remaining budget, less the backing that pays them first. Example: a $50,000
 short with $5,000 posted, after the mark doubles, adds $5,000 to the pool's
 value, not $50,000.
 
+Funding and borrow that open positions owe count before they close. Both
+sides pay the pool borrow, and a close takes what a position owes out of its
+equity, so it is the pool's from the moment it accrues. Example: $110,000 of
+longs on $1,000,000 of liquidity pays 1 bp an hour at a 10 bp rate; after 30
+days the pool counts the $7,920 they owe, and closing them moves it into
+liquidity without changing what the pool is worth. Skew funding, which one
+side pays the other, counts on both sides and nets out. A market counts
+funding only once every position on both sides was opened or added to since
+this was introduced; until then it counts price PnL alone, as before. A
+corporate action resets this the same way it resets the winners' bound (see
+[Corporate actions](corporate-actions.md)).
+
+A claim also never counts a loser for more than its own collateral. Market
+wide, losers' losses are capped by everyone's collateral together, so one
+position past its collateral would net against another's and the pool would
+look richer than it is until that position is liquidated. Each side keeps the
+least collateral, net of funding, any of its positions holds per dollar of
+size, and its worst entry. When even that worst case is not past its
+collateral at the price, nothing changes. When it could be, the claim takes
+traders to be owed an upper bound on that shortfall more, so a leaver is paid
+somewhat less than the pool is worth, never more. Example: two $100,000 longs
+from $100, one on $10,000 and one on $50,000, at $85. Each is $15,000 down;
+the first can pay only $10,000, so the pool can collect $25,000. A deposit
+counts $30,000, a claim $20,000. At $95 both count $10,000.
+
 If a market with open positions cannot be priced (a stale feed, or a pool
 drained until its quote halts), a deposit waits. A withdrawal does not: it
 counts that market as if its winners took all its remaining budget past its
@@ -101,6 +126,12 @@ adds the pool's total back. Example: the pool holds $1,000,000 and longs are
 $100,000 down when the checkpoint is taken, so the pool is worth $1,100,000.
 The longs are liquidated and $100,000 moves into liquidity. The pool is still
 worth $1,100,000 to a claim in the same transaction, not $1,200,000.
+
+A checkpoint is a reading. It counts funding up to the moment of the pass,
+as the permissionless funding crank would bring it, and what accrues after it
+counts from the next pass, the same as a price move. The running total is
+measured inside each change, at one funding index, so a close after the
+reading leaves the pool's value where the reading put it.
 
 Each pass keeps two sums from the same readings, because a market's risk
 price (see [Price sources](price-sources.md)) can trail its oracle after a

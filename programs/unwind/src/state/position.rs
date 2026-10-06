@@ -42,7 +42,12 @@ pub struct Position {
     /// opened before those sums existed. Was the first four bytes of
     /// `_reserved`.
     pub q_epoch: u32,
-    pub _reserved: [u8; 20],
+    /// `Market::q_tag` when this position's funding term is counted in its
+    /// side's `SideFunding`, zero when it is not, which is every position
+    /// written before those sums existed. Was the next four bytes of
+    /// `_reserved`.
+    pub f_epoch: u32,
+    pub _reserved: [u8; 16],
 }
 
 impl Position {
@@ -136,7 +141,8 @@ mod tests {
             open_ts: 0,
             last_update_ts: 0,
             q_epoch: 0,
-            _reserved: [0; 20],
+            f_epoch: 0,
+            _reserved: [0; 16],
         }
     }
 

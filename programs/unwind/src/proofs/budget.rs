@@ -12,7 +12,7 @@
 
 use crate::constants::*;
 use crate::oracle::OraclePrice;
-use crate::state::{Market, Pool, PriceSource, Session, SideMoments};
+use crate::state::{Market, Pool, PriceSource, Session, SideFunding, SideMoments};
 use crate::errors::PerpError;
 use anchor_lang::prelude::Pubkey;
 
@@ -92,6 +92,8 @@ fn blank_market() -> Market {
         _reserved: [0; 20],
         long_moments: SideMoments::default(),
         short_moments: SideMoments::default(),
+        long_funding: SideFunding::default(),
+        short_funding: SideFunding::default(),
         volume_usd: 0,
         deployer_synced_volume_usd: 0,
         deployer_rewards_usd: 0,
