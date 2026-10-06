@@ -200,7 +200,6 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
   /// instead of leaving a share's worth of dust behind.
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   /// Backing can be paid in SOL or USDT as well, and is held as what it was
   /// paid in. The pool takes USDC only: xLP is minted against dollars.
   const [payWith, setPayWith] = useState<PayWith>("USDC");
@@ -232,31 +231,28 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
 
   /// Pulls the tokens a claimed withdrawal took in kind from one custody.
   const pull = async (symbol: string) => {
-    setBusy(true); setNote(null);
+    setBusy(true);
     try {
-      const r = await signAndSend(wallet, "withdraw-claim-tokens", { symbol });
-      setNote(r.ok
-        ? { ok: true, text: `${symbol} sent to your wallet.` }
-        : { ok: false, text: r.error ?? "Not accepted. Try again." });
+      const r = await signAndSend(wallet, "withdraw-claim-tokens", { symbol }, undefined,
+        { label: `Claim ${symbol}`, done: `${symbol} sent to your wallet` });
       if (r.ok) onDone();
-    } finally { setBusy(false); }
+    } catch { /* the toast has said so */ } finally { setBusy(false); }
   };
 
   /// Claims or cancels the pool withdrawal waiting in escrow.
   const settle = async (how: "claim" | "cancel") => {
-    setBusy(true); setNote(null);
+    setBusy(true);
     try {
-      const r = await signAndSend(wallet, `withdraw-${how}`, {});
-      setNote(r.ok
-        ? { ok: true, text: how === "claim" ? "Claimed." : "Cancelled. The xLP is back in your wallet." }
-        : { ok: false, text: r.error ?? "Not accepted. Try again." });
+      const r = await signAndSend(wallet, `withdraw-${how}`, {}, undefined, how === "claim"
+        ? { label: "Claim withdrawal", done: "Withdrawal claimed" }
+        : { label: "Cancel withdrawal", done: "Withdrawal cancelled", note: "The xLP is back in your wallet." });
       if (r.ok) onDone();
-    } finally { setBusy(false); }
+    } catch { /* the toast has said so */ } finally { setBusy(false); }
   };
 
   const submit = async () => {
     if (!usd || over) return;
-    setBusy(true); setNote(null);
+    setBusy(true);
     const [path, body]: [string, Record<string, unknown>] = v.kind === "pool"
       ? side === "in"
         ? ["deposit", { amount: usd }]
@@ -264,16 +260,20 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
       : side === "in"
         ? ["back-market", { symbol: v.symbol, amount: usd, payWith: paying }]
         : ["unback-market", all ? { symbol: v.symbol, all: true } : { symbol: v.symbol, amount: usd }];
+    const sum = paying === "USDC" ? money(usd) : `${usd} ${paying}`;
+    const where = v.kind === "pool" ? "pool" : v.symbol;
+    const t = side === "out" && v.kind === "pool"
+      ? { label: `Request ${money(usd)} withdrawal`, done: `Requested ${money(usd)}`,
+          note: "Claim it in about a minute, at the pool's value then." }
+      : side === "out"
+      ? { label: `Withdraw ${sum} from ${where}`, done: `Withdrew ${sum} from ${where}` }
+      : v.kind === "pool"
+      ? { label: `Deposit ${sum}`, done: `Deposited ${sum}` }
+      : { label: `Back ${v.symbol} with ${sum}`, done: `Backed ${v.symbol} with ${sum}` };
     try {
-      const r = await signAndSend(wallet, path, body);
-      setNote(r.ok
-        ? { ok: true, text: side === "out" && v.kind === "pool"
-          ? `Requested ${money(usd)}. Claim it in about a minute, at the pool's value then.`
-          : `${side === "out" ? "Withdrew" : v.kind === "pool" ? "Deposited" : "Backed with"} ${
-            paying === "USDC" ? money(usd) : `${usd} ${paying}`}.` }
-        : { ok: false, text: r.error ?? "Not accepted. Check your balance and try again." });
+      const r = await signAndSend(wallet, path, body, undefined, t);
       if (r.ok) { setAmount(""); setAll(false); onDone(); }
-    } finally { setBusy(false); }
+    } catch { /* the toast has said so */ } finally { setBusy(false); }
   };
 
   return (
@@ -307,7 +307,7 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
 
           <Tabs value={side} variant="pill" className="mt-5"
             onValueChange={(k) => {
-              setSide(k as "in" | "out"); setAmount(""); setAll(false); setNote(null); setPayWith("USDC");
+              setSide(k as "in" | "out"); setAmount(""); setAll(false); setPayWith("USDC");
             }}>
             <TabsList className={PILL_LIST}>
               {(["in", "out"] as const).map((k) => (
@@ -443,12 +443,6 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
                 Read-only. Devnet is not connected, so deposits are paused.
               </p>
             )}
-            {/* Always in the tree, so a screen reader hears the result when
-                the text lands in it. */}
-            <p role="status" aria-live="polite"
-              className={note ? `mt-2.5 text-[12.5px] ${note.ok ? "text-up" : "text-down"}` : undefined}>
-              {note?.text}
-            </p>
           </div>
         </div>
 

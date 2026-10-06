@@ -24,7 +24,7 @@ import {
   type LeaderRow, type Leaderboard, type Rewards,
 } from "@/lib/api";
 import { storedRef } from "@/lib/ref";
-import { signAndSend } from "@/lib/tx";
+import { signAndSend, type TxToastOptions } from "@/lib/tx";
 import { compact, money } from "@/lib/format";
 
 /// The rules in force. Shown on the page so a change is never silent.
@@ -125,13 +125,13 @@ export default function RewardsPage() {
   const live = r ? r.points + (rate * Math.max(0, now - r.asOf)) / 86_400 : 0;
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const run = async (key: string, path: string, body: Record<string, unknown> = {}) => {
-    setBusy(key); setNote(null);
-    const res = await signAndSend(wallet, path, body);
-    setBusy(null);
-    setNote(res.ok ? null : res.error ?? "failed");
-    if (res.ok) refresh();
+  /// Signs one rewards transaction; its toast carries the result.
+  const run = async (key: string, path: string, body: Record<string, unknown>, t: TxToastOptions) => {
+    setBusy(key);
+    try {
+      const res = await signAndSend(wallet, path, body, undefined, t);
+      if (res.ok) refresh();
+    } catch { /* the toast has said so */ } finally { setBusy(null); }
   };
 
   const arrived = storedRef();
@@ -197,7 +197,8 @@ export default function RewardsPage() {
                   <YourLink link={link} copied={copied} onCopy={copy} />
                 ) : (
                   <ClaimCode busy={busy === "code"}
-                    onClaim={(code) => run("code", "referral-code", { code })} />
+                    onClaim={(code) => run("code", "referral-code", { code },
+                      { label: `Claim code ${code}`, done: `Code ${code} is yours` })} />
                 )}
                 {self && owner && r?.canSetReferrer !== false && !r?.referrer && arrived
                   && arrived !== r?.code && (
@@ -205,7 +206,8 @@ export default function RewardsPage() {
                     Joined through <span className="font-medium text-foreground">{arrived}</span>.
                     Your first order locks them in as your referrer and takes 10% off your fees.{" "}
                     <button type="button" disabled={!!busy} className={`${LINK} disabled:opacity-35`}
-                      onClick={() => run("ref", "set-referrer", { code: arrived })}>
+                      onClick={() => run("ref", "set-referrer", { code: arrived },
+                        { label: `Set referrer ${arrived}`, done: `Referred by ${arrived}` })}>
                       {busy === "ref" ? "Confirming" : "Lock in now"}
                     </button>
                   </p>
@@ -218,7 +220,6 @@ export default function RewardsPage() {
                     </span>. 10% off every fee.
                   </p>
                 )}
-                {note && <p className="mt-3 text-[12.5px] text-down">{note}</p>}
               </div>
             </div>
           </section>
@@ -261,7 +262,8 @@ export default function RewardsPage() {
             <div className="mt-auto pt-2.5">
               {/* With nothing to claim it is a quiet tile, not a greyed-out slab. */}
               <button type="button" disabled={!self || !owner || !r || r.claimable <= 0 || !!busy}
-                onClick={() => run("claim", "claim-rewards")}
+                onClick={() => run("claim", "claim-rewards", {},
+                  { label: `Claim ${money(r!.claimable)}`, done: `Claimed ${money(r!.claimable)}` })}
                 className={`${BTN} w-full disabled:!bg-panel3 disabled:!text-muted-foreground disabled:!opacity-100`}>
                 {busy === "claim" ? "Claiming"
                   : r && r.claimable > 0 ? `Claim ${money(r.claimable)}` : "Nothing to claim"}

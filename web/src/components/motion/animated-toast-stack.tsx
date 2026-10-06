@@ -3,8 +3,8 @@
 
 import {
   AlertCircle,
-  Bell,
   Check,
+  ExternalLink,
   Info,
   LoaderCircle,
   X,
@@ -43,6 +43,17 @@ export type AnimatedToastAction = {
   onClick: (toast: AnimatedToast) => void;
 };
 
+/// A link under the toast's text. A path on this site is followed in place by
+/// the site's router; an outside address opens in a new tab with a small mark.
+/// `primary` draws it as a button, for the one next step the toast offers.
+export type AnimatedToastLink = {
+  label: ReactNode;
+  href: string;
+  primary?: boolean;
+  /// Muted, monospaced text beside the link, such as a short signature.
+  aside?: string;
+};
+
 export type AnimatedToast = {
   id: string;
   title: ReactNode;
@@ -50,6 +61,7 @@ export type AnimatedToast = {
   status?: ToastStatus;
   icon?: ReactNode;
   action?: AnimatedToastAction;
+  links?: AnimatedToastLink[];
   duration?: number;
   dismissible?: boolean;
   createdAt?: number;
@@ -105,8 +117,9 @@ const CONTENT_TRANSITION = {
   ease: EASE_OUT,
 } as const;
 
-const STATUS_ICON: Record<ToastStatus, LucideIcon> = {
-  neutral: Bell,
+// A neutral toast is a plain line of text: there is no state to signal.
+const STATUS_ICON: Record<ToastStatus, LucideIcon | null> = {
+  neutral: null,
   info: Info,
   loading: LoaderCircle,
   success: Check,
@@ -114,11 +127,11 @@ const STATUS_ICON: Record<ToastStatus, LucideIcon> = {
 };
 
 const STATUS_CLASS: Record<ToastStatus, string> = {
-  neutral: "text-muted-foreground bg-primary/[0.05]",
-  info: "text-primary bg-primary/10",
-  loading: "text-primary bg-primary/10",
-  success: "text-up bg-up/10",
-  error: "text-destructive bg-destructive/10",
+  neutral: "text-muted-foreground",
+  info: "text-muted-foreground",
+  loading: "text-muted-foreground",
+  success: "text-up",
+  error: "text-down",
 };
 
 const POSITION_CLASS: Record<ToastPosition, string> = {
@@ -340,9 +353,9 @@ const ToastItem = memo(function ToastItem({
   const reduce = useReducedMotion();
   const status = toast.status ?? "neutral";
   const Icon = STATUS_ICON[status];
-  const iconNode = icons?.[status] ?? toast.icon ?? <Icon className="h-3.5 w-3.5" />;
+  const iconNode = icons?.[status] ?? toast.icon ?? (Icon ? <Icon className="h-3.5 w-3.5" /> : null);
   const canDismiss = toast.dismissible !== false && Boolean(onDismiss);
-  const hasDetails = Boolean(toast.description || toast.action);
+  const hasDetails = Boolean(toast.description || toast.action || toast.links?.length);
 
   // The side a swipe flung the toast toward, so it leaves the way it was thrown.
   const [swipe, setSwipe] = useState<1 | -1>(1);
@@ -379,19 +392,19 @@ const ToastItem = memo(function ToastItem({
     >
       <div
         className={cn(
-          "relative overflow-hidden rounded-2xl border border-border bg-card/95 p-3 shadow-2xl backdrop-blur-xl",
+          "relative overflow-hidden rounded-[12px] border border-line bg-panel p-3 shadow-[0_8px_24px_rgba(0,0,0,0.12)]",
           classNames?.surface,
         )}
       >
         {renderToast ? (
           renderToast(toast)
         ) : (
-          <div className={cn("flex gap-3", hasDetails ? "items-start" : "items-center")}>
+          <div className={cn("flex gap-2.5", hasDetails ? "items-start" : "items-center")}>
+            {iconNode ? (
             <motion.span
               layout={!reduce}
               className={cn(
-                "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                hasDetails && "mt-0.5",
+                "inline-flex h-5 w-4 shrink-0 items-center justify-center",
                 STATUS_CLASS[status],
                 classNames?.iconWrap,
               )}
@@ -425,6 +438,7 @@ const ToastItem = memo(function ToastItem({
                 </motion.span>
               </AnimatePresence>
             </motion.span>
+            ) : null}
 
             <div className={cn("min-w-0 flex-1", classNames?.content)}>
               <AnimatePresence mode="popLayout" initial={false}>
@@ -458,7 +472,7 @@ const ToastItem = memo(function ToastItem({
                   {toast.description ? (
                     <p
                       className={cn(
-                        "mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground",
+                        "mt-0.5 line-clamp-3 text-pretty text-xs leading-4 text-muted-foreground",
                         classNames?.description,
                       )}
                     >
@@ -473,12 +487,41 @@ const ToastItem = memo(function ToastItem({
                   type="button"
                   onClick={() => toast.action?.onClick(toast)}
                   className={cn(
-                    "mt-2 inline-flex h-7 items-center rounded-full bg-primary/[0.06] px-3 text-xs font-medium text-foreground transition-colors hover:bg-primary/[0.1]",
+                    "mt-2 inline-flex h-7 items-center rounded-[8px] border border-line px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-panel2",
                     classNames?.action,
                   )}
                 >
                   {toast.action.label}
                 </button>
+              ) : null}
+
+              {toast.links?.length ? (
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  {toast.links.map((link) => {
+                    const external = /^https?:/.test(link.href);
+                    return (
+                      <span key={link.href} className="inline-flex items-center gap-2">
+                        <a
+                          href={link.href}
+                          {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+                          // A step inside the site is the toast's last word.
+                          onClick={external ? undefined : () => onDismiss?.(toast.id)}
+                          className={
+                            link.primary
+                              ? "inline-flex h-7 items-center rounded-[8px] bg-foreground px-2.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+                              : "inline-flex items-center gap-1 text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                          }
+                        >
+                          {link.label}
+                          {external ? <ExternalLink className="h-3 w-3 text-muted-foreground" /> : null}
+                        </a>
+                        {link.aside ? (
+                          <span className="font-mono text-[11px] text-muted-foreground">{link.aside}</span>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                </div>
               ) : null}
             </div>
 
@@ -486,9 +529,9 @@ const ToastItem = memo(function ToastItem({
               <button
                 type="button"
                 onClick={() => onDismiss?.(toast.id)}
-                aria-label="Dismiss toast"
+                aria-label="Dismiss"
                 className={cn(
-                  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary/[0.06] hover:text-foreground",
+                  "-my-1 -mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-muted-foreground transition-colors hover:bg-panel2 hover:text-foreground",
                   classNames?.close,
                 )}
               >

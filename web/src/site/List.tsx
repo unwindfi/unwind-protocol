@@ -225,7 +225,6 @@ export default function List() {
   const [leverage, setLeverage] = useState<number | null>(null);
   const [size, setSize] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signable, setSignable] = useState<boolean | null>(null);
   const [backing, setBacking] = useState<Record<string, string>>({});
@@ -285,7 +284,7 @@ export default function List() {
   function reset() {
     setToken(null); setPools(null); setPoolsErr(null); setChosen(null);
     setPreview(null); setPreviewErr(null); setLeverage(null); setSize(null);
-    setDone(null); setError(null);
+    setError(null);
   }
 
   function pick(t: TokenHit) {
@@ -419,7 +418,7 @@ export default function List() {
 
   const deploy = async () => {
     if (!preview) return;
-    setBusy(true); setError(null); setDone(null);
+    setBusy(true); setError(null);
     try {
       // One transaction: the market, its observation, its batch and the
       // lister's backing land together or not at all, so a listing never
@@ -437,14 +436,18 @@ export default function List() {
         });
         target = m.pool; lev = fit.leverage; oi = fit.oiUsd;
       }
-      const r = await signAndSend(wallet, "list-market", {
+      // The toast carries the result, and the way to the new market.
+      await signAndSend(wallet, "list-market", {
         pool: target, maxLeverage: lev, maxOiUsd: oi, backing: seedAmount, payWith,
+      }, undefined, {
+        label: `List ${name}`,
+        done: `${name} listed, backed with ${payLabel(seedAmount)}`,
+        note: preview.opensAtListing ? "Trading is open."
+          : `Trading opens in about ${Math.round(preview.seasonSec / 60)} minutes.`,
+        next: { label: `Trade ${name}`, href: `/trade?symbol=${encodeURIComponent(name)}` },
       });
-      if (!r.ok) { setError(r.error ?? "Transaction failed. Check your balance and try again."); return; }
-      setDone(preview.opensAtListing
-        ? `${name} is live, backed with ${payLabel(seedAmount)}.`
-        : `${name} is listed, backed with ${payLabel(seedAmount)}. `
-          + `Trading opens in about ${Math.round(preview.seasonSec / 60)} minutes.`);
+    } catch {
+      // The toast has said the server could not be reached.
     } finally {
       setBusy(false);
     }
@@ -455,14 +458,12 @@ export default function List() {
     if (!(amount > 0)) return;
     setBusy(true); setError(null);
     try {
-      const r = await signAndSend(wallet, "back-market", { symbol: m.symbol, amount, payWith });
-      if (r.ok) {
-        setDone(`${m.symbol} is backed with ${payLabel(amount)}.`);
-        setBacking((b) => ({ ...b, [m.symbol]: "" }));
-      } else {
-        setError(r.error ?? "Transaction failed. Check your balance and try again.");
-      }
-    } finally { setBusy(false); }
+      const r = await signAndSend(wallet, "back-market", { symbol: m.symbol, amount, payWith }, undefined, {
+        label: `Back ${m.symbol} with ${payLabel(amount)}`,
+        done: `Backed ${m.symbol} with ${payLabel(amount)}`,
+      });
+      if (r.ok) setBacking((b) => ({ ...b, [m.symbol]: "" }));
+    } catch { /* the toast has said so */ } finally { setBusy(false); }
   };
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -859,7 +860,6 @@ export default function List() {
                       ? "Read-only. Devnet is not connected, so listing is paused."
                       : "One signature. Listing and backing land together. You pay the rent."}
                   </p>
-                  {done && <p className="text-pretty mt-3 text-[12.5px] leading-relaxed text-up">{done}</p>}
                   {error && <p className="text-pretty mt-3 text-[12.5px] leading-relaxed text-down">{error}</p>}
                 </div>
               </div>
@@ -933,7 +933,6 @@ export default function List() {
                     Connect wallet
                   </button>
                 )}
-                {done && <p className="text-pretty text-[12.5px] leading-relaxed text-up">{done}</p>}
                 {error && <p className="text-pretty text-[12.5px] leading-relaxed text-down">{error}</p>}
               </div>
             )}

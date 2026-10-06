@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatedToastStack, useAnimatedToastStack } from "@/components/motion/animated-toast-stack";
 import { Nav } from "@/components/Nav";
 import { MarketHeader } from "@/components/MarketHeader";
 import { MarketPalette } from "@/components/MarketPalette";
@@ -23,8 +22,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import * as api from "@/lib/api";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { getAccount, getBatch, getMarkets, getTrades, peek, post, usePoll } from "@/lib/api";
-import { signAndSend } from "@/lib/tx";
+import { getAccount, getBatch, getMarkets, getTrades, peek, usePoll } from "@/lib/api";
+import { claimFaucet, signAndSend, type TxToastOptions } from "@/lib/tx";
+import { toast } from "@/lib/toasts";
 import type { Account, Batch, Market, Trade } from "@/lib/api";
 import { money, pnum } from "@/lib/format";
 
@@ -132,8 +132,8 @@ export default function App() {
     return () => { alive = false; clearInterval(id); };
   }, [market?.symbol]);
 
-  // The library owns toast ids, timers and dismissal; we only raise events.
-  const { toasts, showToast, dismissToast } = useAnimatedToastStack({ limit: 4 });
+  // The site's one stack owns toast ids, timers and dismissal; we only raise events.
+  const showToast = toast.show;
 
   // A liquidation is the one event the trader did not initiate, so it is the one
   // that has to interrupt them.
@@ -152,28 +152,23 @@ export default function App() {
 
   /// One entry point for both paths: a connected wallet signs the transaction
   /// itself, and without one the server signs with the demo keypair.
+  /// The toast says what is being signed (`label`), then what landed
+  /// (`done`), with `note` under it for anything accepted now and resolved
+  /// later, which an auction order always is.
   const act = useCallback(async (
     path: string,
     body: Record<string, unknown>,
-    ok: string,
+    t: TxToastOptions,
     record?: { symbol: string; side: "buy" | "sell"; size: number; kind: string },
-    /// Shown under the confirmation. For anything that is accepted now and
-    /// resolves later, which an auction order always is.
-    note?: string
   ) => {
     // Every action is signed by the trader's own wallet; without one there is
     // nothing to sign with, so ask for it.
     if (!wallet.publicKey) { openWallet(true); return; }
     setBusy(true);
     try {
-      const r = await signAndSend(wallet, path.replace(/^\//, ""), body, record);
-      showToast(r.ok
-        ? { title: ok, description: note, status: "success" }
-        : { title: "Not accepted", description: r.error ?? "Check your balance and try again.", status: "error" });
+      await signAndSend(wallet, path.replace(/^\//, ""), body, record, t);
     } catch {
-      showToast({ title: "Network error",
-        description: "Unable to reach the server. Check your connection and try again.",
-        status: "error" });
+      // The toast has already said the server could not be reached.
     } finally {
       setBusy(false);
       // An order lands in the next batch, a few seconds on, so read again
@@ -181,7 +176,7 @@ export default function App() {
       setAccountTick((t) => t + 1);
       for (const ms of [2000, 4000, 6500, 9000]) setTimeout(() => setAccountTick((t) => t + 1), ms);
     }
-  }, [showToast, wallet, openWallet]);
+  }, [wallet, openWallet]);
 
   /// A close fills at the batch's price for as much as the batch can match.
   /// In a crowded batch that can be part of the position, and the rest stays
@@ -205,7 +200,8 @@ export default function App() {
   const onCloseAll = (s: string) => {
     const p = account?.positions[s];
     if (p) pendingClose.current = { symbol: s, size: p.size, at: Date.now() };
-    return act("/close", { symbol: s }, `Close ${s} queued`, undefined, CLOSE_NOTE);
+    return act("/close", { symbol: s },
+      { label: `Close ${s}`, done: `Close ${s} queued`, note: CLOSE_NOTE });
   };
 
   /// Funds a freshly connected wallet with test USDC, and SOL when it has
@@ -215,22 +211,12 @@ export default function App() {
     if (!owner) return;
     setBusy(true);
     try {
-      const r = await post("/faucet", { owner }) as { ok: boolean; error?: string; usdc?: number; sol?: number };
-      showToast(r.ok
-        ? {
-            title: "Funded",
-            description: `${(r.usdc ?? 0).toLocaleString()} test USDC` + (r.sol ? ` and ${r.sol} SOL` : ""),
-            status: "success",
-          }
-        : { title: "Faucet failed", description: r.error ?? "Try again in a minute.", status: "error" });
-    } catch {
-      showToast({ title: "Faucet failed",
-        description: "Unable to reach the server. Try again in a minute.", status: "error" });
+      await claimFaucet(owner);
     } finally {
       setBusy(false);
       setAccountTick((t) => t + 1);
     }
-  }, [owner, showToast]);
+  }, [owner]);
 
   /*
    * Before the first market list lands, draw the terminal's shape rather
@@ -244,19 +230,27 @@ export default function App() {
   const ticket = (
     <OrderTicket
           onLimit={(a) => act("/order/trigger",
-            { symbol: market.symbol, kind: "limit", ...a },
-            `Limit ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} at ${a.triggerPrice}`)}
+            { symbol: market.symbol, kind: "limit", ...a }, {
+              label: `Limit ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} ${market.symbol}`,
+              done: `Limit ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} at ${a.triggerPrice}`,
+            })}
           onTrigger={(t) => act("/order/trigger",
-            { symbol: market.symbol, ...t }, `${t.kind === "tp" ? "Take profit" : "Stop"} set at ${t.triggerPrice}`)}
+            { symbol: market.symbol, ...t }, {
+              label: `${t.kind === "tp" ? "Take profit" : "Stop"} ${market.symbol} at ${t.triggerPrice}`,
+              done: `${t.kind === "tp" ? "Take profit" : "Stop"} set at ${t.triggerPrice}`,
+            })}
           onCancelTrigger={(slot) => act("/order/cancel",
-            { symbol: market.symbol, slot }, "Order cancelled")}
-          onReduce={({ size }) => act("/close", { symbol: market.symbol, size },
-            `Reduce ${market.symbol} by ${money(size, 0)} queued`,
-            undefined,
-            "Exits clear in the next batch, same price as entries.")}
-          onMaker={(a) => act("/order", { symbol: market.symbol, ...a },
-            `Maker ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} at ${a.price} posted`,
-            undefined, "Rests this batch. Unfilled, the margin comes back.")}
+            { symbol: market.symbol, slot }, { label: `Cancel ${market.symbol} order`, done: "Order cancelled" })}
+          onReduce={({ size }) => act("/close", { symbol: market.symbol, size }, {
+            label: `Reduce ${market.symbol} by ${money(size, 0)}`,
+            done: `Reduce ${market.symbol} by ${money(size, 0)} queued`,
+            note: "Exits clear in the next batch, same price as entries.",
+          })}
+          onMaker={(a) => act("/order", { symbol: market.symbol, ...a }, {
+            label: `Maker ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} ${market.symbol}`,
+            done: `Maker ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} at ${a.price} posted`,
+            note: "Rests this batch. Unfilled, the margin comes back.",
+          })}
           onFund={owner ? fund : undefined}
       m={market} account={account} busy={busy || readOnly} mobile={isMobile}
       onConnect={owner ? undefined : () => openWallet(true)}
@@ -269,17 +263,20 @@ export default function App() {
         // batch clears, so the confirmation says what actually happened --
         // telling someone they are long when they are queued is the kind of
         // small lie that costs trust the first time a batch does not cross.
-        act("/order", { symbol: market.symbol, isLong, size, collateral },
-          `${isLong ? "Long" : "Short"} ${money(size, 0)} ${market.symbol} queued`,
-          undefined,
-          market.observed && !market.observed.seasoned
+        act("/order", { symbol: market.symbol, isLong, size, collateral }, {
+          label: `${isLong ? "Long" : "Short"} ${money(size, 0)} ${market.symbol}`,
+          done: `${isLong ? "Long" : "Short"} ${money(size, 0)} ${market.symbol} queued`,
+          note: market.observed && !market.observed.seasoned
             ? "Clears in the opening auction."
-            : "Fills when the next batch clears, in a few seconds.");
+            : "Fills when the next batch clears, in a few seconds.",
+        });
       }}
       /* The pool is Earn's job on a wide screen, where the rail links to it.
          The phone's account pane keeps its deposit as it was. */
       onPool={isMobile ? (kind, amount) =>
-        act(`/${kind}`, { amount }, kind === "deposit" ? "Deposited to pool" : "Withdrew from pool")
+        act(`/${kind}`, { amount }, kind === "deposit"
+          ? { label: `Deposit ${money(amount)}`, done: "Deposited to pool" }
+          : { label: "Withdraw from pool", done: "Withdrew from pool" })
         : undefined}
     />
   );
@@ -290,8 +287,6 @@ export default function App() {
     <>
       <MarketPalette markets={markets} open={paletteOpen} onOpenChange={setPaletteOpen}
         onSelect={(s) => { setSymbol(s); setPaletteOpen(false); }} />
-      <AnimatedToastStack toasts={toasts} onDismiss={dismissToast}
-        position={isMobile ? "top-center" : "bottom-right"} placement="fixed" />
     </>
   );
 
@@ -368,7 +363,7 @@ export default function App() {
       markets={markets} market={market} owner={owner}
       onClose={onCloseAll}
       onCancelOrder={(o) => act("/order/cancel", { symbol: o.symbol, slot: o.slot },
-        "Order cancelled")} />
+        { label: `Cancel ${o.symbol} order`, done: "Order cancelled" })} />
   );
   const chart = (
     <ChartPanel market={market} tf={tf} onTf={setTf} account={account} batch={batch} />

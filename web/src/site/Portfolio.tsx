@@ -81,14 +81,13 @@ export default function PortfolioPage() {
   const fills = fillsRaw ?? NO_FILLS;
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
   const cancel = async (o: Order) => {
-    const key = `${o.symbol}:${o.slot}`;
-    setBusy(key); setNote(null);
-    const res = await signAndSend(wallet, "order/cancel", { symbol: o.symbol, slot: o.slot });
-    setBusy(null);
-    setNote(res.ok ? null : res.error ?? "failed");
-    if (res.ok) setTick((t) => t + 1);
+    setBusy(`${o.symbol}:${o.slot}`);
+    try {
+      const res = await signAndSend(wallet, "order/cancel", { symbol: o.symbol, slot: o.slot }, undefined,
+        { label: `Cancel ${o.symbol} order`, done: "Order cancelled" });
+      if (res.ok) setTick((t) => t + 1);
+    } catch { /* the toast has said so */ } finally { setBusy(null); }
   };
 
   const positions = account
@@ -168,7 +167,6 @@ export default function PortfolioPage() {
                     Read-only. Devnet is not connected, so there is nothing to read.
                   </p>
                 )}
-                {note && <p className="mt-3 text-[12.5px] text-down">{note}</p>}
               </div>
             </div>
           </section>

@@ -257,9 +257,16 @@ export const getMarkets = async () => {
   return (await import("./live")).liveMarkets();
 };
 
+/// The cluster the server last said it serves, from any account read. Null
+/// until one lands.
+let servedCluster: string | null = null;
+export const knownCluster = () => servedCluster;
+
 export const getAccount = async (owner?: string) => {
   if (await hasBackend()) {
-    return get<Account>("/api/account" + (owner ? `?owner=${owner}` : ""));
+    const a = await get<Account>("/api/account" + (owner ? `?owner=${owner}` : ""));
+    if (a?.cluster) servedCluster = a.cluster;
+    return a;
   }
   return (await import("./live")).liveAccount();
 };

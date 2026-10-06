@@ -163,6 +163,11 @@ const routeFor = (path: string) =>
  * network. Building a fresh `lazy` on each render would re-suspend every
  * time and undo the point of the exercise.
  */
+/// The site's toast stack, beside the page rather than inside it so a toast
+/// outlives a page change. Its own chunk, and only off the waitlist: the
+/// front page raises none and should not wait on the motion library for it.
+const ToastHost = UNLOCKED ? lazy(() => import("./components/ToastHost")) : null;
+
 const built = new Map<string, ComponentType>();
 const pageFor = (path: string) => {
   const hit = built.get(path);
@@ -242,7 +247,13 @@ function Site() {
    * their query once, at mount, which is the simplest thing that can work
    * and stays correct as long as a changed query means a changed page.
    */
-  return <Page key={url} />;
+  return (
+    <>
+      <Page key={url} />
+      {/* Its own boundary, so loading it never holds the page back. */}
+      {ToastHost && path !== "/" && <Suspense fallback={null}><ToastHost /></Suspense>}
+    </>
+  );
 }
 
 // The `/waitlist` alias and, while locked, anything that is not the front

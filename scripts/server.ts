@@ -4716,12 +4716,13 @@ app.post("/api/faucet", async (req, res) => {
       createAssociatedTokenAccountIdempotentInstruction(authority.publicKey, addr, owner, usdcMint),
       createMintToInstruction(usdcMint, addr, authority.publicKey, BigInt(FAUCET_USDC) * 1_000_000n),
     );
-    await sendV0(conn, authority, ixs);
+    const sig = await sendV0(conn, authority, ixs);
     accountMemo.delete(owner.toBase58());
 
     claims.push({ owner: owner.toBase58(), ip, t: now, sol: IS_LOCAL ? 0 : sol });
     if (!IS_LOCAL) fs.writeFileSync(FAUCET_FILE, JSON.stringify(claims));
-    res.json({ ok: true, usdc: FAUCET_USDC, sol });
+    // The signature, so the page can link the transfer on an explorer.
+    res.json({ ok: true, usdc: FAUCET_USDC, sol, sig });
   } catch (e: any) { res.status(400).json({ ok: false, error: explain(e) }); }
 });
 
