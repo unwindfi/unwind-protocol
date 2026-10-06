@@ -1778,6 +1778,47 @@ function recordTrade({ owner, ...t }: any) {
   const m = rt[t.symbol];
   if (m) m.volume += t.size;
 }
+/*
+ * Who has traded each market, for the devnet creator score.
+ *
+ * Filled USD by wallet, by market address, from the settlements this server
+ * sends: every fill in a cleared batch, maker or taker, open or close.
+ * Liquidations and the page's own trade notes are left out; neither is a
+ * wallet choosing to trade the market. Kept in .cache, which a deploy
+ * carries over, and written at most every half minute.
+ */
+const TRADERS_FILE = path.join(ROOT, ".cache", `${CLUSTER}-market-traders.json`);
+/// Filled volume a wallet needs in a market before it counts as one of its
+/// traders. Below it a wallet is dust: a fresh wallet with one tiny fill.
+const CREATOR_MIN_TRADER_USD = 100;
+let marketTraders: Record<string, Record<string, number>> = {};
+try { marketTraders = JSON.parse(fs.readFileSync(TRADERS_FILE, "utf8")); } catch { marketTraders = {}; }
+let tradersDirty = false;
+function noteFill(market: string, owner: string, usd: number) {
+  if (!(usd > 0)) return;
+  const m = (marketTraders[market] ??= {});
+  m[owner] = (m[owner] ?? 0) + usd;
+  tradersDirty = true;
+}
+setInterval(() => {
+  if (!tradersDirty) return;
+  tradersDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(TRADERS_FILE), { recursive: true });
+    fs.writeFileSync(TRADERS_FILE, JSON.stringify(marketTraders));
+  } catch (e: any) { console.warn(`market traders: ${e?.message ?? e}`); }
+}, 30_000);
+/// The wallets that count toward a market's creator score: each one once,
+/// however much it traded, once it has filled $100 there. The market's own
+/// deployer and the server's wallets never count.
+function countedTraders(market: string, deployer: string, house: Set<string>): number {
+  let n = 0;
+  for (const [w, usd] of Object.entries(marketTraders[market] ?? {})) {
+    if (usd >= CREATOR_MIN_TRADER_USD && w !== deployer && !house.has(w)) n++;
+  }
+  return n;
+}
+
 /// Scans every open position in the program, not just one account's.
 ///
 /// The keeper used to check the demo account's twelve PDAs. That was fine while
@@ -2278,6 +2319,39 @@ async function trimBudget(market: PublicKey, o: any) {
   console.log(
     `budget ${market.toBase58().slice(0, 8)} ` +
     `$${(num(ma.lossBudgetUsd) / 1e6).toFixed(0)} -> $${(depth / 1e6).toFixed(0)}`);
+}
+
+/*
+ * Whose request this is, for the per-address limits (the faucet, new devnet
+ * tokens). Never a header the caller wrote.
+ *
+ * The site on Vercel forwards every call, so the socket is Vercel's. Its
+ * forwarder sends the caller's address (from x-real-ip, which Vercel sets)
+ * with FORWARD_SECRET next to it, and only that pair is believed. Caddy
+ * proxies to this process on 127.0.0.1 and writes X-Forwarded-For itself:
+ * without trusted_proxies it drops whatever the caller sent and puts down
+ * the address it saw, so from loopback the last entry is Caddy's word.
+ * Anything else is the socket's own address.
+ */
+const FORWARD_SECRET = process.env.FORWARD_SECRET ?? "";
+if (!FORWARD_SECRET && !IS_LOCAL) {
+  console.warn("FORWARD_SECRET is unset: every call through the site counts as one address (Vercel's)");
+}
+const secretHash = (v: string) => crypto.createHash("sha256").update(v).digest();
+const LOOPBACK = new Set(["127.0.0.1", "::1"]);
+function clientIp(req: express.Request): string {
+  const socket = String(req.socket.remoteAddress ?? "").replace(/^::ffff:/, "");
+  const sent = req.headers["x-forward-secret"];
+  const ip = req.headers["x-client-ip"];
+  if (FORWARD_SECRET && typeof sent === "string" && typeof ip === "string" && ip.trim()
+    && crypto.timingSafeEqual(secretHash(sent), secretHash(FORWARD_SECRET))) {
+    return ip.trim();
+  }
+  const xff = req.headers["x-forwarded-for"];
+  if (LOOPBACK.has(socket) && typeof xff === "string" && xff.trim()) {
+    return xff.split(",").pop()!.trim().replace(/^::ffff:/, "");
+  }
+  return socket;
 }
 
 const app = express();
@@ -3286,6 +3360,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
             kind: o.reduceOnly ? "close" : "open",
             owner: new PublicKey(o.owner).toBase58(),
           });
+          noteFill(m.address.toBase58(), new PublicKey(o.owner).toBase58(), Number(o.filledUsd) / 1e6);
         }
       };
       const send = (ixs: TransactionInstruction[]) =>
@@ -3486,7 +3561,7 @@ app.post("/api/devnet-copy", async (req, res) => {
     const depthUsd = Number(main.depthUsd) || 0;
     if (depthUsd < COPY_MIN_DEPTH_USD) throw new Error("that pool is too thin to list");
 
-    const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+    const ip = clientIp(req);
     const today = copies.filter((c) => Date.now() - (c.t ?? 0) < DAY_MS);
     if (today.length >= COPY_PER_DAY) throw new Error("devnet has mirrored all it can today; try again tomorrow");
     if (today.filter((c) => c.ip === ip).length >= COPY_PER_IP_PER_DAY) {
@@ -3903,6 +3978,7 @@ app.get("/api/rewards", async (req, res) => {
     // The markets this wallet opened, with what each has earned it.
     const listed: {
       symbol: string; volume: number; earned: number; pending: number; pendingPoints: number;
+      traders: number;
     }[] = [];
     // Every market from the batched read, not a request each: nineteen in a
     // row kept the page's points blank for seconds after the leaderboard.
@@ -3916,8 +3992,10 @@ app.get("/api/rewards", async (req, res) => {
         earned: num(acc.deployerEarnedUsd) / 1e6,
         pending: num(acc.deployerRewardsUsd) / 1e6,
         pendingPoints: (num(acc.volumeUsd) - num(acc.deployerSyncedVolumeUsd)) / 1e6 * 0.1,
+        traders: countedTraders(m.address.toBase58(), owner.toBase58(), HOUSE),
       });
     }
+    const creatorScore = listed.reduce((a, m) => a + m.traders, 0);
     const listingPending = listed.reduce((a, m) => a + m.pending, 0);
     const listingPendingPoints = listed.reduce((a, m) => a + m.pendingPoints, 0);
     const listingVolume = listed.reduce((a, m) => a + m.volume, 0);
@@ -3936,7 +4014,7 @@ app.get("/api/rewards", async (req, res) => {
       .sort((a, b) => b.volume - a.volume);
 
     const base = {
-      account: traderPda(owner).toBase58(), asOf: now, listed, listingVolume, referees,
+      account: traderPda(owner).toBase58(), asOf: now, listed, listingVolume, referees, creatorScore,
     };
     if (!t) {
       return res.json({
@@ -4046,6 +4124,44 @@ app.get("/api/leaderboard", async (req, res) => {
       concentration: total > 0 ? top20 / total : 0,
       top: rows.slice(0, 25).map((r, i) => ({ rank: i + 1, ...r })),
       me: mine >= 0 ? { rank: mine + 1, ...rows[mine], percentile: 1 - mine / rows.length } : null,
+    });
+  } catch (e: any) { res.status(400).json({ error: explain(e) }); }
+});
+
+/// Devnet creators, ranked by distinct traders: for each market a wallet
+/// opened, the wallets that filled $100 or more there, each counted once and
+/// never the deployer's own; summed over the deployer's markets. The rule is
+/// in docs/devnet.md. The server's own markets are not ranked.
+app.get("/api/creators", async (req, res) => {
+  try {
+    const byAddress = await marketsByAddress();
+    const by = new Map<string, { score: number; markets: { symbol: string; traders: number }[] }>();
+    for (const m of Object.values(rt)) {
+      const acc: any = byAddress.get(m.address.toBase58());
+      if (!acc) continue;
+      const deployer = acc.deployer.toBase58();
+      if (HOUSE.has(deployer)) continue;
+      const traders = countedTraders(m.address.toBase58(), deployer, HOUSE);
+      const row = by.get(deployer) ?? { score: 0, markets: [] };
+      row.score += traders;
+      row.markets.push({ symbol: m.symbol, traders });
+      by.set(deployer, row);
+    }
+    const codes = new Map((await allTraders()).map((t) =>
+      [t.owner.toBase58(), t.code[0] ? codeText(t.code) : null]));
+    const rows = [...by.entries()]
+      .map(([wallet, r]) => ({
+        wallet, short: shortKey(wallet), code: codes.get(wallet) ?? null, score: r.score,
+        markets: r.markets.sort((a, b) => b.traders - a.traders),
+      }))
+      .sort((a, b) => b.score - a.score || b.markets.length - a.markets.length);
+    const me = req.query.owner ? String(req.query.owner) : null;
+    const mine = me ? rows.findIndex((r) => r.wallet === me) : -1;
+    res.json({
+      minVolumeUsd: CREATOR_MIN_TRADER_USD,
+      creators: rows.length,
+      top: rows.slice(0, 25).map((r, i) => ({ rank: i + 1, ...r })),
+      me: mine >= 0 ? { rank: mine + 1, ...rows[mine] } : null,
     });
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
@@ -4654,29 +4770,56 @@ async function watchBalance() {
 /// testnet the USDC is still free to mint but the SOL is real devnet SOL out
 /// of the authority's wallet (devnet's own airdrop is too throttled to rely
 /// on), so a wallet can claim once a day, an address can make a few claims a
-/// day, and the SOL handed out across everyone is capped per day. The per-IP
-/// limit is soft, since the caller can set the header; the daily SOL cap is
-/// what bounds the cost.
+/// day, and the SOL and the USDC handed out across everyone are each capped
+/// per day. The address is clientIp's, never a header the caller set. With
+/// TURNSTILE_SECRET set, a claim also needs a Cloudflare Turnstile token the
+/// page got for it, checked against that address.
 const FAUCET_USDC = Number(process.env.FAUCET_USDC ?? (IS_LOCAL ? 250_000 : 10_000));
 const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? (IS_LOCAL ? 2 : 0.2));
 const FAUCET_SOL_PER_DAY = Number(process.env.FAUCET_SOL_PER_DAY ?? 10);
+/// Test USDC across every claim in the last 24 hours. Test USDC has no
+/// value, but a supply anyone can mint without bound makes every balance,
+/// pool and leaderboard figure on devnet meaningless.
+const FAUCET_USDC_PER_DAY = Number(process.env.FAUCET_USDC_PER_DAY ?? 2_000_000);
 const FAUCET_PER_IP_PER_DAY = 3;
 const DAY_MS = 86_400_000;
 const FAUCET_FILE = path.join(ROOT, `.${CLUSTER}-faucet.json`);
 /// Below this the authority keeps its SOL for the crank's own fees: a faucet
 /// that drained it would stop every batch from clearing.
 const AUTHORITY_SOL_FLOOR = Number(process.env.AUTHORITY_SOL_FLOOR ?? 1);
-type Claim = { owner: string; ip: string; t: number; sol: number };
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET ?? "";
+if (!TURNSTILE_SECRET && !IS_LOCAL) {
+  console.warn("TURNSTILE_SECRET is unset: faucet claims are not checked for a human");
+}
+/// Cloudflare's answer on a Turnstile token. Each token is good once.
+async function humanCheck(token: unknown, ip: string): Promise<boolean> {
+  if (typeof token !== "string" || !token || token.length > 2048) return false;
+  const form = new URLSearchParams({ secret: TURNSTILE_SECRET, response: token });
+  if (ip) form.set("remoteip", ip);
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST", body: form, signal: AbortSignal.timeout(10_000),
+    });
+    const out: any = await r.json();
+    if (!out.success) console.warn(`turnstile: ${(out["error-codes"] ?? []).join(", ") || r.status}`);
+    return out.success === true;
+  } catch (e: any) {
+    console.warn(`turnstile: ${e?.message ?? e}`);
+    return false;
+  }
+}
+type Claim = { owner: string; ip: string; t: number; sol: number; usdc?: number };
 let claims: Claim[] = [];
 try { claims = JSON.parse(fs.readFileSync(FAUCET_FILE, "utf8")); } catch { claims = []; }
 
 app.post("/api/faucet", async (req, res) => {
+  let held: Claim | null = null;
   try {
     // `ownerOf` falls back to the demo trader, which is right for reads and
     // wrong for a faucet.
     if (!req.body?.owner) throw new Error("owner is required");
     const owner = ownerOf(req);
-    const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+    const ip = clientIp(req);
     const now = Date.now();
     claims = claims.filter((c) => now - c.t < DAY_MS);
     if (!IS_LOCAL) {
@@ -4687,6 +4830,20 @@ app.post("/api/faucet", async (req, res) => {
       }
       if (claims.filter((c) => c.ip === ip).length >= FAUCET_PER_IP_PER_DAY) {
         throw new Error("too many claims from this address today");
+      }
+      const minted = claims.reduce((a, c) => a + (c.usdc ?? FAUCET_USDC), 0);
+      if (minted + FAUCET_USDC > FAUCET_USDC_PER_DAY) {
+        const oldest = Math.min(...claims.map((c) => c.t));
+        const hours = Math.max(1, Math.ceil((oldest + DAY_MS - now) / 3_600_000));
+        throw new Error(`the faucet has given out its ${FAUCET_USDC_PER_DAY.toLocaleString("en-US")} test USDC `
+          + `for today; try again in ${hours}h`);
+      }
+      // Held from here, so two claims sent at once cannot both pass the
+      // checks above while the first is still minting.
+      held = { owner: owner.toBase58(), ip, t: now, sol: 0, usdc: FAUCET_USDC };
+      claims.push(held);
+      if (TURNSTILE_SECRET && !(await humanCheck(req.body?.turnstile, ip))) {
+        throw new Error("the human check did not pass; try again");
       }
     }
 
@@ -4704,6 +4861,7 @@ app.post("/api/faucet", async (req, res) => {
       // devnet's own faucet to spend it.
       if (given + FAUCET_SOL <= FAUCET_SOL_PER_DAY) sol = FAUCET_SOL;
     }
+    if (held) held.sol = sol;
 
     const addr = ata(owner, usdcMint);
     const ixs: TransactionInstruction[] = [];
@@ -4719,11 +4877,14 @@ app.post("/api/faucet", async (req, res) => {
     const sig = await sendV0(conn, authority, ixs);
     accountMemo.delete(owner.toBase58());
 
-    claims.push({ owner: owner.toBase58(), ip, t: now, sol: IS_LOCAL ? 0 : sol });
     if (!IS_LOCAL) fs.writeFileSync(FAUCET_FILE, JSON.stringify(claims));
     // The signature, so the page can link the transfer on an explorer.
     res.json({ ok: true, usdc: FAUCET_USDC, sol, sig });
-  } catch (e: any) { res.status(400).json({ ok: false, error: explain(e) }); }
+  } catch (e: any) {
+    // A claim that sent nothing does not count against the wallet.
+    if (held) claims = claims.filter((c) => c !== held);
+    res.status(400).json({ ok: false, error: explain(e) });
+  }
 });
 
 // The web3.js connection rejects from places that are not on an await we own —

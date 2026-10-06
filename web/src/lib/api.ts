@@ -340,8 +340,12 @@ export interface Rewards {
   backing: number;
   lp: number;
   canSetReferrer?: boolean;
-  listed: { symbol: string; volume: number; earned: number; pending: number }[];
+  /// `traders`: wallets with $100+ filled in the market, the deployer not
+  /// among them. Absent from a server older than the creator score.
+  listed: { symbol: string; volume: number; earned: number; pending: number; traders?: number }[];
   listingVolume: number;
+  /// The devnet creator score: `traders` summed over the wallet's markets.
+  creatorScore?: number;
   referees: { wallet: string; code: string | null; volume: number; points: number;
               usdc: number; since: number }[];
 }
@@ -370,6 +374,25 @@ export interface Leaderboard {
   top: LeaderRow[];
   me: (LeaderRow & { percentile: number }) | null;
 }
+
+export interface CreatorRow {
+  rank: number; wallet: string; short: string; code: string | null;
+  score: number; markets: { symbol: string; traders: number }[];
+}
+/// Devnet creators by distinct traders. See docs/devnet.md for the rule.
+export interface Creators {
+  /// Filled USD a wallet needs in a market before it counts there.
+  minVolumeUsd: number;
+  creators: number;
+  top: CreatorRow[];
+  me: CreatorRow | null;
+}
+
+/// Null without a backend, or from a server that has no creator score yet.
+export const getCreators = async (owner?: string) => {
+  if (!(await hasBackend())) return null;
+  return get<Creators>(`/api/creators${owner ? `?owner=${owner}` : ""}`).catch(() => null);
+};
 
 export const getLeaderboard = async (period: "all" | "week", owner?: string) => {
   if (!(await hasBackend())) return null;

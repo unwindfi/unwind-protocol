@@ -20,8 +20,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import * as api from "@/lib/api";
 import {
-  checkCode, getLeaderboard, getRewards, useHasBackend, usePoll,
-  type LeaderRow, type Leaderboard, type Rewards,
+  checkCode, getCreators, getLeaderboard, getRewards, useHasBackend, usePoll,
+  type CreatorRow, type Creators, type LeaderRow, type Leaderboard, type Rewards,
 } from "@/lib/api";
 import { storedRef } from "@/lib/ref";
 import { signAndSend, type TxToastOptions } from "@/lib/tx";
@@ -116,6 +116,7 @@ export default function RewardsPage() {
   const r = usePoll<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
   const all = usePoll<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner], undefined, tick);
   const week = usePoll<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner], undefined, tick);
+  const creators = usePoll<Creators | null>(() => getCreators(owner), 60_000, [owner], undefined, tick);
   const refresh = () => setTick((t) => t + 1);
 
   // Backing and the pool earn by the second, so those points are carried
@@ -284,7 +285,12 @@ export default function RewardsPage() {
           </Tabs>
         </div>
 
-        {tab === "leaderboard" && <Board all={all} week={week} owner={owner} self={self} who={who} />}
+        {tab === "leaderboard" && (
+          <>
+            <Board all={all} week={week} owner={owner} self={self} who={who} />
+            {creators && <CreatorBoard c={creators} owner={owner} self={self} who={who} />}
+          </>
+        )}
 
         {tab === "referrals" && (
           owner && r ? (
@@ -427,6 +433,53 @@ function Board({ all, week, owner, self, who }: {
   );
 }
 
+const CREATORS = "grid grid-cols-[40px_minmax(0,1fr)_minmax(0,.8fr)] items-center gap-x-4 " +
+  "md:grid-cols-[48px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,.8fr)]";
+
+/// Devnet creators by distinct traders, the score their mainnet rewards are
+/// set from. The rule is stated under the table, as the server counts it.
+function CreatorBoard({ c, owner, self, who }: {
+  c: Creators; owner?: string; self: boolean; who: (a: string, code?: string | null) => string;
+}) {
+  const rows = c.top;
+  const pinned = c.me && !rows.some((t) => t.wallet === c.me!.wallet) ? c.me : null;
+  const Line = ({ row }: { row: CreatorRow }) => (
+    <div className={`${CREATORS} border-t border-line px-5 py-3 text-[13.5px] sm:px-7 ${
+      row.wallet === owner ? "bg-panel2" : ""}`}>
+      <span className={`n ${row.rank <= 3 ? "font-semibold" : "text-muted-foreground"}`}>{row.rank}</span>
+      <span className="n min-w-0 truncate font-medium">
+        {who(row.wallet, row.code)}
+        {row.wallet === owner && self && <span className="ml-2 font-normal text-muted-foreground">(you)</span>}
+      </span>
+      <span className="n text-right md:text-left">{row.score.toLocaleString()}</span>
+      <span className="hidden min-w-0 truncate text-muted-foreground md:block"
+        title={row.markets.map((m) => `${m.symbol} ${m.traders}`).join(", ")}>
+        {row.markets.map((m) => m.symbol).join(", ")}
+      </span>
+    </div>
+  );
+  return (
+    <Card title="Creators" aside={
+      <span className="n text-[12.5px] text-muted-foreground">
+        {c.creators.toLocaleString()} {c.creators === 1 ? "wallet" : "wallets"} with markets
+      </span>
+    }>
+      <Head cols={CREATORS}>
+        <span>#</span><span>Wallet</span>
+        <span className="text-right md:text-left">Traders</span>
+        <span className="hidden md:block">Markets</span>
+      </Head>
+      {pinned && <Line row={pinned} />}
+      {rows.map((row) => <Line key={row.wallet} row={row} />)}
+      {rows.length === 0 && <Empty>No markets from testers yet.</Empty>}
+      <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">
+        A wallet counts once in each market where it has filled {money(c.minVolumeUsd, 0)} or more.
+        The market's deployer never counts. Summed over a creator's markets.
+      </p>
+    </Card>
+  );
+}
+
 function Referrals({ r, self, explorer }: {
   r: Rewards; self: boolean; explorer: (a: string) => string;
 }) {
@@ -465,11 +518,14 @@ function Referrals({ r, self, explorer }: {
 }
 
 function Markets({ r, self }: { r: Rewards; self: boolean }) {
-  const cols = "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 " +
-    "md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]";
+  const cols = "grid grid-cols-[minmax(0,1.2fr)_minmax(0,.7fr)_minmax(0,1fr)_minmax(0,1fr)] items-center " +
+    "gap-x-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,.8fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]";
   return (
     <Card title="Markets opened" aside={
-      <span className="n text-[12.5px] text-muted-foreground">{money(r.earned.listing)} earned</span>
+      <span className="n text-[12.5px] text-muted-foreground">
+        {r.creatorScore != null && <>{r.creatorScore.toLocaleString()} creator score · </>}
+        {money(r.earned.listing)} earned
+      </span>
     }>
       {r.listed.length === 0 ? (
         <Empty>
@@ -479,13 +535,14 @@ function Markets({ r, self }: { r: Rewards; self: boolean }) {
       ) : (
         <>
           <Head cols={cols}>
-            <span>Market</span><span>Volume</span><span>USDC</span>
+            <span>Market</span><span>Traders</span><span>Volume</span><span>USDC</span>
             <span className="hidden md:block">Points</span>
           </Head>
           {r.listed.map((m) => (
             <a key={m.symbol} href={`/trade?symbol=${m.symbol}`}
               className={`${cols} border-t border-line px-5 py-3 text-[13.5px] hover:bg-panel2 sm:px-7`}>
               <span title={m.symbol} className="min-w-0 truncate font-medium">{m.symbol}</span>
+              <span className="n">{m.traders ?? DASH}</span>
               <span className="n">{compact(m.volume)}</span>
               <span className="n">{money(m.earned)}</span>
               <span className="n hidden md:block">{points(m.volume * 0.1)}</span>

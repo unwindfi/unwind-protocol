@@ -3,6 +3,7 @@ import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { storedRef } from "./ref";
 import { apiUrl, knownCluster, post } from "./api";
 import { toast } from "./toasts";
+import { humanToken } from "./turnstile";
 
 export interface BuiltTx {
   tx: string;
@@ -153,15 +154,19 @@ async function send(
   return sent.json();
 }
 
-/// The faucet: test USDC, and SOL when the wallet is short of it. The server
-/// signs this one, so the toast starts at "Confirming" rather than at the
-/// wallet.
+/// The faucet: test USDC, and SOL when the wallet is short of it. Every
+/// "Get test funds" button comes here, so each one asks for the human check
+/// first (when the build has a Turnstile key). The server signs the claim,
+/// so the toast starts at "Confirming" rather than at the wallet.
 export async function claimFaucet(owner: string) {
   const label = "Get test funds";
+  const turnstile = await humanToken();
+  // Closed without passing: nothing was asked of the server, so no toast.
+  if (turnstile === null) return { ok: false, error: "cancelled" } as TxResult & { usdc?: number; sol?: number };
   const id = txToast.begin(label);
   let r: TxResult & { usdc?: number; sol?: number };
   try {
-    r = await post("/faucet", { owner });
+    r = await post("/faucet", turnstile ? { owner, turnstile } : { owner });
   } catch {
     r = { ok: false, error: "Unable to reach the server. Try again in a minute." };
   }

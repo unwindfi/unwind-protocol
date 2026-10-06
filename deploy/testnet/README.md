@@ -95,6 +95,45 @@ VITE_RPC_URL=https://api.devnet.solana.com
 ```
 
 and redeploy. With `TESTNET_API_URL` unset the site goes back to read-only.
+
+## Callers and the faucet
+
+The faucet and new devnet tokens are limited per caller address, so the
+server must know the address without believing the caller. Two settings
+do it, and both go in two places:
+
+| Variable | On the box (`/etc/unwind/testnet.env`) | In the Vercel project |
+|---|---|---|
+| `FORWARD_SECRET` | yes | yes, the same value |
+| `TURNSTILE_SECRET` | yes | no |
+| `VITE_TURNSTILE_SITE_KEY` | no | yes (read at build time, so redeploy) |
+| `FAUCET_USDC_PER_DAY` | optional, 2,000,000 by default | no |
+
+- **`FORWARD_SECRET`.** The site's forwarder (`api/_forward.ts`) sends the
+  caller's address from Vercel's `x-real-ip` with this secret beside it. The
+  server believes that address only when the secret matches. Otherwise it
+  uses the connection's own address; from Caddy on 127.0.0.1 that is the
+  last `X-Forwarded-For` entry, which Caddy writes itself (it drops what the
+  caller sent unless `trusted_proxies` is set, and the Caddyfile here sets
+  none). A header a caller writes is never used. Unset, the log warns at
+  startup and every call through the site counts as Vercel's one address,
+  so the per-address limits bind everyone together.
+- **Turnstile.** Create a widget in the Cloudflare dashboard (Turnstile, add
+  the site's domains, Managed mode), put the site key in Vercel as
+  `VITE_TURNSTILE_SITE_KEY` and the secret key on the box as
+  `TURNSTILE_SECRET`. Set the site key first and redeploy the site, then set
+  the secret and restart the server: the other order refuses every claim
+  until the site is rebuilt. Unset, the server warns at startup and skips
+  the check.
+- **Limits.** One claim a wallet a day, three an address a day,
+  `FAUCET_SOL_PER_DAY` SOL and `FAUCET_USDC_PER_DAY` test USDC across
+  everyone in any 24 hours. Claims are in `.devnet-faucet.json`, which a
+  deploy keeps.
+
+The devnet creator score (distinct traders per market, see `docs/devnet.md`)
+is counted from the fills this server settles and kept in
+`.cache/devnet-market-traders.json`, which a deploy keeps with the rest of
+`.cache`.
 The browser only uses `VITE_RPC_URL` for the wallet, so the public endpoint is
 fine there and the dedicated RPC key stays on the server.
 

@@ -15,9 +15,12 @@ Connect a devnet wallet. With nothing to trade with, the order ticket shows
 **Get test funds**, and the list and earn pages show it above the form when
 the wallet has no test USDC or too little SOL for rent. It sends 10,000 test
 USDC and, when the wallet holds under 0.1 SOL, 0.2 devnet SOL: enough to
-list a few markets and trade for a day. Each wallet can use it once a day. The
-faucet gives out 10 SOL a day in all; past that it still sends USDC, and SOL
-comes from devnet's own faucet.
+list a few markets and trade for a day. Each wallet can use it once a day,
+and one address three times a day. Before it sends, the page shows a short
+human check (Cloudflare Turnstile). The faucet gives out 10 SOL a day in all;
+past that it still sends USDC, and SOL comes from devnet's own faucet. It
+gives out 2,000,000 test USDC a day in all; past that it refuses until the
+oldest claim of the last 24 hours is a day old.
 
 ## Markets
 
@@ -79,10 +82,18 @@ markets on devnet get two things at mainnet launch:
 - **Points,** credited from a snapshot of their devnet markets.
 - **A fee discount** on mainnet trading.
 
-A market scores by the number of different wallets that traded it, each
-wallet counted once and capped, so trading your own market from many
-wallets adds little. The exact scoring, the discount and its length are
-published here before mainnet.
+A creator's score is counted by the devnet server from the fills it settles:
+
+1. A market's traders are the wallets with $100 or more of filled volume in
+   it, maker or taker, opens and closes together. Liquidations don't count.
+2. Each wallet counts once per market, however much it trades there.
+3. The market's deployer never counts in its own market, and neither do the
+   server's own wallets (the market maker, the pool authority).
+4. A creator's score is the sum of their markets' traders.
+
+The rewards page shows each of your markets' traders and your score, and
+ranks every creator under the points leaderboard. The points per trader,
+the discount and its length are published here before mainnet.
 
 ## Your wallet signs everything
 

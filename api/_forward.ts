@@ -5,6 +5,9 @@
  */
 export const TESTNET = process.env.TESTNET_API_URL?.replace(/\/$/, "");
 const TIMEOUT_MS = 30_000;
+/// Shared with the server (the same FORWARD_SECRET on both), so it can tell
+/// this forwarder's word about the caller's address from anyone else's.
+const FORWARD_SECRET = process.env.FORWARD_SECRET;
 
 /// The testnet server's answer to this request, or null when no testnet is
 /// connected. Only the headers the server reads are passed on.
@@ -22,10 +25,16 @@ export async function forward(req: Request): Promise<Response | null> {
   const headers = new Headers({ accept: req.headers.get("accept") ?? "*/*" });
   const type = req.headers.get("content-type");
   if (type) headers.set("content-type", type);
-  // The server rate-limits the faucet by caller, and without this every
-  // caller would be Vercel.
+  // The server limits the faucet and new devnet tokens by caller, and
+  // without this every caller would be Vercel. Vercel sets x-real-ip itself,
+  // so the browser cannot choose it. The server believes the address only
+  // next to the shared secret: anyone can call the box directly and claim
+  // any address in a header of their own.
   const ip = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0];
-  if (ip) headers.set("x-forwarded-for", ip.trim());
+  if (ip && FORWARD_SECRET) {
+    headers.set("x-forward-secret", FORWARD_SECRET);
+    headers.set("x-client-ip", ip.trim());
+  }
 
   try {
     const r = await fetch(TESTNET + url.pathname + url.search, {
