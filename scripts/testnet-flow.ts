@@ -12,12 +12,16 @@
 /// mark, its velocity clamp, depth, budgets) sees exactly what it would see if
 /// the flow were organic. The authority mints both sides of every pool, so
 /// whatever a swap needs it mints first; nothing here can run out.
-import DLMM, { StrategyType, deriveBinArrayBitmapExtension } from "@meteora-ag/dlmm";
+import DLMM, { StrategyType, deriveBinArrayBitmapExtension, deriveLbPairWithPresetParamWithIndexKey } from "@meteora-ag/dlmm";
 import { BN } from "@coral-xyz/anchor";
 import {
   Connection, Keypair, PublicKey, SYSVAR_RENT_PUBKEY, SystemProgram, sendAndConfirmTransaction, Transaction,
 } from "@solana/web3.js";
-import { createMint, getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
+import {
+  MINT_SIZE, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createInitializeMint2Instruction,
+  createMintToInstruction, getAssociatedTokenAddressSync, getMinimumBalanceForRentExemptMint,
+  getOrCreateAssociatedTokenAccount, mintTo,
+} from "@solana/spl-token";
 
 /// The real token each seeded one follows, by mainnet mint.
 ///
@@ -234,45 +238,59 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
 /// The only bin step devnet has a preset for.
 const BIN_STEP = 10;
 
+/// The preset a pool is created with: one program-wide account, read once.
+let presetKey: Promise<PublicKey> | null = null;
+function binStepPreset(conn: Connection) {
+  presetKey ??= DLMM.getAllPresetParameters(conn).then((all) => {
+    // Devnet carries only the newer preset accounts.
+    const p = all.presetParameter2.find((x) => x.account.binStep === BIN_STEP);
+    if (!p) throw new Error(`no DLMM preset with bin step ${BIN_STEP} on this cluster`);
+    return p.publicKey;
+  }).catch((e) => { presetKey = null; throw e; });
+  return presetKey;
+}
+
 /// Mints a test token and opens a DLMM pool for it against `usdc` at
 /// `price`, with `sideUsd` of liquidity either side. Used by the seeding
-/// script and by the server's copies made on request.
+/// script and by the server's copies made on request. Four transactions in
+/// order: the mint, the pair, the tokens to seed it, the position.
 export async function seedPool(
   conn: Connection, authority: Keypair, usdc: PublicKey,
   t: { price: number; decimals: number; sideUsd?: number },
 ) {
-  const presets = await DLMM.getAllPresetParameters(conn);
-  // Devnet carries only the newer preset accounts.
-  const preset = presets.presetParameter2.find((p) => p.account.binStep === BIN_STEP);
-  if (!preset) throw new Error(`no DLMM preset with bin step ${BIN_STEP} on this cluster`);
+  const preset = await binStepPreset(conn);
+  const mintKp = Keypair.generate();
+  const mint = mintKp.publicKey;
+  await sendAndConfirmTransaction(conn, new Transaction().add(
+    SystemProgram.createAccount({
+      fromPubkey: authority.publicKey, newAccountPubkey: mint, space: MINT_SIZE,
+      lamports: await getMinimumBalanceForRentExemptMint(conn), programId: TOKEN_PROGRAM_ID,
+    }),
+    createInitializeMint2Instruction(mint, t.decimals, authority.publicKey, null),
+  ), [authority, mintKp]);
 
-  const mint = await createMint(conn, authority, authority.publicKey, null, t.decimals);
   // DLMM prices in base units of Y per base unit of X, so the dollar price
   // is scaled by the difference in decimals.
   const perLamport = t.price * 10 ** (6 - t.decimals);
   const activeId = DLMM.getBinIdFromPrice(perLamport, BIN_STEP, true);
-  const create = await DLMM.createLbPair2(
-    conn, authority.publicKey, mint, usdc, preset.publicKey, new BN(activeId));
+  const create = await DLMM.createLbPair2(conn, authority.publicKey, mint, usdc, preset, new BN(activeId));
   await sendAndConfirmTransaction(conn, create, [authority]);
+  // The address createLbPair2 derives: no lookup, which scanned every pair.
+  const [pair] = deriveLbPairWithPresetParamWithIndexKey(preset, mint, usdc, new PublicKey(METEORA_DLMM));
 
-  const pair = await DLMM.getPairPubkeyIfExists(
-    conn, mint, usdc, new BN(BIN_STEP), new BN(preset.account.baseFactor),
-    new BN(preset.account.baseFeePowerFactor ?? 0)) ?? await findPair(conn, mint, usdc);
-  // The pair is read back before the cluster has it everywhere otherwise.
-  await new Promise((r) => setTimeout(r, 2_000));
-  const dlmm = await DLMM.create(conn, pair);
+  let dlmm: DLMM | null = null;
+  for (let i = 0; !dlmm; i++) {
+    try { dlmm = await DLMM.create(conn, pair); } catch (e) {
+      // The node answering may not have the new pair yet.
+      if (i >= 5) throw e;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  }
   const position = await layLiquidity(conn, authority, dlmm, mint.toBase58(), usdc, activeId, t.price, t.sideUsd);
   return { mint, pair, position };
 }
 
-/// The pair just created, found by its two mints when the address derivation
-/// above does not match this SDK version's seeds.
-async function findPair(conn: Connection, x: PublicKey, y: PublicKey): Promise<PublicKey> {
-  const pairs = await DLMM.getLbPairs(conn);
-  const hit = pairs.find((p) => p.account.tokenXMint.equals(x) && p.account.tokenYMint.equals(y));
-  if (!hit) throw new Error(`pair for ${x.toBase58()} not found`);
-  return hit.publicKey;
-}
+const METEORA_DLMM = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo";
 
 /// One position of `SIDE_USD` each side, `HALF_WIDTH` bins either side of
 /// `active`, minted fresh. Shared with the seeding script's shape.
@@ -284,10 +302,16 @@ export async function layLiquidity(
   const decimals = dlmm.tokenX.mint.decimals;
   const x = BigInt(Math.ceil(sideUsd / priceUsd)) * 10n ** BigInt(decimals);
   const y = BigInt(sideUsd) * 1_000_000n;
-  await mintTo(conn, authority, base,
-    (await getOrCreateAssociatedTokenAccount(conn, authority, base, authority.publicKey)).address, authority, x);
-  await mintTo(conn, authority, usdc,
-    (await getOrCreateAssociatedTokenAccount(conn, authority, usdc, authority.publicKey)).address, authority, y);
+  // Both sides minted in one transaction, accounts made if missing.
+  const me = authority.publicKey;
+  const baseAta = getAssociatedTokenAddressSync(base, me);
+  const usdcAta = getAssociatedTokenAddressSync(usdc, me);
+  await sendAndConfirmTransaction(conn, new Transaction().add(
+    createAssociatedTokenAccountIdempotentInstruction(me, baseAta, me, base),
+    createAssociatedTokenAccountIdempotentInstruction(me, usdcAta, me, usdc),
+    createMintToInstruction(base, baseAta, me, x),
+    createMintToInstruction(usdc, usdcAta, me, y),
+  ), [authority]);
   const position = Keypair.generate();
   const tx = await dlmm.initializePositionAndAddLiquidityByStrategy({
     positionPubKey: position.publicKey, user: authority.publicKey,

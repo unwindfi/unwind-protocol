@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Market } from "@/lib/api";
 
-/// Real logo when one exists at /logos/<symbol>.svg, monogram otherwise.
+/// Real logo when one exists at /logos/<symbol>.svg, else the token's own
+/// logo from the API, monogram otherwise.
 export function TickerLogo({ m, size = 26, bare = false }: {
   m: Market; size?: number;
   /// No dark disc behind a real logo: for a small icon beside a word, where
@@ -28,9 +29,11 @@ export function TickerLogo({ m, size = 26, bare = false }: {
         if (!alive) return;
         if (loaded) { setSrc(url); return; }
       }
+      // No file for this ticker: the real token's own logo, when known.
+      if (m.icon) setSrc(m.icon);
     })();
     return () => { alive = false; };
-  }, [m.symbol]);
+  }, [m.symbol, m.icon]);
 
   return (
     <span className="grid flex-none place-items-center overflow-hidden rounded-full font-bold text-white"

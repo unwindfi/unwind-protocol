@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/motion/checkbox";
 import { WalletActions } from "@/components/WalletActions";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import {
-  canSign, copyToDevnet, getMarkets, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
+  canSign, getMarkets, mirrorToDevnet, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
   type TestnetPool,
 } from "@/lib/api";
 import {
@@ -194,26 +194,13 @@ export default function List() {
       p.symbol.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
   }, [testnetPools, query]);
   const [hits, setHits] = useState<TokenHit[]>([]);
-  /// Mainnet tokens with no devnet pool yet, which devnet can copy on request.
+  /// Mainnet tokens with no devnet pool yet. Picked like on mainnet; listing
+  /// one lists a devnet mirror of the chosen pool (see `mirror`).
   const copyable = useMemo(() => {
     if (!testnetPools.length) return [];
     const have = new Set(testnetPools.map((p) => p.real).filter(Boolean));
     return hits.filter((t) => !have.has(t.mint));
   }, [testnetPools, hits]);
-  const [copying, setCopying] = useState<string | null>(null);
-  async function copy(t: TokenHit) {
-    setCopying(t.mint); setSearchErr(null);
-    try {
-      const { pool } = await copyToDevnet(t.mint);
-      setTestnetPools(await getTestnetPools());
-      setOpen(false);
-      await readPoolAddress(pool);
-    } catch (e: any) {
-      setSearchErr(e?.message ?? "Copy failed.");
-    } finally {
-      setCopying(null);
-    }
-  }
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -384,6 +371,30 @@ export default function List() {
       .finally(() => { if (seq.current === mine) setReading(false); });
   }, [chosen, preview, token]);
 
+  /// On devnet a mainnet pool is listed through a devnet mirror of it, built
+  /// to the same depth (POST /api/devnet-copy). Started as soon as the pool
+  /// is chosen, so it is usually there by the time List is pressed.
+  const devnet = testnetPools.length > 0;
+  type Mirror = { pool: string; symbol: string; depthUsd: number };
+  const mirror = useRef<{ key: string; done: Promise<Mirror> } | null>(null);
+  const [mirroring, setMirroring] = useState(false);
+  const startMirror = (mint: string, pool: string) => {
+    const key = `${mint}:${pool}`;
+    if (mirror.current?.key !== key) {
+      const done = mirrorToDevnet(mint, pool);
+      // A failure is reported when List is pressed, and tried again then.
+      done.catch(() => { if (mirror.current?.key === key) mirror.current = null; });
+      mirror.current = { key, done };
+    }
+    return mirror.current.done;
+  };
+  useEffect(() => {
+    if (devnet && preview?.readOnly && token && signable === true) {
+      startMirror(token.mint, preview.address).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devnet, preview, token, signable]);
+
   const limits = listingLimits(preview?.depthUsd ?? 0, {
     leverage: leverage ?? undefined, oiUsd: size ?? undefined,
   });
@@ -411,9 +422,21 @@ export default function List() {
       // One transaction: the market, its observation, its batch and the
       // lister's backing land together or not at all, so a listing never
       // ends on a market nobody can trade.
+      let target = preview.address, lev = limits.leverage, oi = limits.oiUsd;
+      if (devnet && preview.readOnly && token) {
+        setMirroring(true);
+        let m: Mirror;
+        try { m = await startMirror(token.mint, preview.address); }
+        catch (e: any) { setError(e?.message ?? "Couldn't bring that pool to devnet."); return; }
+        finally { setMirroring(false); }
+        // The mirror's depth is what the program reads; never ask past it.
+        const fit = listingLimits(Math.min(preview.depthUsd, m.depthUsd), {
+          leverage: leverage ?? undefined, oiUsd: size ?? undefined,
+        });
+        target = m.pool; lev = fit.leverage; oi = fit.oiUsd;
+      }
       const r = await signAndSend(wallet, "list-market", {
-        pool: preview.address, maxLeverage: limits.leverage, maxOiUsd: limits.oiUsd,
-        backing: seedAmount, payWith,
+        pool: target, maxLeverage: lev, maxOiUsd: oi, backing: seedAmount, payWith,
       });
       if (!r.ok) { setError(r.error ?? "Transaction failed. Check your balance and try again."); return; }
       setDone(preview.opensAtListing
@@ -452,7 +475,7 @@ export default function List() {
 
   /// Read from mainnet by the preview path while a chain is attached: a
   /// real pool the local validator never cloned. Describable, not listable.
-  const offChain = signable === true && !!preview?.readOnly;
+  const offChain = signable === true && !!preview?.readOnly && !devnet;
 
   const cta = (() => {
     if (offChain) return { label: "Pool not on this chain", onClick: undefined, disabled: true };
@@ -461,7 +484,7 @@ export default function List() {
     }
     if (!wallet.publicKey) return { label: "Connect wallet", onClick: () => setVisible(true), disabled: false };
     return {
-      label: busy ? "Confirm in wallet" : `List ${name || "market"}`,
+      label: mirroring ? "Preparing devnet pool…" : busy ? "Confirm in wallet" : `List ${name || "market"}`,
       onClick: deploy, disabled: !ready,
     };
   })();
@@ -558,7 +581,7 @@ export default function List() {
                                 markets.find((m) => m.observed?.source === p.pool)?.symbol ?? p.symbol)}`}
                                 onMouseDown={(e) => e.preventDefault()}
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
-                                <TokenIcon src={null} label={p.symbol} />
+                                <TokenIcon src={p.icon ?? null} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
                                   <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
                                   <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
@@ -569,7 +592,7 @@ export default function List() {
                               <button type="button" onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => { setOpen(false); void readPoolAddress(p.pool); }}
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
-                                <TokenIcon src={null} label={p.symbol} />
+                                <TokenIcon src={p.icon ?? null} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
                                   <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
                                   <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
@@ -581,11 +604,12 @@ export default function List() {
                         ))}
                         {copyable.map((t) => (
                           <li key={t.mint} role="option" aria-selected={false}>
-                            <button type="button" disabled={!!copying}
+                            <button type="button"
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => void copy(t)}
+                              onMouseEnter={() => prefetchPools(t.mint)}
+                              onClick={() => pick(t)}
                               className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left
-                                         hover:bg-panel2 disabled:opacity-60">
+                                         hover:bg-panel2">
                               <TokenIcon src={t.icon} label={t.symbol} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1 text-[13.5px] font-medium">
@@ -593,12 +617,10 @@ export default function List() {
                                   {t.verified && <BadgeCheck size={14} className="flex-none text-brand" />}
                                 </span>
                                 <span title={t.mint} className="block truncate text-[11.5px] text-muted-foreground">
-                                  {t.name} · mainnet · {t.liquidity > 0 ? `${compact(t.liquidity)} liq` : short(t.mint)}
+                                  {t.name} · {t.liquidity > 0 ? `${compact(t.liquidity)} liq` : short(t.mint)}
                                 </span>
                               </span>
-                              <span className="flex-none text-[12px] text-foreground">
-                                {copying === t.mint ? "Copying…" : "Copy to devnet"}
-                              </span>
+                              <span className="flex-none text-[12px] text-foreground">List</span>
                             </button>
                           </li>
                         ))}

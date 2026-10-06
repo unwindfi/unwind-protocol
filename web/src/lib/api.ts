@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 export interface Market {
   symbol: string; name: string; color: string; mono: string;
+  /// The real token's logo, for a devnet copy of one (from Jupiter).
+  icon?: string | null;
   /// The SPL mint this market is priced on, when there is one to name. Null
   /// for a market listed against a pool, whose identity is the pool rather
   /// than a token this venue knows the mint of.
@@ -266,16 +268,21 @@ export const getAccount = async (owner?: string) => {
 /// every real pool is on mainnet, and a market can only watch a pool on its
 /// own chain.
 /// `real` is the mainnet mint a pool copies, when it copies one.
-export interface TestnetPool { symbol: string; name: string; pool: string; listed: boolean; real?: string | null }
+export interface TestnetPool {
+  symbol: string; name: string; pool: string; listed: boolean; real?: string | null; icon?: string | null;
+}
 export const getTestnetPools = async () =>
   (await hasBackend()) ? get<TestnetPool[]>("/api/testnet-pools").catch(() => []) : [];
 
-/// Has devnet copy a mainnet token: a test token and a pool at its price.
-/// Takes several seconds; answers with the pool to list on.
-export async function copyToDevnet(mint: string): Promise<{ pool: string; symbol: string }> {
-  const r = await post("/devnet-copy", { mint }) as { pool?: string; symbol?: string; error?: string };
-  if (!r.pool) throw new Error(r.error ?? "Copy failed.");
-  return { pool: r.pool, symbol: r.symbol! };
+/// Has devnet mirror a mainnet pool: a test token under the real ticker in
+/// a devnet pool at its price and depth. Takes several seconds the first
+/// time; answers with the devnet pool to list on and its depth.
+export async function mirrorToDevnet(mint: string, pool: string):
+  Promise<{ pool: string; symbol: string; depthUsd: number }> {
+  const r = await post("/devnet-copy", { mint, pool }) as
+    { pool?: string; symbol?: string; depthUsd?: number; error?: string };
+  if (!r.pool) throw new Error(r.error ?? "Couldn't bring that pool to devnet.");
+  return { pool: r.pool, symbol: r.symbol!, depthUsd: r.depthUsd ?? 0 };
 }
 
 /// One owner's backing, by market. Worth what the market's first-loss pot

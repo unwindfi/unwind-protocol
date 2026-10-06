@@ -906,6 +906,29 @@ async function realMintOf(m: MarketRt): Promise<string | null> {
   return (await shadowMintMap()).get(m.observed.source.toBase58()) ?? null;
 }
 
+/// Token logos from Jupiter, by mainnet mint, for devnet copies: their own
+/// mints carry no metadata, and the site has files only for a few tickers.
+/// Looked up once per mint, a hundred to a request, never on the hot path.
+const tokenIcons = new Map<string, string | null>();
+let iconsLoading: Promise<void> | null = null;
+function loadIcons(mints: (string | null | undefined)[]) {
+  const missing = [...new Set(mints.filter((m): m is string => !!m && !tokenIcons.has(m)))];
+  if (!missing.length || iconsLoading) return iconsLoading ?? Promise.resolve();
+  iconsLoading = (async () => {
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      try {
+        const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${chunk.join(",")}`,
+          { signal: AbortSignal.timeout(8_000) });
+        if (!r.ok) continue;
+        const rows = (await r.json()) as any[];
+        for (const m of chunk) tokenIcons.set(m, rows.find((x) => x.id === m)?.icon ?? null);
+      } catch { /* left missing: tried again on the next call */ }
+    }
+  })().finally(() => { iconsLoading = null; });
+  return iconsLoading;
+}
+
 /*
  * The real token's price, for the keeper to mark a devnet test copy at.
  *
@@ -2363,6 +2386,7 @@ function payoutPct(ma: any, p: any, price: number): number {
 
 async function marketsView() {
   {
+    void loadIcons([...(await shadowMintMap()).values()]);
     const markets = Object.values(rt);
     // Every market account in one call rather than one call each.
     const [p, accounts] = await Promise.all([
@@ -2377,8 +2401,10 @@ async function marketsView() {
       const longSize = num(ma.longSizeUsd) / 1e6;
       const shortSize = num(ma.shortSizeUsd) / 1e6;
       const total = longSize + shortSize;
+      const real = await realMintOf(m);
       return {
         symbol: m.symbol, name: m.name, color: m.color, mono: m.mono, price,
+        icon: real ? tokenIcons.get(real) ?? null : null,
         // Null for an observed market: nobody wrote a definition for it, and
         // the pool it watches is the address that identifies it.
         mint: m.def?.mint ?? null,
@@ -3379,67 +3405,85 @@ async function ataIxs(owner: PublicKey, mints: PublicKey[]) {
 app.get("/api/testnet-pools", async (_req, res) => {
   const listed = new Set(Object.values(rt).map((m) => m.observed?.source?.toBase58()).filter(Boolean));
   const real = await shadowMintMap();
+  await loadIcons([...real.values()]);
   res.json(seeded.map((s) => ({
     symbol: s.symbol, name: s.name, pool: s.pair, listed: listed.has(s.pair), real: real.get(s.pair) ?? null,
+    icon: tokenIcons.get(real.get(s.pair) ?? "") ?? null,
   })));
 });
 
 /*
- * A devnet copy of any mainnet token, made on request.
+ * A devnet mirror of a mainnet pool, made on request.
  *
- * Every real pool is on mainnet, so devnet can only list what has a pool on
- * devnet. Asked for a mainnet mint, this mints a test token under the real
- * one's ticker and decimals, opens a Meteora DLMM pool for it against the
- * test USDC at the real price, and lays liquidity either side scaled to the
- * real token's: half its liquidity a side, between $5k and $180k. From then
- * on the flow keeps the pool at the real price like the seeded copies, and
- * listing it goes through the same permissionless path and depth limits as
- * any other pool. One copy per mainnet mint; the copy is not listed here.
+ * Devnet can only list a pool that is on devnet, and every real pool is on
+ * mainnet. So listing a mainnet token on devnet lists a mirror of its pool:
+ * a test token under the real ticker and decimals, in a Meteora DLMM pool
+ * against test USDC at the real price, with liquidity laid so its depth
+ * (USD to move it 1%) matches the mainnet pool's. Leverage, open-interest
+ * caps and budgets come out of that depth on chain exactly as they would on
+ * mainnet. From then on the flow keeps the mirror at the real price and the
+ * keeper marks it there, like the seeded copies. One mirror per mainnet mint;
+ * making one does not list it.
  *
- * It spends the authority's SOL (about 0.2 a copy), so it is capped per day
+ * It spends the authority's SOL (about 0.2 a mirror), so it is capped per day
  * in all and per address, and stops above the floor the crank needs.
  */
-const COPY_PER_DAY = Number(process.env.COPY_PER_DAY ?? 30);
-const COPY_PER_IP_PER_DAY = Number(process.env.COPY_PER_IP_PER_DAY ?? 5);
-const COPY_MIN_LIQUIDITY_USD = 10_000;
+const COPY_PER_DAY = Number(process.env.COPY_PER_DAY ?? 50);
+const COPY_PER_IP_PER_DAY = Number(process.env.COPY_PER_IP_PER_DAY ?? 8);
+const COPY_MIN_DEPTH_USD = 1_000;
 const COPY_SOL = 0.3;
+/// A side of liquidity this many times a depth gives about that depth: the
+/// spot shape lays 61 bins of 0.1%, and a 1% move crosses ten of them plus
+/// the fees. Measured: a $33,829 side read as $10,306.
+const SIDE_PER_DEPTH = 3.3;
+const MAX_SIDE_USD = 180_000;
 let copying: Promise<unknown> = Promise.resolve();
 app.post("/api/devnet-copy", async (req, res) => {
   try {
-    if (CLUSTER !== "devnet") throw new Error("copies are made on devnet only");
+    if (CLUSTER !== "devnet") throw new Error("mirrors are made on devnet only");
     const real = new PublicKey(String(req.body?.mint ?? "")).toBase58();
-    const copied = await shadowMintMap();
-    const existing = seeded.find((s) => copied.get(s.pair) === real);
-    if (existing) return res.json({ pool: existing.pair, symbol: existing.symbol, created: false });
+    const mirrored = await shadowMintMap();
+    const existing = seeded.find((s) => mirrored.get(s.pair) === real);
+    if (existing) {
+      const d = await readPool(conn, new PublicKey(existing.pair), usdcMint);
+      return res.json({ pool: existing.pair, symbol: existing.symbol, depthUsd: d.depthUsd, created: false });
+    }
     if (QUOTE_MINTS[real]) throw new Error("stablecoins are the quote side, not a market");
+
+    // The mainnet pool being mirrored, read by the same preview the page
+    // showed: its depth is what the mirror is built to.
+    const source = new PublicKey(String(req.body?.pool ?? "")).toBase58();
+    const pr = await mainnetPoolPreview(new Request(`http://localhost/api/pool/${source}`));
+    const main: any = await pr.json();
+    if (!pr.ok || main.error) throw new Error(main.error ?? "could not read that pool on mainnet");
+    if (main.base !== real) throw new Error("that pool doesn't trade that token");
+    const depthUsd = Number(main.depthUsd) || 0;
+    if (depthUsd < COPY_MIN_DEPTH_USD) throw new Error("that pool is too thin to list");
 
     const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
     const today = copies.filter((c) => Date.now() - (c.t ?? 0) < DAY_MS);
-    if (today.length >= COPY_PER_DAY) throw new Error("devnet has made today's copies; try again tomorrow");
+    if (today.length >= COPY_PER_DAY) throw new Error("devnet has mirrored all it can today; try again tomorrow");
     if (today.filter((c) => c.ip === ip).length >= COPY_PER_IP_PER_DAY) {
-      throw new Error("too many copies from this address today");
+      throw new Error("too many new tokens from this address today");
     }
     if ((await conn.getBalance(authority.publicKey)) / 1e9 - COPY_SOL < AUTHORITY_SOL_FLOOR) {
-      throw new Error("devnet is out of SOL for copies right now");
+      throw new Error("devnet is out of SOL for new tokens right now");
     }
 
-    // The real token, as Jupiter knows it: ticker, decimals, price, depth.
+    // Ticker, decimals and price, as Jupiter knows the token.
     const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${real}`,
       { signal: AbortSignal.timeout(10_000) });
     if (!r.ok) throw new Error(`token lookup failed (${r.status})`);
     const t = ((await r.json()) as any[]).find((x) => x.id === real);
     if (!t || !(t.usdPrice > 0) || !Number.isInteger(t.decimals)) throw new Error("no price for that token on mainnet");
-    const liquidity = Number(t.liquidity) || 0;
-    if (liquidity < COPY_MIN_LIQUIDITY_USD) {
-      throw new Error(`that token has $${Math.round(liquidity).toLocaleString("en-US")} of liquidity on mainnet; copies need $10,000`);
-    }
+    if (t.icon) tokenIcons.set(real, t.icon);
 
-    // One at a time: two copies of one token must not both be made.
+    // One at a time: two mirrors of one token must not both be made.
     const made = copying.then(async () => {
       const again = seeded.find((s) => s.real === real);
       if (again) return again;
       const { seedPool } = await import("./testnet-flow");
-      const sideUsd = Math.round(Math.min(180_000, Math.max(5_000, liquidity / 2)));
+      const sideUsd = Math.round(Math.min(MAX_SIDE_USD, depthUsd * SIDE_PER_DEPTH));
       const { mint, pair } = await seedPool(conn, authority, usdcMint,
         { price: t.usdPrice, decimals: t.decimals, sideUsd });
       const clean = String(t.symbol ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 12) || real.slice(0, 4);
@@ -3451,12 +3495,13 @@ app.post("/api/devnet-copy", async (req, res) => {
       copies.push(copy); seeded.push(copy);
       fs.writeFileSync(COPIES_FILE, JSON.stringify(copies, null, 2));
       shadowMints = null; shadowNames = null;
-      console.log(`devnet copy ${symbol} of ${real}: pool ${copy.pair}, $${sideUsd} a side`);
+      console.log(`devnet mirror ${symbol} of ${source}: pool ${copy.pair}, $${sideUsd} a side for $${Math.round(depthUsd)} depth`);
       return copy;
     });
     copying = made.catch(() => {});
     const copy = await made;
-    res.json({ pool: copy.pair, symbol: copy.symbol, created: true });
+    const d = await readPool(conn, new PublicKey(copy.pair), usdcMint);
+    res.json({ pool: copy.pair, symbol: copy.symbol, depthUsd: d.depthUsd, created: true });
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
@@ -3480,8 +3525,12 @@ app.get("/api/pool/:address", async (req, res) => {
     // recomputed in the page: the policy lives in one place, and a preview that
     // disagreed with the listing would be the worst kind of wrong.
     const params = listingParams(p.depthUsd);
+    const real = (await shadowMintMap()).get(p.address);
+    if (real) await loadIcons([real]);
     res.json({
       ...p,
+      // A devnet copy shows the real token's logo.
+      ...(real ? { icon: tokenIcons.get(real) ?? null } : {}),
       // What it will be listed as, derived exactly as the listing derives it.
       ...(await listingName(p.base, p.address, p.unitExp)),
       unitLabel: unitLabel(p.unitExp),
