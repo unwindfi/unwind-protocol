@@ -1,27 +1,42 @@
 # Sessions
 
-## Overview
+A tokenized stock trades around the clock. The stock it tracks does not. While
+the exchange is closed, the only thing anchoring the token is its spot pool on
+Solana, which is thin next to the exchange. So two limits tighten.
 
-Tokenized equities are the difficult case for a perpetual venue, and they
-constitute most of the markets running today. The token trades continuously,
-but the equity it tracks does not, and for most hours of most weeks the only
-thing anchoring the token's price is its spot pool on Solana, which is thin
-relative to the underlying exchange.
+## Key figures
 
-## Technical details
+| Session | Maximum leverage | Open interest cap per side |
+| --- | --- | --- |
+| Regular | listed max | listed cap |
+| Extended | listed max | listed cap |
+| Closed | min(closed-session max, listed max) | listed cap × closed-session multiplier |
 
-While the underlying session is closed, two limits tighten.
+Maintenance margin does not change with the session. The depth tier on an
+observed market applies in every session (see [Margining](margining.md)).
 
-* Open interest per side is capped more tightly than during the open session.
-* Maximum leverage is reduced.
+## How a session is set
 
-The pool's quoted spread follows the oracle's reported confidence interval in
-every session. A closed session usually widens it only because the oracle is
-less certain.
+1. Each market stores its session: regular, extended or closed.
+2. Only the pool authority sets it, with `set_session`.
+3. On devnet the venue's server checks the exchange calendar every 10 minutes
+   and sends `set_session` for each stock market whose session changed.
 
-The token itself continues to trade throughout. What changes is the quantity
-of the pool's balance sheet a trader is permitted to direct at a price that
-no arbitrageur is currently enforcing.
+Example: a stock market listed at 5x with a $2,000,000 cap per side, a 2x
+closed-session maximum and a 2,500 bps multiplier. While the exchange is
+closed, new opens are capped at 2x and each side at $500,000. Positions
+already open keep their size; only new opens are held to the tighter limits.
 
-A market opened against an AMM pool has no exchange behind it and therefore
-no session to track, so these limits do not apply to it.
+## What does not change
+
+* The token keeps trading, and the market keeps clearing every batch.
+* The pool's spread follows the oracle's confidence in every session. A
+  closed session widens it only when the oracle is less certain.
+* What changes is how much of the pool a trader can direct at a price no
+  exchange arbitrage is enforcing.
+
+## Markets with no session
+
+A market priced off a spot pool tracks a token, not an exchange listing. It
+has no calendar, so it stays in the regular session. Site listings are created
+with closed-session limits equal to the regular ones.

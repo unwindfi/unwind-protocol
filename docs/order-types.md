@@ -1,126 +1,152 @@
 # Order types
 
-## Overview
+There are two things a trader can send: a **batch order**, which goes into the
+next auction now, and a **trigger**, which waits for a price and then becomes
+a batch order.
 
-unwind has one order object, which is a price trigger. It carries a price, a
-direction from which that price must be crossed, and an instruction for what
-to do once it is. Limit orders, take profit orders and stop loss orders are
-the same structure with different fields set, rather than separate mechanisms.
+## Key figures
 
-Representing them as one object rather than three keeps the surface a
-liquidation or a settlement has to reason about to a single shape.
+| | |
+| --- | --- |
+| Orders per batch | 64 |
+| Resting orders per wallet per batch | 4 |
+| Life of a batch order | 1 batch |
+| Minimum open, site listing | $10 |
+| Minimum reduce-only order | the market's minimum position, unless it closes all that is left |
+| Market order limit (site) | 1% through the mark |
+| Fired close limit | 1% through the oracle |
+| Trigger check (devnet keeper) | every 3 seconds |
 
-## The two kinds
+## Batch orders
 
-An order is either an open or a close.
+Every batch order is a limit. It fills at its flow's clearing price, never
+worse than its limit, or not at all. See [The auction](auction.md).
 
-An **open** order creates a position when its trigger is crossed. It escrows
-its collateral at submission rather than at execution, because an order
-resting against a batch is a commitment to trade at that batch's clearing
-price. Collateral belonging to a portion that does not fill is returned at
-settlement.
+| Order | Maker or taker | Limit |
+| --- | --- | --- |
+| Market (site) | taker | mark ± 1% |
+| Limit, post only | maker | the price given |
+| Close (site) | taker | mark ± 1% |
+| Fired trigger | taker | see below |
 
-A **close** order reduces or closes an existing position. It escrows no
-collateral, since the position it acts on has already posted its own. A close
-order whose size is left at zero closes the entire position, which is what a
-stop loss almost always intends.
+**Opens** escrow their collateral at submission. Unfilled collateral comes
+back at settlement.
 
-A close fills like any other taker order: in full when the batch can match it,
-and pro rata with the rest of its flow when it cannot (see
-[Auction](auction.md)). What a crowded batch does not fill is not carried
-over; the rest of the position stays open, and the trade screen says how much
-closed so the trader can close again.
+**Closes** are reduce-only. They escrow nothing and reserve size on the
+position, so the same size cannot be promised to two closing orders. A close
+fills like any other taker: in full when the batch can match it, pro rata with
+its flow when it cannot. What a crowded batch does not fill is not carried
+over. The rest of the position stays open, and the trade screen shows how
+much closed.
 
-## Makers and takers
-
-Every order that reaches a batch is a maker or a taker, and that decides which
-of the batch's two auctions it clears in. See [Clearing](auction.md).
-
-A **taker** wants a fill in the next batch. Market orders, closes and every
-order a trigger fires are takers. A taker only trades with makers, or with the
-[pool](pool.md) when no maker is there. A taker that nothing fills lapses
-with its batch and its collateral comes back at settlement; a fired trigger
-is spent either way.
-
-A **maker** rests as liquidity at a price it names. It only trades with
-takers, never with the pool and never with another maker. A maker order lasts
-one batch: if nobody takes it, its collateral comes back when the batch seals
-and it quotes again into the next one. Anyone can submit a maker order, by
-setting `is_maker` on `submit_order` or `maker: true` on the devnet API's
-order endpoint, and a maker order must carry its own price.
+**Makers** rest as liquidity at their own price. A maker trades only with
+takers, never with the pool and never with another maker. Set `is_maker` on
+`submit_order`, or `maker: true` on the devnet API's order endpoint. A maker
+order must carry a price.
 
 ## Post only
 
-The trade screen's limit tab has a **Post only** box. With it ticked, the
-order is sent as a maker at the limit price, rather than as a limit trigger.
+The limit tab's **Post only** box sends the order as a maker at the limit
+price.
 
-A post only order never trades with the pool and never takes. It fills only
-when a taker in the same batch crosses its price, and it fills at that flow's
-clearing price, which is never worse than the limit. It rests for one batch.
-If no taker crosses it by the time the batch seals, the order lapses and its
-collateral comes back at settlement. To quote again, place it again.
+1. It never trades with the pool and never takes.
+2. It fills only when a taker in the same batch crosses it, at that flow's
+   clearing price.
+3. It lasts one batch. Unfilled, it lapses and its collateral comes back at
+   settlement. To quote again, place it again.
+4. It posts the same margin and pays the same fees as any open.
+5. It cannot be reduce-only and has no time in force.
 
-A post only order posts the same margin and pays the same fees as any other
-open. It cannot be reduce only, and it has no time in force, since it lasts
-one batch either way.
+## Limits that keep one wallet from filling a batch
+
+1. A wallet may hold at most 4 resting orders in a market's batch.
+2. A reduce-only order must be at least the market's minimum position size,
+   unless it closes everything left. Reduce-only orders post no collateral, so
+   without a floor they would cost nothing, and enough of them priced never
+   to cross could block every exit.
+3. A wallet cannot hold opening orders on both sides of one batch.
+
+All three apply to orders a trigger fires as well as to orders sent by hand.
 
 ## Positions do not flip
 
-A position is long or short, and an open order must be on the side the
-position already holds. An open against the other side is refused when it is
-submitted, and so is an open against the other side of an open the same
-account already has resting in the batch. One account cannot be on both
-sides of a batch's opens, so it cannot cross itself.
-To change sides, close the position first.
+A position is long or short. An open must be on the side the position holds,
+and is refused at submission otherwise. To change sides, close first.
+
+## Opens are checked at submission
+
+An open entering a batch must fit, as things stand then:
+
+1. the position's side,
+2. the market's maximum leverage, on collateral net of the open fee and of
+   funding the position already owes,
+3. the open interest cap, counting every open already resting on that side
+   of the batch.
+
+Settlement books whatever the auction filled without checking again.
+
+## Triggers
+
+A trigger is one object for limit, take profit and stop loss: a price, a
+direction to cross it from, and what to do on the other side. It is either:
+
+* an **open**, which escrows its collateral when placed, or
+* a **close**, which escrows nothing. A close of size zero closes the whole
+  position.
+
+A trigger fires against the oracle mark, not the fill price. What it becomes
+is a taker order in the market's batch. The auction sets the price, the same
+as for an order sent by hand.
+
+| Trigger | Limit of the order it becomes |
+| --- | --- |
+| Open (limit) | the trigger price |
+| Close (take profit, stop) | oracle - 1% for a long, oracle + 1% for a short |
+
+The 1% is wide enough to cross the pool's quote in an ordinary market and
+narrow enough that a stop in a dislocation is not filled at any price.
+
+### Checked twice
+
+**When placed:**
+
+* Nothing on a paused pool. Only closes on a paused market.
+* An open must fit the side, leverage and open interest cap as they stand.
+* An expiry, if set, must be in the future.
+
+**When fired:**
+
+* Refused on a paused pool or a paused market.
+* An open must pass the same checks as a submitted open, including the opens
+  resting in the batch, because the position and the market may have moved.
+* A close needs size still closable on the position, and keeps the
+  reduce-only minimum: no smaller than the market's minimum, unless it is all
+  that is left.
+
+A trigger that fails when fired never reaches the batch, so it never moves a
+clearing price. It stays in place until it fires, expires or is cancelled. A
+trigger that fires is spent: its account closes. If the batch it lands in
+cannot fill it, it lapses with that batch, and a fired open's collateral comes
+back at settlement.
+
+An expired trigger is closed by the next attempt to fire it, and its escrow is
+refunded. A cancelled trigger's escrow is paid back from the vault of the pool
+its market belongs to, and from no other.
+
+### On the site
+
+* There is one take profit, one stop and one limit per market. Setting one
+  where one already stands replaces it in the same transaction.
+* Closing a whole position from the site cancels its take profit and stop in
+  the same transaction.
+* A trigger whose position is already gone, for example after a liquidation,
+  shows as "No position" under Open Orders. Cancel it: left standing, it would
+  act on the next position opened on that market.
+* A paused market shows "Exits only" in its header.
 
 ## Execution
 
-Orders are executed by whoever is watching. There is no designated keeper and
-no privileged execution path, which is consistent with clearing, settlement
-and liquidation being permissionless for the same reason: none of these
-operations accepts a price or a discretionary input from its caller.
-
-On devnet the venue's own server watches every order and checks each trigger
-against the mark every three seconds, so a take profit or stop fires within a
-few seconds of its price being reached.
-
-A trader may hold several orders against a single market simultaneously. A
-take profit and a stop loss on the same position is the ordinary case. There
-is one of each per market: setting a take profit, stop or limit where one
-already stands replaces it, cancelling the old one and placing the new one in
-the same transaction.
-
-Closing a whole position from the site cancels its take profit and stop loss
-in the same transaction. A trigger order whose position is already gone, for
-example after a liquidation, is marked "No position" under Open Orders and
-should be cancelled: left standing, it would act on the next position opened
-on that market.
-
-## Limits
-
-A batch holds 64 orders for everyone, so it carries two limits that keep one
-trader from filling it:
-
-* A wallet may have at most four resting orders in a market's batch at once.
-* A reduce-only order must be at least the market's minimum position size,
-  unless it closes everything left in the position. Reduce-only orders post
-  no collateral, so without a floor they would cost nothing to place, and
-  enough of them priced never to cross could block every exit behind them.
-
-Both apply to an order a trigger fires as well as to one submitted by hand.
-
-## Checks on a trigger
-
-A trigger order is checked twice. When it is placed, an open must fit the
-same caps as an open submitted by hand: the side the position holds, the
-market's maximum leverage and its open interest cap, all as they stand then.
-Nothing can be placed on a paused pool, and only close orders on a paused
-market. A paused market shows as "Exits only" in its header, and one nobody
-holds a position in is left off the markets list. When it fires, an open is checked again against the position, the
-market and the opens already resting in the batch, because any of them may
-have changed since. A trigger that fails either check never reaches the
-batch, so it never moves a clearing price. One that fails when it fires
-stays in place until it fires, expires or is cancelled.
-
-A cancelled order's escrow is paid back from the vault of the pool its
-market belongs to, and from no other.
+Clearing, settlement, triggers and liquidation are permissionless. None of
+them takes a price or a choice from the caller. On devnet the venue's server
+checks every trigger against the mark every 3 seconds; one that is reached but
+will not fire is tried again after 60 seconds.

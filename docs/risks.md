@@ -2,87 +2,144 @@
 
 ## Overview
 
-Trading on unwind can lose you everything you post as margin, and supplying
-liquidity or backing can lose you everything you deposit. This page lists
-where those losses come from and links to the page that states each rule in
-full. Where this page and the program disagree, the program is right.
+You can lose everything you post as margin. You can lose everything you
+deposit as backing or pool liquidity. This page lists where those losses
+come from, what the program does about each, and what it does not. Each entry
+links to the page with the full rule. Where this page and the program
+disagree, the program is right.
 
 Nothing in these docs is investment advice.
 
-## The program is unaudited
+## The program
 
-unwind runs as a Solana program that has not been audited. Every action is a
-transaction you sign, and its outcome is whatever the program does with it. A
-bug in the program can lose funds that no rule on this page protects.
+1. **Not audited.** No audit firm has reviewed the program. 126 Kani
+   harnesses and the unit and integration tests check the arithmetic and the
+   instructions (see [Verification](verification.md)). That is not an audit.
+   Account validation, token transfers and whole instructions are tested,
+   not proven.
+2. **Upgradeable.** The program has an upgrade authority. An upgrade can
+   change any rule on these pages.
+3. **The pool authority has powers.** It can pause a market or the pool,
+   retune a market's parameters (held to consistency checks, not to the
+   listing bounds), lower a budget, apply a split or dividend, set a
+   session, and name the mark keeper. It cannot raise a budget.
+
+A bug can lose funds that no rule here protects.
 
 ## Leverage and liquidation
 
-Positions are leveraged. A position whose margin falls under its market's
-maintenance margin can be closed by any account, at the mark, and the margin
-behind it is lost. Liquidation is permissionless, so it does not wait for a
-keeper. The fee comes out of what is left of the position, never out of the
-pool.
-
-Maximum leverage is set per market. For a market priced off a spot pool it
-follows that pool's sustained depth: 2x under $10k, 3x to $50k, 4x to $250k,
-5x above. See [Margining](margining.md) and
-[Liquidations](liquidations.md).
+1. **Leverage is per market.** A market priced from a spot pool follows the
+   pool's sustained depth: 2x under $10k, 3x to $50k, 4x to $250k, 5x above.
+   It falls on the next reading when the pool thins. A Pyth market the pool
+   authority lists can carry more: SPYx allows 20x. Outside US trading
+   hours, equity markets drop to a lower closed-session cap. See
+   [Margining](margining.md) and [Sessions](sessions.md).
+2. **Any account can liquidate.** A position whose equity falls under
+   maintenance margin is closed. The trigger is the market's risk price; the
+   close is at the worse of the risk price and the oracle. The liquidation
+   fee comes out of the position. The owner gets back what is left after the
+   fee, which can be nothing.
+3. **The risk price moves at most 40 bps a slot,** and counts at most 3
+   slots per step: 1.2% per reading after a gap. A spike that comes back
+   within a few slots liquidates nobody. A real move gets there a step at a
+   time, so positions are closed on the way while they still have margin.
+   See [Liquidations](liquidations.md).
 
 ## Prices
 
-A market is priced by a Pyth feed or by a spot pool the mark keeper observes.
-Positions are valued and liquidated against that mark, not the last clearing
-price, so a wrong or stale mark means wrong valuations and wrong
-liquidations. Orders pause when the feed is older than the market allows. A
-market tracking a thinly traded asset can be moved by moving its spot pool.
+| Source | What protects it | What does not |
+| --- | --- | --- |
+| Pyth feed | Only moves forward: a price older than the newest the market used is refused, two prices under one publish time are refused, a publish time more than 5 seconds ahead of the chain is refused. Stale or too-uncertain prices pause orders. | A wrong feed is a wrong mark. |
+| Spot pool, keeper mark | The program reads the pool's depth itself, so leverage and budget caps never depend on the keeper. The risk price caps how fast a pushed mark reaches liquidations. The keeper holds any move over 10% for one push, then steps 10% a push. | The mark is whatever the keeper key pushes. The program checks it is fresh and above zero, nothing more. A thin pool can be pushed, and the keeper follows it. |
+
 See [Price sources](price-sources.md).
 
 ## Keepers
 
-Batches are cleared and non-Pyth marks are pushed by keepers. If they stop,
-batches stop clearing and those marks stop updating, and orders pause rather
-than fill at an old price. Liquidation does not depend on them.
+The venue's server clears batches, pushes keeper marks, runs liquidations
+and syncs rewards. If it stops:
+
+1. Batches stop clearing. Orders already in a batch wait.
+2. Keeper marks go stale and those markets pause rather than fill at an old
+   price.
+3. Liquidation, clearing and settlement stay open to any account. Pushing a
+   keeper mark does not: only the named keeper key can.
 
 ## Where losses go
 
-A market's losses are paid in order: the backing posted behind it, then pool
-liquidity up to the market's loss budget, then the insurance fund. A winner is
-never paid past its market's budget: when the market cannot cover every
-winner, each winning close is paid the same fair share of its profit and the
-rest is not paid, so a profitable position can be paid less than its paper
-gain. Backers can withdraw at any time, which lowers the budget winners are
-paid from. See [Loss budget](loss-budget.md) and
-[Profit haircuts](auto-deleveraging.md).
+A market's losses are paid in this order:
 
-## Backing and the pool
+1. The backing posted behind it.
+2. Pool liquidity, up to the market's loss budget.
+3. The insurance fund.
 
-Backers take a market's losses first, up to what they posted, and are made
-whole from later gains only up to what was drawn. Pool liquidity takes the
-losses backers do not, up to each market's budget, across every market at
-once. Neither capital nor yield is guaranteed, and withdrawing pays the mix of
-assets the pot holds. See [The pool](pool.md) and
-[How to underwrite a market](how-to-underwrite-a-market.md).
+A winner is never paid past the budget. When a market cannot pay every
+winner, each winning close gets the same share of its profit and the rest is
+not paid. A profitable position can be paid less than its paper gain. See
+[Loss budget](loss-budget.md) and [Profit haircuts](auto-deleveraging.md).
+
+## Backing
+
+1. **First loss.** Backers take the market's losses before the pool, up to
+   everything they posted. Later gains repay them only up to what was drawn.
+2. **Exits hold back open losses.** A backer can withdraw at any time, less
+   their part of what the market's traders are up now, at the oracle or the
+   risk price, whichever is more. When the price cannot be read, their part
+   of the whole remaining budget is held.
+3. **Paid in kind.** Backing in USDT or SOL is held as posted and paid back
+   in the pot's mix. SOL counts at 80% toward the budget and falls with the
+   SOL price.
+
+See [How to underwrite a market](how-to-underwrite-a-market.md).
+
+## The pool
+
+1. **Every market at once.** Pool liquidity takes the losses backers do not,
+   up to each market's budget, across all markets together.
+2. **Withdrawals wait 150 slots,** about a minute. Shares sit in escrow,
+   still exposed, and are paid at what the pool is worth when claimed, not
+   when requested.
+3. **Paid in kind.** A claim pays USDC plus the same share of any tokens
+   the LPs hold from backing they covered.
+4. **Priced from a checkpoint.** Deposits and withdrawals price shares from
+   a pass over every market at most 60 seconds old. A deposit is refused
+   while any market's price is unreadable. A withdrawal counts that market at
+   the most it could cost the LPs.
+
+See [The pool](pool.md).
 
 ## Liquidity
 
-Orders clear in batches, and a batch fills only what crosses. A thin market
-can leave an order unfilled, or fill it far from the asset's reference price.
-The pool fills only what makers leave, and only within the market's budget.
-See [The auction](auction.md).
+A batch fills only what crosses. A thin market can leave an order unfilled,
+or fill it far from the reference price inside the band. The pool fills only
+what makers leave, and only within the market's budget. See
+[The auction](auction.md).
+
+## Points
+
+1. **Points are not a token** and not a promise of one.
+2. **They can be farmed with many wallets.** The program caps trading points
+   at 250,000 per wallet per UTC day and pays nothing on a close held under
+   10 minutes. It cannot tell one person's wallets apart. Each extra wallet
+   gets its own cap.
+3. **Seasons and creator scores are kept by the server,** not the program.
+   The on-chain total per wallet is all-time.
+
+See [Referrals and points](rewards.md).
 
 ## Listing
 
-Anyone can open a market. A market existing on unwind is not an endorsement of
-the asset it tracks, its issuer, or the account that opened it.
+Anyone can open a market. A market on unwind is not an endorsement of the
+asset, its issuer or the account that opened it.
 
 ## Devnet
 
-Devnet settles in test USDC against devnet copies of tokens marked at Jupiter
-prices. It carries no real value, and its parameters can change or be reset.
-See [Devnet](devnet.md).
+Today unwind runs on devnet only. It settles in test USDC against devnet
+copies of tokens marked at their mainnet prices. Balances carry no value, and
+parameters, pools and markets can change or be reset. See [Devnet](devnet.md).
 
 ## Assets and jurisdictions
 
 Tokenised stocks (xStocks) are not available to US persons. unwind is not
-affiliated with Backed, Jupiter, Pyth or the issuers of the assets its markets
-track. You are responsible for the rules where you live.
+affiliated with Backed, Jupiter, Pyth, Raydium, Meteora or the issuers of the
+assets its markets track. You are responsible for the rules where you live.

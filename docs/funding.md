@@ -1,89 +1,100 @@
 # Funding
 
-## Overview
+Funding keeps open interest balanced, so the pool is not left holding the net
+delta of the traders it filled. It does not close a basis to an index: the
+book sets the clearing price.
 
-Funding on unwind is not a mechanism for closing a basis between the
-perpetual and an index, because the clearing price is produced by the book
-rather than by a pricing function anchored to the oracle. It exists to keep
-open interest balanced, so that the liquidity pool is not left holding the
-net delta of the traders it has filled.
+Two charges fold into one cumulative index per side.
 
-Two separate charges are accrued and folded into a single cumulative index
-per side.
-
-| Leg | Paid by | Received by | Scales with |
+| Leg | Paid by | Received by | Driven by |
 | --- | --- | --- | --- |
-| Borrow | Both sides | The pool | The book's imbalance against the pool |
-| Skew | The heavier side | The lighter side | Open interest imbalance |
+| Borrow | both sides | the pool | how far the book leans on the pool |
+| Skew | the heavier side | the lighter side | open interest imbalance |
 
-The borrow leg is charged to both sides because both sides are renting the
-pool's balance sheet. The skew leg transfers between traders and is
-conserved, so no value is created by it.
+## Key figures
 
-## Technical details
+| | Site listing |
+| --- | --- |
+| Borrow rate at 100% utilization | 1 bp an hour |
+| Skew sensitivity (`funding_k`) | 8,000 bps |
+| Skew rate cap | 100 bps an hour |
+| Permissionless cap on the skew rate | 200 bps an hour |
+| Longest single accrual | 8 hours |
+| Rate precision | whole bps an hour, rounded down |
+| Funding crank on devnet | every 5 minutes |
 
-The borrow rate scales linearly with utilization from a configured rate at
-full utilization. Utilization is the market's net open interest (longs minus
-shorts, either way) as a share of the pool's liquidity: a balanced book costs
-the pool nothing, so it borrows nothing.
+## Formulas
+
+**Borrow.** Utilization is the market's net open interest as a share of the
+pool's liquidity. A balanced book leans on the pool for nothing, so it borrows
+nothing.
 
 ```
-borrow_rate = borrow_rate_per_hour * utilization
+utilization = min(|longs - shorts| / pool liquidity, 100%)
+borrow_rate = borrow_rate_per_hour × utilization
 ```
 
-The skew rate is a configured sensitivity applied to the imbalance between
-the two sides, subject to a per market ceiling:
+Both sides pay `borrow_rate` on their notional.
+
+**Skew.**
 
 ```
 skew      = (heavy - light) / (heavy + light)
-skew_rate = min(funding_k * skew, max_funding_rate_per_hour)
+skew_rate = min(funding_k_bps × skew, max_funding_rate_per_hour)
 ```
 
-The heavier side is charged the skew rate on its notional. The lighter side
-receives the same total amount, which means its per dollar credit is the
-heavy side's per dollar charge scaled by the ratio of the two sides:
+The heavy side pays `skew_rate` on its notional. The light side receives the
+same total, so its rate per dollar is scaled up:
 
 ```
-credit_per_dollar = skew_rate * heavy / light
+credit_rate = skew_rate × heavy / light
 ```
 
-When one side is empty the skew leg is skipped, because there is no
-counterparty to receive the transfer. Utilization is necessarily high in that
-state, so the borrow leg is already charging for the exposure the pool
-carries.
+The skew leg moves money between traders and mints none. When it does not
+divide evenly, the remainder stays with the pool. When one side is empty, the
+skew leg is skipped: there is nobody to pay. The borrow leg already charges
+for the exposure.
+
+Each rate is computed in whole bps an hour, rounded down. On a site listing
+the borrow leg therefore reads zero until utilization reaches 100%, and the
+skew leg reaches its 100 bps cap at a skew of 1.25%.
 
 ## Numerical example
 
-Take a market with a borrow rate of 5 basis points per hour at full
-utilization, a skew sensitivity of 20, and the following state:
+A site listing with $30,000 of longs and $10,000 of shorts on a $1,000,000
+pool.
 
-1. Long open interest: 300,000 USDC
-2. Short open interest: 100,000 USDC
-3. Pool utilization: 60 percent
+1. Utilization: $20,000 / $1,000,000 = 2%. Borrow: 1 × 2% = 0.02 bps,
+   rounded down to 0.
+2. Skew: ($30,000 - $10,000) / $40,000 = 50%. Skew rate: 8,000 × 50% = 4,000
+   bps, capped at 100 bps an hour.
+3. Longs pay 100 bps an hour: $300.
+4. Shorts receive 100 × $30,000 / $10,000 = 300 bps an hour: $300.
 
-The borrow rate is 5 × 0.60 = 3 basis points per hour, charged to both sides.
+At that rate the heavy side pays 1% of its notional an hour, which is what
+pulls the book back to balance.
 
-The imbalance is (300,000 − 100,000) / 400,000 = 50 percent, so the skew rate
-is 20 × 0.50 = 10 basis points per hour, charged to longs.
+## How it is charged
 
-Longs therefore pay 13 basis points per hour in total, being 3 borrow and 10
-skew. Shorts pay 3 basis points of borrow and receive 10 × 300,000 / 100,000
-= 30 basis points of skew, for a net receipt of 27 basis points per hour.
+1. Every settled fill, fired trigger and liquidation accrues the index to now
+   first. The permissionless `accrue_funding` crank keeps it moving when
+   nobody trades.
+2. One accrual counts at most 8 hours, so a crank that stalls (or a clock
+   that jumps) cannot wipe out positions in one step.
+3. A position owes `size × (index now - index at entry)`.
+4. Adding to a position blends its entry index by size. The old size keeps
+   owing from where it started; the new size owes from now.
+5. Closing part of a position settles the funding on the part that closes.
+   The rest keeps owing from where it started, so a small close never clears
+   funding the remainder has built up.
+6. Funding owed counts against margin: leverage on an add and equity for
+   liquidation are both net of it.
 
-In absolute terms, longs pay 300 USDC of skew per hour and shorts receive 300
-USDC of skew per hour, confirming that the leg transfers rather than mints.
-The pool receives 90 USDC from longs and 30 USDC from shorts in borrow.
-
-## Partial closes
-
-Funding is owed in proportion to size. Closing part of a position settles the
-funding on the part that closes, and the rest keeps owing from where it
-started. A small close therefore never clears the funding the remainder has
-built up.
+Funding and borrow owed count in the pool's value before positions close. See
+[The pool](pool.md).
 
 ## On the trade screen
 
-The Funding tab beside Positions lists each open position with its side's
-current rate per hour, what the next hour costs or pays at that rate, and the
-funding it has paid so far. With no position open, it shows the rates longs
-and shorts pay in the market on screen.
+The market header shows the 1h funding rate. The Funding tab beside Positions
+lists each open position with its side's rate per hour, what the next hour
+costs or pays at that rate, and the funding paid so far.

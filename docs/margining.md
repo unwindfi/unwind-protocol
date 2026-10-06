@@ -1,78 +1,114 @@
 # Margining
 
-## Overview
+Margin is isolated. Each position posts its own collateral, risks only that
+collateral, and is liquidated on its own. There is no cross margin and no
+portfolio margin.
 
-Margin on unwind is isolated. Every position posts its own collateral, risks
-only that collateral, and is liquidated independently of any other position
-held by the same account. There is no cross margin mode and no portfolio
-margining.
+## Key figures
 
-Collateral is escrowed when an order is submitted rather than when it fills,
-because an order resting against a batch is a commitment to trade at that
-batch's clearing price. Any portion of the order that does not fill returns
-its escrowed collateral at settlement.
+| | Site listing | Permissionless bounds |
+| --- | --- | --- |
+| Maximum leverage | up to 5x, and never past the depth tier | at most 5x |
+| Maintenance margin | 1,000 bps (10%) | at least 500 bps |
+| Liquidation fee | 100 bps | below maintenance |
+| Maintenance floor | 120 bps + liquidation fee | same, on every market |
+| Minimum position | $10 | at least $10 |
 
-Adding to a position blends its entry price by the amount of the asset each
-fill bought, not by averaging the two prices. $1,000 at $100 and $1,000 at
-$200 is 15 units for $2,000, an entry of $133.33. That keeps the position's
-PnL equal to the PnL of its fills taken one by one.
+## Opening
 
-## Leverage and maintenance margin
+```
+leverage = size / (collateral - open fee)       must be ≤ effective max
+```
 
-Each market configures a maximum leverage and a maintenance margin, and the
-two are constrained relative to each other. The maintenance margin must sit
-below the initial margin implied by the maximum leverage, because a position
-opened at the maximum permitted leverage would otherwise be liquidatable at
-the moment it was opened. The program rejects a configuration in which this
-does not hold.
+Collateral is escrowed when the order is submitted. The part an unfilled
+order does not use comes back at settlement.
 
-The maintenance margin must also cover the largest step the risk price can
-take plus the liquidation fee: at least 120 basis points (40 a slot, 3 slots)
-above the liquidation fee. A position healthy before a step then still has its
-liquidation fee left after it, so a liquidation is paid out of the position
-and not out of the pool. The 20x market at 250 basis points of maintenance and
-a 100 basis point fee fits with 30 to spare. The program refuses a listing or
-a parameter change that does not fit. See
-[Price sources](price-sources.md#the-risk-price).
+Adding to a position checks the grown position on collateral net of the
+funding it already owes. The entry blends as the notional-weighted harmonic
+mean:
 
-Both parameters are per market. While the tracked asset's session is closed,
-maximum leverage and the open interest cap tighten; the maintenance margin
-does not change.
+```
+entry = (s1 + s2) / (s1 / p1 + s2 / p2)
+```
 
-## Leverage follows depth
+Example: $1,000 at $100 and $1,000 at $200 is 10 + 5 = 15 units for $2,000,
+an entry of $133.33. The arithmetic mean, $150, would pay a short more than
+its lots made and a long less. With the harmonic mean the position's PnL
+equals the PnL of its fills taken one by one.
 
-A market priced off a spot pool may carry only the leverage that pool's depth
-supports. Depth is what it costs to move the pool one percent. Higher leverage
-means a smaller move reaches a liquidation, and a move is what an attacker has
-to pay for, so a pool that is cheap to push gets less leverage.
+## Effective maximum leverage
+
+```
+effective max = min(listed max, closed-session max if closed, depth tier)
+```
+
+The depth tier applies only to markets priced off a spot pool.
+
+### Leverage follows depth
+
+Depth is what it costs to move the tracked pool 1%. Higher leverage means a
+smaller move reaches a liquidation, and the move is what an attacker pays for.
 
 | Sustained depth | Maximum leverage |
 | --- | --- |
-| Under 10,000 USD | 2x |
-| 10,000 to 50,000 USD | 3x |
-| 50,000 to 250,000 USD | 4x |
-| 250,000 USD and above | 5x |
+| under $10,000 | 2x |
+| $10,000 to $50,000 | 3x |
+| $50,000 to $250,000 | 4x |
+| $250,000 and above | 5x |
 
-The depth used is sustained depth, not the last reading. It falls to any lower
-reading at once and rises toward a higher one by a tenth of the gap, at most
-once every twenty seconds however often the pool is observed, and never past
-the next tier in one rise. Liquidity parked in a pool for a moment, even a
-very large amount, buys at most one tier until the next reading takes it
-back, and a new market opens at 2x and earns its tier over depth that stayed. When the pool
-thins, the cap falls on the next reading, before the next order is accepted.
+Sustained depth:
 
-The cap is written onto the market by every observation and checked on every
-open. It never lifts a market past the leverage it was listed with, and it
-does not apply to a market priced off a Pyth feed.
+1. falls to any lower reading at once,
+2. rises toward a higher reading by 10% of the gap, at most once every 20
+   seconds, however often the pool is read,
+3. never passes the next tier's floor in one rise.
 
-## Position valuation
+Liquidity parked in a pool for one reading, however large, buys at most one
+tier, and the next honest reading takes it back. A new market opens at 2x and
+earns its tier over depth that stayed. When the pool thins, the tier falls on
+the next reading, before the next order is accepted.
 
-Open positions are valued against the market's reference mark rather than
-against the last clearing price. The mark is the market's price source, which
-is a Pyth feed or an observed spot pool depending on how the market was
-opened.
+## Maintenance margin
 
-The trade screen shows one mark, the pool mid, in the market header and in
-each position row. PnL is taken at the price a close would fill at: the bid
-for a long, the ask for a short. The two differ by half the spread, which the
-header shows as its own figure.
+A position is liquidatable when its equity, at the risk price, falls below
+its maintenance margin:
+
+```
+equity      = collateral + PnL - funding owed
+PnL         = size × (exit / entry - 1)        long
+              size × (1 - exit / entry)        short
+exit        = risk price less the spread, on the closing side
+liquidate   if equity < size × maintenance_bps / 10,000
+```
+
+Two constraints on every market, checked at listing and on every parameter
+change:
+
+1. **Maintenance below initial margin.** Initial margin, 1 / max leverage,
+   must exceed maintenance: 5x is 20%, above 10%. A position opened at full
+   leverage is not already liquidatable.
+2. **Maintenance covers one risk price step plus the fee.** The risk price
+   moves at most 120 bps per step (40 a slot, 3 slots; see
+   [Price sources](price-sources.md#the-risk-price)). So maintenance must be
+   at least 120 bps above the liquidation fee. A position healthy before a
+   step still has its fee left after it, and a liquidation is paid out of the
+   position, not out of the pool.
+
+A site listing at 1,000 bps maintenance and a 100 bps fee clears the floor of
+220 bps by 780.
+
+The auction's band is at most half the maintenance margin, so a position
+opened at either edge of the band starts with at least half its maintenance
+margin standing.
+
+## Sessions
+
+While a tokenized stock's exchange is closed, its maximum leverage and open
+interest cap tighten. Maintenance does not change. See
+[Sessions](sessions.md).
+
+## On the trade screen
+
+The header and each position row show one mark, the pool mid. PnL is taken at
+the price a close would fill at: the bid for a long, the ask for a short. The
+two differ by half the spread, shown in the header as its own figure.

@@ -2,45 +2,60 @@
 
 ## Overview
 
-unwind is a perpetual futures venue whose two defining decisions are that
-markets are opened rather than listed, and that price is determined by
-crossing orders rather than by a pricing function over deposits. Neither
-decision is a feature added to a conventional design; each removes a
-component that conventional designs require.
+unwind makes two choices most perpetual venues do not.
+
+1. Markets are opened, not listed.
+2. Price comes from crossing orders, not from a pricing function over
+   deposits.
+
+Each removes a component: the listings desk, and the curve.
 
 ## Markets are opened, not listed
 
-Opening a market is a signed transaction that any account may send, against
-any asset whose price is readable on chain. A market with a Pyth feed uses
-that feed directly. A market without one is pointed at a Raydium or Meteora
-spot pool, and trades from the mark keeper's first price push, seconds after
-opening.
+Any account can open a market against any asset whose price is readable on
+chain.
 
-The defence against spam is cost rather than permission. A newly opened
-market earns its opener nothing and cannot be traded against until somebody
-has posted the collateral it is permitted to lose, and that budget is capped
-at what the tracked asset's own liquidity can absorb. Whoever posts it is paid
-for carrying that first loss, with half of the liquidity pool's share of the
-market's fees.
+| Price source | How the market is priced |
+| --- | --- |
+| Pyth feed | The feed, read directly. Prices only move forward in time. |
+| Raydium CLMM or Meteora DLMM pool, quoted in USDC or USDT | The mark keeper reads the pool and pushes the price. The market trades from the first push, within about 25 seconds of listing. |
+
+Spam is held off by cost, not permission:
+
+1. A market earns its opener nothing until people trade it.
+2. A market takes no position until somebody posts the collateral it is
+   allowed to lose. The site lists and backs in one transaction, with at
+   least $100.
+3. That budget is capped by what the tracked pool's depth can absorb.
+4. Whoever posts it takes the market's first loss and is paid for it: half
+   of the liquidity pool's share of the market's fees, 30% of every fee on
+   the default split.
+
+The same pool or feed can be listed again. Each listing is a new generation
+at its own address, so a bad first listing blocks nobody (see
+[How to open a market](how-to-open-a-market.md)).
 
 ## Price is determined by the batch
 
-Orders accumulate for one second and clear as two auctions: takers buying
-against makers selling, and takers selling against makers buying, each at the
-single price that crosses the most volume. The liquidity pool fills only the
-takers makers leave standing, and never trades with a maker.
+Orders collect for 1 second and clear as two auctions: takers buying against
+makers selling, and takers selling against makers buying. Each clears at the
+one price that crosses the most volume. The pool fills only the takers makers
+leave standing, and never trades with a maker.
 
-Because the clearing price is produced by the book, there is no perpetual to
-index basis for funding to close. Funding exists solely to keep open interest
-balanced so that the pool does not accumulate directional exposure.
+The book makes the price, so there is no index basis for funding to close.
+Funding moves money from the heavier side of open interest to the lighter
+one, so the pool does not carry the imbalance. Borrow charges both sides for
+the pool capital they use (see [Funding](funding.md)).
 
 ## Consequences
 
-Arrival time within a window carries no weight, so latency confers no
-advantage and no priority lane exists to be sold. Liquidation is
-permissionless, which removes the dependency on a keeper remaining
-available. A market's loss budget may be lowered by anyone as liquidity
-drains. It rises only when somebody posts backing; the pool authority can lower it
-but never raise it. Depth alone never raises it, because depth
-is temporarily purchasable and an account able to mint a budget from depth
-would be authorising its own allowance.
+1. **Arrival time inside a window carries no weight.** No latency race, no
+   priority lane to sell.
+2. **Liquidation is permissionless.** It does not wait on a keeper. It acts
+   on the market's risk price, which moves at most 40 bps a slot toward the
+   oracle, so a one-reading spike liquidates nobody.
+3. **Budgets go down by anyone, up only by money.** Anyone can cut a market's
+   budget to its pool's measured depth. The pool authority can lower it. Only
+   a backing deposit raises it. Depth alone never does: depth can be rented
+   for one transaction, and an account that could mint a budget from depth
+   would be writing its own allowance.
