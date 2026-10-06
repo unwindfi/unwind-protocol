@@ -14,6 +14,7 @@ const docs = defineDocs({
   docs: {
     schema: pageSchema.extend({
       cover: z.string().optional(),
+      coverDark: z.string().optional(),
       sidebarTitle: z.string().optional(),
     }),
     mdxOptions: applyMdxPreset({
@@ -35,7 +36,7 @@ export const source = loader({
     if (!name) return;
     const Icon = (Phosphor as unknown as Record<string, React.ComponentType<{ weight?: string; className?: string }>>)[name];
     if (!Icon) throw new Error(`Unknown sidebar icon: ${name}`);
-    return createElement(Icon, { weight: 'duotone', className: 'text-fd-primary' });
+    return createElement(Icon, { weight: 'duotone', className: 'text-fd-foreground' });
   },
   plugins: [
     {

@@ -13,20 +13,23 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
   if (!page) notFound();
 
   const MDX = page.data.body;
-  const { cover } = page.data;
+  const { cover, coverDark } = page.data;
+  // The site's own hero, in the theme the reader is in.
+  const banner = (src: string, className: string) => (
+    <Image
+      src={src}
+      alt=""
+      width={2000}
+      height={772}
+      priority
+      className={`mb-2 w-full rounded-xl object-cover ${className}`}
+    />
+  );
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
-      {cover && (
-        <Image
-          src={cover}
-          alt=""
-          width={1990}
-          height={796}
-          priority
-          className="mb-2 w-full rounded-xl object-cover"
-        />
-      )}
+      {cover && banner(cover, coverDark ? 'dark:hidden' : '')}
+      {coverDark && banner(coverDark, 'hidden dark:block')}
       <DocsTitle className="border-b pb-6">{page.data.title}</DocsTitle>
       <DocsBody>
         <MDX

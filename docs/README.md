@@ -1,5 +1,6 @@
 ---
-cover: .gitbook/assets/unwind-hero.png
+cover: .gitbook/assets/unwind-hero-markets.png
+coverDark: .gitbook/assets/unwind-hero-markets-dark.png
 coverY: 0
 ---
 

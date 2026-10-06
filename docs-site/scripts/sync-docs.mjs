@@ -91,7 +91,7 @@ function parse(file) {
 
 
 // One Phosphor icon per page in the sidebar, by source file, drawn duotone in
-// the brand violet (lib/source.ts). Names are @phosphor-icons/react exports;
+// neutral foreground (lib/source.ts). Names are @phosphor-icons/react exports;
 // an unknown name fails the build.
 const ICONS = {
   'README.md': 'House',
@@ -122,6 +122,7 @@ function write(file, dest, extra = {}) {
   const { meta, title, body } = parse(file);
   const frontmatter = { title, description: firstParagraph(body), icon: ICONS[file], ...extra };
   if (meta.cover) frontmatter.cover = `/assets/${path.basename(meta.cover)}`;
+  if (meta.coverDark) frontmatter.coverDark = `/assets/${path.basename(meta.coverDark)}`;
   const yaml = Object.entries(frontmatter)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)

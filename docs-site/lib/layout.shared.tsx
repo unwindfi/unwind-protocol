@@ -23,13 +23,13 @@ export function baseOptions(): BaseLayoutProps {
         text: 'App',
         url: appUrl,
         external: true,
-        icon: <ArrowSquareOut weight="duotone" className="text-fd-primary" />,
+        icon: <ArrowSquareOut weight="duotone" className="text-fd-foreground" />,
       },
       {
         text: 'X',
         url: xUrl,
         external: true,
-        icon: <XLogo weight="duotone" className="text-fd-primary" />,
+        icon: <XLogo weight="duotone" className="text-fd-foreground" />,
       },
     ],
   };

@@ -22,7 +22,7 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
       className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground ${className}`}
       aria-label={mounted ? `Switch to ${next} theme` : 'Switch theme'}
     >
-      {mounted && <Icon size={16} weight="duotone" className="text-fd-primary" aria-hidden />}
+      {mounted && <Icon size={16} weight="duotone" className="text-fd-foreground" aria-hidden />}
       {mounted ? (next === 'dark' ? 'Dark' : 'Light') : 'Theme'}
     </button>
   );
