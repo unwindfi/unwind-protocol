@@ -384,9 +384,9 @@ export default function Markets() {
        * cards and the table are a surface laid on top of it, with the panel's
        * own edge telling you where that surface begins.
        */}
-      <div className="mx-auto w-full max-w-[1460px] px-2.5 pb-12 sm:px-4">
+      <div className="mx-auto w-full max-w-[1180px] px-2.5 pb-12 sm:px-4">
         <div className="rounded-[18px] border border-line bg-background">
-      <Shell className="py-8 md:py-10">
+      <div className="w-full px-5 py-8 sm:px-6 md:py-10">
         {/*
          * The groups, as cards fronted by a market from inside them. A group
          * nobody can enter is not shown at all: this list grows by listings
@@ -587,7 +587,7 @@ export default function Markets() {
             ))}
         </div>
 
-      </Shell>
+      </div>
         </div>
       </div>
 
