@@ -124,6 +124,34 @@ page starts the backing at $2,000 instead of the $100 minimum. The pool
 quotes 5% of a market's remaining budget into each batch, so $100 would fill
 a tester's first orders $5 at a time.
 
+## The devnet maker
+
+unwind runs one market maker on devnet. Nobody else is quoting yet, and
+without a maker every taker would fill against the pool at its own quote.
+The maker is a single wallet run by the devnet server, under the same rules
+as any other maker. It has no access the program gives nobody else.
+
+1. **Where it quotes.** SOL, JUP, HYPE, WIF and TRUMP always have a quote
+   resting. Every other market gets a quote only when a taker is already
+   waiting in the batch.
+2. **What it quotes.** 10 bps either side of the mark, up to $10,000 a side,
+   sized to the room under the market's open-interest cap. It holds at most
+   $100,000 in a market. Flat, it can rest one side only, and it alternates.
+3. **How it prices.** From the mark alone. It never prices off the orders it
+   can see resting, and it never trades with itself.
+4. **Requotes.** When the mark moves 5 bps away from a resting quote, the
+   quote is cancelled and placed again, at most once every 30 seconds. A
+   quote that fills is replaced in the next batch.
+5. **Labeled.** Its orders show as **house** in the book and its fills as
+   **house** on the tape.
+6. **Counted apart.** The batch panel splits each clear into makers, house
+   and pool. The pool share and the house share are each reported as their
+   own figure. What is left is makers unwind does not run.
+7. **Never ranked.** It is left off the leaderboard and counts toward no
+   creator's score.
+
+Anyone can quote against it. A tighter quote fills first.
+
 ## Rewards for devnet creators
 
 The markets do not carry over. The work does. People who list and grow

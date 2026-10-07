@@ -10,6 +10,7 @@ import { Gauge } from "@/components/market/Gauge";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import { poolFill, useHasBackend, type Batch, type Market, type Trade } from "@/lib/api";
 import { compact, hhmmss, pnum } from "@/lib/format";
+import { DOCS } from "@/site/Chrome";
 
 /// Caption over figure, the stat tiles' manner without the tile: the wide
 /// panel's way of stating a number.
@@ -31,11 +32,20 @@ const Fig = ({ k, v, cls = "", sub }: { k: string; v: string; cls?: string; sub?
   </div>
 );
 
+/// Where the devnet maker is described: who runs it and how it quotes.
+const HOUSE_DOCS = `${DOCS}/onboarding/devnet#the-devnet-maker`;
+
+/// Marks a quote or fill as the devnet maker's, which unwind runs.
+const House = () => (
+  <span className="ml-1 text-[10.5px] text-dim" title="unwind's devnet maker">house</span>
+);
+
 /// One resting order. Size is drawn as a bar behind the row, so relative
 /// weight reads without anyone having to compare the numbers. Makers are
-/// marked: they rest as liquidity and only ever meet takers.
-const Order = ({ price, size, bid, isMaker, widest }: {
-  price: number; size: number; bid: boolean; isMaker: boolean; widest: number;
+/// marked: they rest as liquidity and only ever meet takers. The devnet's own
+/// maker is marked as the house, so its depth is not read as anyone else's.
+const Order = ({ price, size, bid, isMaker, house, widest }: {
+  price: number; size: number; bid: boolean; isMaker: boolean; house?: boolean; widest: number;
 }) => (
   <div className="relative grid grid-cols-2 gap-1.5 px-5 py-[3px] text-[12px] sm:px-6">
     <i
@@ -44,7 +54,7 @@ const Order = ({ price, size, bid, isMaker, widest }: {
     />
     <span className={`relative n ${bid ? "text-up" : "text-down"}`}>
       {pnum(price)}
-      {isMaker && <span className="ml-1 text-[10.5px] text-dim" title="Maker">M</span>}
+      {house ? <House /> : isMaker && <span className="ml-1 text-[10.5px] text-dim" title="Maker">M</span>}
     </span>
     <span className="relative n text-right">{compact(size)}</span>
   </div>
@@ -152,7 +162,9 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
 
   const last = batch.last;
   const pool = last ? Math.min(last.poolUsd, last.matched) : 0;
-  const book = last ? Math.max(0, last.matched - pool) : 0;
+  const house = last ? Math.min(last.houseUsd ?? 0, last.matched - pool) : 0;
+  // Makers unwind does not run: what is left after the pool and the house.
+  const book = last ? Math.max(0, last.matched - pool - house) : 0;
   const lastShare = last && last.matched > 0 ? (pool / last.matched) * 100 : null;
   const share = batch.poolSharePct;
 
@@ -203,11 +215,17 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
           <div className="flex h-[3px] gap-[2px] overflow-hidden rounded-full bg-panel3">
             <i className="block h-full rounded-full bg-foreground"
               style={{ width: `${(book / last.matched) * 100}%` }} />
+            {house > 0 && <i className="block h-full rounded-full bg-muted-foreground"
+              style={{ width: `${(house / last.matched) * 100}%` }} />}
             <i className="block h-full rounded-full bg-dim"
               style={{ width: `${(pool / last.matched) * 100}%` }} />
           </div>
           <div className="n mt-1.5 flex justify-between text-[11px] text-muted-foreground">
-            <span>Makers {compact(book)}</span>
+            <span>
+              Makers {compact(book)}
+              {house > 0 && <> · <a href={HOUSE_DOCS} target="_blank" rel="noreferrer"
+                className="underline decoration-line underline-offset-2 hover:text-foreground">House</a> {compact(house)}</>}
+            </span>
             <span>Pool {compact(pool)}{share != null && <> · {share.toFixed(1)}% all clears</>}</span>
           </div>
           {history.length > 1 && (
@@ -249,6 +267,12 @@ function BatchTab({ m, batch }: { m: Market; batch: Batch | null; narrow: boolea
                 </div>
                 {bids.map((o, i) => <Order key={`b${i}`} {...o} bid widest={widest} />)}
               </div>
+              {batch.resting.some((o) => o.house) && (
+                <a href={HOUSE_DOCS} target="_blank" rel="noreferrer"
+                  className="block px-4 pb-3 text-[11px] text-dim hover:text-muted-foreground sm:px-5">
+                  House: unwind's devnet maker. How it quotes
+                </a>
+              )}
             </>}
       </div>
     </div>
@@ -302,7 +326,9 @@ export function BookPanel({
                 <div className={`pane-scroll pb-2 ${narrow ? "min-h-0 flex-1" : "max-h-[240px]"}`}>
                   {trades.map((t, i) => (
                     <div key={i} className="grid grid-cols-3 gap-1.5 px-5 py-[3px] text-[12px] sm:px-6">
-                      <span className={t.side === "buy" ? "text-up" : "text-down"}>{pnum(t.price)}</span>
+                      <span className={t.side === "buy" ? "text-up" : "text-down"}>
+                        {pnum(t.price)}{t.house && <House />}
+                      </span>
                       <span className="text-right">{compact(t.size)}</span>
                       <span className="text-right text-muted-foreground">{hhmmss(t.t)}</span>
                     </div>

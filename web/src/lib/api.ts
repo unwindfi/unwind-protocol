@@ -155,6 +155,8 @@ export interface Account {
 /// `FlowCross`.
 export interface RestingOrder {
   price: number; size: number; isBid: boolean; isMaker: boolean; reduceOnly: boolean;
+  /// Quoted by the devnet's own maker, which unwind runs.
+  house?: boolean;
 }
 
 /// One of a batch's two auctions. The buy flow is takers buying from makers,
@@ -179,14 +181,20 @@ export interface Batch {
   last: {
     buyPrice: number | null; sellPrice: number | null;
     matched: number; poolUsd: number; orders: number; t: number;
+    /// What the devnet's own maker filled. Absent from older servers.
+    houseUsd?: number;
   } | null;
   /// Share of all volume the pool has been the counterparty to. Null until
   /// something has traded — "no data yet" is not "the pool took none".
   poolSharePct: number | null;
+  /// The devnet maker's share, on the same terms.
+  houseSharePct?: number | null;
 }
 
 export interface Trade {
   t: number; symbol: string; side: "buy" | "sell"; size: number; price: number; kind: string;
+  /// A fill of the devnet's own maker.
+  house?: boolean;
   /// A wallet's own fills only: the fee charged, and for a close (or a
   /// liquidation) the PnL less funding, before the fee. Absent on older rows.
   fee?: number; pnl?: number;

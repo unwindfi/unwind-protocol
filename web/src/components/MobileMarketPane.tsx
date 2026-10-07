@@ -116,6 +116,8 @@ export function MobileMarketPane({
                   className="grid grid-cols-3 gap-2 border-b border-line px-4 py-2.5 text-[13px]">
                   <span className={`n font-medium ${t.side === "buy" ? "text-up" : "text-down"}`}>
                     {pnum(t.price)}
+                    {t.house && <span className="ml-1 text-[11px] font-normal text-dim"
+                      title="unwind's devnet maker">house</span>}
                   </span>
                   <span className="n text-right">{compact(t.size)}</span>
                   <span className="n text-right text-muted-foreground">{hhmmss(t.t)}</span>

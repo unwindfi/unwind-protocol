@@ -140,6 +140,11 @@ const kp = (a: number[]) => Keypair.fromSecretKey(Uint8Array.from(a));
 const authority = kp(st.keys.authority);
 const lp = kp(st.keys.lp);
 const trader = kp(st.keys.trader);
+/// The devnet's own maker, which this process runs (see `makeMarket`). Its
+/// quotes and fills are labeled as the house's wherever they are shown, so
+/// nobody reads its depth or its share of the volume as somebody else's.
+const HOUSE_MAKER = process.env.MAKER_BOT !== "0" ? lp.publicKey : null;
+const isHouse = (owner: any) => !!HOUSE_MAKER && new PublicKey(owner).equals(HOUSE_MAKER);
 
 /*
  * Dedicated RPCs for the testnet, without touching the state file: the
@@ -3094,9 +3099,9 @@ app.get("/api/fills", (req, res) => {
 const lastClear: Record<string, {
   /// One per flow; null when that flow did not trade.
   buyPrice: number | null; sellPrice: number | null;
-  matched: number; poolUsd: number; orders: number; t: number;
+  matched: number; poolUsd: number; houseUsd: number; orders: number; t: number;
 }> = {};
-const shareTally: Record<string, { matched: number; pool: number }> = {};
+const shareTally: Record<string, { matched: number; pool: number; house: number }> = {};
 
 /// Share of all volume the pool has been the counterparty to, in percent.
 ///
@@ -3108,6 +3113,13 @@ const poolShareOf = (symbol: string) => {
   return t && t.matched > 0 ? (t.pool / t.matched) * 100 : null;
 };
 
+/// Share the devnet's own maker has filled, in percent, on the same terms.
+/// What is left after the pool and the house is makers nobody here runs.
+const houseShareOf = (symbol: string) => {
+  const t = shareTally[symbol];
+  return t && t.matched > 0 ? (t.house / t.matched) * 100 : null;
+};
+
 /// Reads what a clear actually did out of its own logs.
 ///
 /// `pool_bought` and `pool_sold` are emitted by `BatchCleared` but not stored
@@ -3115,7 +3127,10 @@ const poolShareOf = (symbol: string) => {
 /// hold this design to. Parsed from the transaction rather than subscribed to:
 /// a dropped websocket would leave the number quietly wrong, where a failed
 /// parse leaves it visibly absent.
-async function recordClear(symbol: string, sig: string) {
+///
+/// `houseUsd` is what the house maker filled in the batch, read off the sealed
+/// account by the caller; the event does not break fills down by owner.
+async function recordClear(symbol: string, sig: string, houseUsd: number) {
   const tx = await conn.getTransaction(sig, {
     commitment: "confirmed", maxSupportedTransactionVersion: 0,
   });
@@ -3140,16 +3155,17 @@ async function recordClear(symbol: string, sig: string) {
     }
     lastClear[symbol] = {
       buyPrice, sellPrice,
-      matched, poolUsd,
+      matched, poolUsd, houseUsd,
       orders: Number(ev.data.orders),
       t: Date.now(),
     };
     // A batch that crossed nothing is still a batch; it just does not move the
     // share, because dividing by a volume of zero says nothing about anything.
     if (matched > 0) {
-      const t = (shareTally[symbol] ??= { matched: 0, pool: 0 });
+      const t = (shareTally[symbol] ??= { matched: 0, pool: 0, house: 0 });
       t.matched += matched;
       t.pool += poolUsd;
+      t.house += houseUsd;
     }
   }
 }
@@ -3242,6 +3258,7 @@ app.get("/api/batch/:symbol", async (req, res) => {
         isBid: o.isBid !== 0,
         isMaker: o.isMaker !== 0,
         reduceOnly: o.reduceOnly !== 0,
+        house: isHouse(o.owner),
       }));
 
     // A market still seasoning is in its opening auction: orders rest until the
@@ -3272,6 +3289,7 @@ app.get("/api/batch/:symbol", async (req, res) => {
       resting,
       last: lastClear[m.symbol] ?? null,
       poolSharePct: poolShareOf(m.symbol),
+      houseSharePct: houseShareOf(m.symbol),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -3712,21 +3730,24 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     if (ixs.length) await sendV0(conn, authority, ixs);
   };
 
-  const makeMarket = async (m: MarketRt, state: any) => {
-    const seq = Number(state.seq);
-    if (quoted.get(m.symbol) === seq) return;
-    const owner = maker.publicKey.toBase58();
-    const active = (state.orders as any[]).filter((o) => o.active);
-    // Only where a taker is waiting, and only once per batch.
-    if (!active.some((o) => !o.isMaker && new PublicKey(o.owner).toBase58() !== owner)) return;
-    if (active.some((o) => new PublicKey(o.owner).toBase58() === owner)) return;
+  /// The quotes the maker would rest in `m`'s batch now.
+  ///
+  /// `others` is what else is resting there, and `releasing` is how much of
+  /// the position the maker's own closing quotes promise that the same
+  /// transaction cancels first, so a requote can offer it again.
+  const quoteIxs = async (m: MarketRt, others: any[], releasing: number, flatSide: boolean | null) => {
     const mark = px(m);
-    if (!(mark > 0)) return;
-    quoted.set(m.symbol, seq);
-
+    if (!(mark > 0)) return [];
     const bidPx = mark * (1 - MAKER_SPREAD_BPS / 10_000);
     const askPx = mark * (1 + MAKER_SPREAD_BPS / 10_000);
-    const open = await closableUsd(m, maker.publicKey);
+    // Read whole rather than through `closableUsd`, which reports a position
+    // promised entirely to closing quotes as no position. The maker then
+    // quoted an open on the other side and the program refused the pair.
+    const info = await conn.getAccountInfo(positionPda(m.address, maker.publicKey));
+    const p: any = info && program.coder.accounts.decode("position", info.data);
+    const open = p && num(p.sizeUsd) > 0
+      ? { isLong: p.isLong as boolean, usd: (num(p.sizeUsd) - num(p.closingUsd)) / 1e6 + releasing }
+      : null;
     const accounts = orderAccounts(m, maker.publicKey);
     const quote = (price: number, size: number, isBid: boolean, reduce: boolean) =>
       program.methods
@@ -3738,12 +3759,13 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     // open only one way a batch (the program refuses a wallet opening both),
     // so it takes the side the takers are short of: bids under net selling,
     // asks under net buying. Quoting both refused the pair, and a flat maker
-    // never quoted at all.
+    // never quoted at all. With no takers to read, the caller picks.
     const ixs: TransactionInstruction[] = [];
-    const heldUsd = open?.usd ?? 0;
+    const heldUsd = Math.max(0, open?.usd ?? 0);
     let net = 0;
-    for (const o of active) if (!o.isMaker) net += (o.isBid ? 1 : -1) * num(o.sizeUsd);
-    const sides = open ? [true, false] : net > 0 ? [false] : net < 0 ? [true] : [];
+    for (const o of others) if (!o.isMaker) net += (o.isBid ? 1 : -1) * num(o.sizeUsd);
+    const sides = open ? [true, false]
+      : net > 0 ? [false] : net < 0 ? [true] : flatSide === null ? [] : [flatSide];
     // An open past the side's open-interest cap is refused, and with it the
     // whole quote, so an open is sized to the room left: the cap less the
     // side's open interest and every open already resting on that side.
@@ -3751,7 +3773,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     const room = (isLong: boolean) => {
       const base = num(isLong ? ma.maxOiLongUsd : ma.maxOiShortUsd) / 1e6;
       const cap = Number(ma.session) === Session.Closed ? base * Number(ma.closedSessionOiMultBps) / 10_000 : base;
-      const pending = active.filter((o) => !o.reduceOnly && !!o.isBid === isLong)
+      const pending = others.filter((o) => !o.reduceOnly && !!o.isBid === isLong)
         .reduce((t, o) => t + num(o.sizeUsd) / 1e6, 0);
       return cap - num(isLong ? ma.longSizeUsd : ma.shortSizeUsd) / 1e6 - pending;
     };
@@ -3763,11 +3785,93 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
         if (size >= Math.max(1, num(ma.minPositionUsd) / 1e6)) {
           ixs.push(await quote(isBid ? bidPx : askPx, size, isBid, false));
         }
-      } else {
+      } else if (heldUsd >= 1) {
         ixs.push(await quote(isBid ? bidPx : askPx, Math.min(MAKER_SIZE_USD, heldUsd), isBid, true));
       }
     }
+    return ixs;
+  };
+
+  const makeMarket = async (m: MarketRt, state: any) => {
+    const seq = Number(state.seq);
+    if (quoted.get(m.symbol) === seq) return;
+    const active = (state.orders as any[]).filter((o) => o.active);
+    // Only where a taker is waiting, and only once per batch. A market with
+    // standing quotes already has them in the batch.
+    if (!active.some((o) => !o.isMaker && !isHouse(o.owner))) return;
+    if (active.some((o) => isHouse(o.owner))) return;
+    if (!(px(m) > 0)) return;
+    quoted.set(m.symbol, seq);
+    const ixs = await quoteIxs(m, active, 0, null);
     if (ixs.length) await sendV0(conn, authority, ixs, [], [maker]);
+  };
+
+  /// Standing quotes, on the markets most people open.
+  ///
+  /// Everywhere else the maker quotes only into a batch a taker is already
+  /// waiting in, which fills them but leaves the book empty between trades.
+  /// Here it keeps a quote resting at all times. A batch holding nothing but
+  /// the maker's own quotes is not cleared (there is nothing for it to cross
+  /// with), so a quote rests until a taker arrives or the mark moves half the
+  /// spread away from it, and then it is cancelled and placed again in one
+  /// transaction. Kept to a few markets because each requote is a
+  /// transaction, and on every market at once they would outrun the RPC plan.
+  const MAKER_STANDING = new Set((process.env.MAKER_STANDING ?? "SOL,JUP,HYPE,WIF,TRUMP")
+    .split(",").map((s) => s.trim()).filter(Boolean));
+  // About 58,000 RPC calls a day across five markets at worst (a position
+  // read, a market read and a send per requote), against a key pool already
+  // near its free-tier total.
+  const REQUOTE_MS = Number(process.env.MAKER_REQUOTE_MS ?? 30_000);
+  const requotedAt = new Map<string, number>();
+  const flatTurn = new Map<string, boolean>();
+  const standing = (m: MarketRt) =>
+    MAKER_ON && MAKER_STANDING.has(m.symbol) && !(m.observed && !m.observed.seasoned);
+
+  const keepStanding = async (m: MarketRt, state: any) => {
+    const mark = px(m);
+    if (!(mark > 0)) return;
+    const orders = (state.orders as any[]).map((o, i) => ({ o, i })).filter(({ o }) => o.active);
+    const mine = orders.filter(({ o }) => isHouse(o.owner));
+    const others = orders.filter(({ o }) => !isHouse(o.owner)).map(({ o }) => o);
+    const fresh = mine.length > 0 && mine.every(({ o }) => {
+      const target = mark * (1 + (o.isBid ? -1 : 1) * MAKER_SPREAD_BPS / 10_000);
+      return Math.abs(num(o.price) / 1e6 / target - 1) * 10_000 <= MAKER_SPREAD_BPS / 2;
+    });
+    // A taker waiting on a side the resting quote does not cover (a flat
+    // maker rests one side only) is requoted for at once, once a batch.
+    let net = 0;
+    for (const o of others) if (!o.isMaker) net += (o.isBid ? 1 : -1) * num(o.sizeUsd);
+    const need = net > 0 ? false : net < 0 ? true : null;
+    const covered = need === null || mine.some(({ o }) => !!o.isBid === need);
+    if (fresh && covered) return;
+    if (!covered) {
+      const seq = Number(state.seq);
+      if (quoted.get(m.symbol) === seq) return;
+      quoted.set(m.symbol, seq);
+    } else if (mine.length) {
+      // A quote the mark has left behind is replaced at most this often. A
+      // book with no quote in it (the last one filled) is quoted at once.
+      if (Date.now() - (requotedAt.get(m.symbol) ?? 0) < REQUOTE_MS) return;
+      requotedAt.set(m.symbol, Date.now());
+    } else {
+      // Timed rather than once a batch: a batch holding nothing is not
+      // cleared, so its seq never moves and a failed quote would never retry.
+      if (Date.now() - (requotedAt.get(m.symbol) ?? 0) < 5_000) return;
+      requotedAt.set(m.symbol, Date.now());
+    }
+
+    const releasing = mine.filter(({ o }) => o.reduceOnly).reduce((t, { o }) => t + num(o.sizeUsd) / 1e6, 0);
+    const cancels = await Promise.all(mine.map(({ i }) =>
+      program.methods.cancelBatchOrder(i).accounts({
+        owner: maker.publicKey, pool, market: m.address, batch: batchPda(m.address),
+        usdcMint, usdcVault, ownerUsdc: ata(maker.publicKey, usdcMint),
+        position: positionPda(m.address, maker.publicKey), tokenProgram: TOKEN_PROGRAM_ID,
+      }).instruction()));
+    // Flat with nobody waiting, it can rest only one side; it alternates.
+    const side = !(flatTurn.get(m.symbol) ?? false);
+    flatTurn.set(m.symbol, side);
+    const quotes = await quoteIxs(m, others, releasing, side);
+    if (cancels.length || quotes.length) await sendV0(conn, authority, [...cancels, ...quotes], [], [maker]);
   };
 
   /// Clears every market's batch once its window is up, then settles what it
@@ -3792,7 +3896,7 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     try { noteShared(keys, all.slice(markets.length), at); }
     catch (e: any) { console.warn(`snapshot: ${e?.message ?? e}`); }
     const infos = all.slice(0, markets.length);
-    const due: { m: MarketRt; state: any; open: boolean }[] = [];
+    const due: { m: MarketRt; state: any; open: boolean; quoteOnly?: boolean }[] = [];
     for (const [i, m] of markets.entries()) {
       const info = infos[i];
       // No batch yet is an answer too: the page's poll should not read it again.
@@ -3802,12 +3906,17 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       // An open batch with nothing in it has nothing to clear. Clearing it
       // anyway only restarts its window, and cost a transaction per market
       // every second. Once an order lands the batch is already overdue
-      // and clears on the next pass.
+      // and clears on the next pass. The same goes for a batch holding only
+      // the maker's standing quotes: they rest until a taker comes, and are
+      // only looked at to see whether the mark has left them behind.
       const open = Number(state.clearedTs) === 0;
-      if (open && !state.orders.some((o: any) => o.active)) continue;
+      if (open && !state.orders.some((o: any) => o.active && !isHouse(o.owner))) {
+        if (standing(m)) due.push({ m, state, open, quoteOnly: true });
+        continue;
+      }
       due.push({ m, state, open });
     }
-    if (due.length) heatAuction(10_000);
+    if (due.some((d) => !d.quoteOnly)) heatAuction(10_000);
 
     /*
      * Up to AUCTION_PARALLEL markets at once, each on its own clock. Each
@@ -3818,13 +3927,14 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
      * several transactions). A market is started as soon as it is due and
      * not already being worked, and the pass does not wait for it.
      */
-    const work = async ({ m, state, open }: { m: MarketRt; state: any; open: boolean }) => {
+    const work = async ({ m, state, open, quoteOnly }: { m: MarketRt; state: any; open: boolean; quoteOnly?: boolean }) => {
       // Quote before clearing, into the batch the takers are waiting in. A
       // listing still seasoning has no mark to quote around yet.
       if (MAKER_ON && open && !(m.observed && !m.observed.seasoned)) {
-        await makeMarket(m, state).catch((e: any) =>
+        await (standing(m) ? keepStanding(m, state) : makeMarket(m, state)).catch((e: any) =>
           console.warn(`maker ${m.symbol}: ${explain(e)}`));
       }
+      if (quoteOnly) return;
       // One market that cannot clear must not hold up the rest.
       try { await clearAndSettle(m, state); }
       catch (e: any) {
@@ -3869,8 +3979,9 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       const due = Date.now() / 1000 >= Number(state.openedTs) + BATCH_INTERVAL_SEC;
       if (open && !due) return;
 
+      let sig: string | null = null;
       if (open) {
-        const sig = await program.methods
+        sig = await program.methods
           .clearBatch()
           .accounts({ pool, market: m.address, batch, priceUpdate: oracleOf(m) })
           // A full batch (64 orders) takes about 202k compute units to clear,
@@ -3878,13 +3989,18 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
           // order in it stuck, until it was given room.
           .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
           .rpc();
-        // Best effort: the clear has already landed, and failing to read its
-        // logs back must not stop the settlements that follow it.
-        await recordClear(m.symbol, sig).catch((e: any) =>
-          console.warn(`clear log ${m.symbol}: ${e?.message ?? e}`));
       }
 
       const sealed: any = await program.account.batch.fetch(batch);
+      if (sig) {
+        const houseUsd = (sealed.orders as any[])
+          .filter((o) => o.active && o.isMaker && isHouse(o.owner))
+          .reduce((t, o) => t + Number(o.filledUsd) / 1e6, 0);
+        // Best effort: the clear has already landed, and failing to read its
+        // logs back must not stop the settlements that follow it.
+        await recordClear(m.symbol, sig, houseUsd).catch((e: any) =>
+          console.warn(`clear log ${m.symbol}: ${e?.message ?? e}`));
+      }
       if (Number(sealed.clearedTs) === 0) return;
       const openFeeBps = num((await marketAccount(m)).openFeeBps);
 
@@ -3925,6 +4041,9 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
             // A reduce-only fill closed part of a position; recording every
             // fill as an open listed closes as opens in the trade history.
             kind: o.reduceOnly ? "close" : "open",
+            // The devnet's own maker, labeled so the tape does not pass its
+            // fills off as somebody else's.
+            ...(isHouse(o.owner) ? { house: true } : {}),
             owner: new PublicKey(o.owner).toBase58(),
           });
           noteFill(m.address.toBase58(), new PublicKey(o.owner).toBase58(), Number(o.filledUsd) / 1e6);

@@ -52,6 +52,8 @@ export type Phase =
   | "clearing"
   /// The window is up and nothing is in it. The crank skips an empty batch,
   /// so "clearing" would sit there forever; the first order clears next pass.
+  /// A batch holding only the devnet maker's standing quotes counts as empty:
+  /// they rest until a taker comes.
   | "idle"
   /// A listed market still seasoning: orders rest until the mark is ready.
   | "opening";
@@ -60,7 +62,7 @@ export function phaseOf(b: Batch, now: number): { phase: Phase; left: number } {
   if (b.opening) return { phase: "opening", left: Math.max(0, b.opening.opensAtMs - now) };
   const left = b.clearsAtMs - now;
   if (!b.sealed && left > 0) return { phase: "collecting", left };
-  if (!b.sealed && b.resting.length === 0) return { phase: "idle", left: 0 };
+  if (!b.sealed && b.resting.every((o) => o.house)) return { phase: "idle", left: 0 };
   return { phase: "clearing", left: 0 };
 }
 
