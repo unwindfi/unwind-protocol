@@ -22,6 +22,18 @@ REV=$(git rev-parse --short origin/main)
 for f in target/idl/unwind.json target/idl/mock_pyth.json; do
   [ -f "$f" ] || { echo "missing $f: run anchor build first" >&2; exit 1; }
 done
+# The IDL is build output, so it can be older than the code being shipped. A
+# stale one makes the server build instructions with the wrong accounts (an
+# Oct 5 IDL shipped on Oct 7 failed every maker quote with "Program ID was
+# not as expected"). Every instruction in origin/main's program must be in it.
+git show origin/main:programs/unwind/src/lib.rs | python3 -c '
+import json, re, sys
+want = set(re.findall(r"^    pub fn (\w+)\s*\(", sys.stdin.read(), re.M))
+have = {i["name"] for i in json.load(open("target/idl/unwind.json"))["instructions"]}
+missing = sorted(want - have)
+if missing:
+    sys.exit("target/idl/unwind.json is older than origin/main (missing: %s): run anchor build first" % ", ".join(missing))
+'
 echo "shipping $REV to $HOST"
 
 # Staged beside the live tree, then swapped in, so a failed copy or install
