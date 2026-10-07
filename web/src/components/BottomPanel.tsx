@@ -560,7 +560,7 @@ export function BottomPanel({
             tab that blinks: the eye follows it from the old tab to the new. */}
         <span aria-hidden
           className="pointer-events-none absolute bottom-[-1px] left-0 h-[2px] rounded-full bg-tab
-                     transition-[transform,width] duration-200 ease-out motion-reduce:transition-none"
+                     transition-[transform,width] duration-moderate ease-out motion-reduce:transition-none"
           style={{ width: line.w, transform: `translateX(${line.x}px)`, opacity: line.w ? 1 : 0 }} />
       </div>
 

@@ -26,7 +26,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { EASE_OUT } from "@/lib/ease";
+import { DUR, EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 export type ToastStatus = "neutral" | "info" | "loading" | "success" | "error";
@@ -113,7 +113,7 @@ const STACK_SPRING: Transition = {
 };
 
 const CONTENT_TRANSITION = {
-  duration: 0.28,
+  duration: DUR.slow,
   ease: EASE_OUT,
 } as const;
 
@@ -371,10 +371,10 @@ const ToastItem = memo(function ToastItem({
           : {
               opacity: 0,
               x: 32 * swipe,
-              transition: { duration: 0.18, ease: EASE_OUT },
+              transition: { duration: DUR.moderate, ease: EASE_OUT },
             }
       }
-      transition={{ ...STACK_SPRING, opacity: { duration: 0.2, ease: EASE_OUT }, y: { duration: 0.2, ease: EASE_OUT } }}
+      transition={{ ...STACK_SPRING, opacity: { duration: DUR.moderate, ease: EASE_OUT }, y: { duration: DUR.moderate, ease: EASE_OUT } }}
       // Swiping is how a toast is dismissed by hand, so it stays under reduced
       // motion: the toast moves only as far as the finger moves it.
       drag={canDismiss ? "x" : false}

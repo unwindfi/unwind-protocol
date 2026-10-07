@@ -84,7 +84,7 @@ function Fieldset({ legend, aside, locked, children }: {
   return (
     <fieldset inert={locked || undefined}
       className={`min-w-0 rounded-[16px] border border-line px-4 pb-4 pt-2 transition-opacity
-                  duration-200 ${locked ? "opacity-55 saturate-0" : ""}`}>
+                  duration-moderate ${locked ? "opacity-55 saturate-0" : ""}`}>
       <legend className="px-1.5 text-[13px] text-foreground">{legend}</legend>
       {aside && <div className="-mt-1 mb-2 text-right text-[11.5px] text-dim">{aside}</div>}
       {children}
@@ -126,7 +126,7 @@ function TokenIcon({ src, label, size = 32 }: { src?: string | null; label: stri
       {src && state !== "broken" && (
         <img src={src} alt="" decoding="async" onLoad={() => setState("ok")}
           onError={() => setState("broken")}
-          className={`absolute inset-0 size-full object-cover transition-opacity duration-200 ${
+          className={`absolute inset-0 size-full object-cover transition-opacity duration-moderate ${
             state === "ok" ? "opacity-100" : "opacity-0"}`} />
       )}
     </span>

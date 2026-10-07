@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useId } from "react";
-import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
+import { DUR, EASE_OUT, SPRING_PRESS } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 const CHECK_PATH = "M5 13l4 4L19 7";
@@ -62,7 +62,7 @@ export function Checkbox({
           checked ? "checked" : indeterminate ? "indeterminate" : "unchecked"
         }
         className={cn(
-          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 outline-none transition-colors duration-200",
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 outline-none transition-colors duration-moderate",
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           "disabled:cursor-not-allowed disabled:opacity-35",
           showMark
@@ -90,7 +90,7 @@ export function Checkbox({
                   : { opacity: 0, scale: 0.5, filter: "blur(4px)" }
               }
               transition={
-                reduce ? { duration: 0 } : { duration: 0.16, ease: EASE_OUT }
+                reduce ? { duration: 0 } : { duration: DUR.base, ease: EASE_OUT }
               }
               aria-hidden
             >

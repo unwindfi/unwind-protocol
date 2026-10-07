@@ -39,7 +39,7 @@ import { TickerLogo } from "@/components/TickerLogo";
 import { WalletActions } from "@/components/WalletActions";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { AnimatedNumber } from "@/components/motion/animated-number";
-import { EASE_OUT } from "@/lib/ease";
+import { DUR, EASE_OUT } from "@/lib/ease";
 import * as api from "@/lib/api";
 import { Pending, Unavailable } from "@/components/ui/unavailable";
 import {
@@ -296,13 +296,13 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
       <motion.button type="button" aria-label="Close" onClick={onClose}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
+        transition={{ duration: DUR.moderate }}
         className="absolute inset-0 cursor-default bg-black/60" />
       <motion.div ref={dialog} role="dialog" aria-modal="true" aria-label={v.title}
         initial={reduce ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={reduce ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ duration: 0.22, ease: EASE_OUT }}
+        transition={{ duration: DUR.moderate, ease: EASE_OUT }}
         className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[24px] border border-line
                    bg-panel safe-b sm:max-w-[460px] sm:rounded-[24px]">
         <div className="px-5 pb-5 pt-5 sm:px-6">

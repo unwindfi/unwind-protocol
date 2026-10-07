@@ -14,7 +14,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { EASE_OUT } from "@/lib/ease";
+import { DUR, EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 type Variant = "pill" | "underline" | "segment";
@@ -383,7 +383,7 @@ export function TabsContent({ value, children, className }: { value: string; chi
       key={value}
       initial={reduce ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.12, ease: EASE_OUT }}
+      transition={{ duration: DUR.fast, ease: EASE_OUT }}
       className={cn("mt-4", className)}
     >
       {children}

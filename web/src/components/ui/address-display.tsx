@@ -4,6 +4,7 @@ import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import React, { useState, useCallback } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
+import { DUR } from "@/lib/ease";
 
 export interface AddressDisplayProps extends React.HTMLAttributes<HTMLSpanElement> {
   address: string;
@@ -84,7 +85,7 @@ export const AddressDisplay = ({
                 initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
-                transition={{ duration: 0.12 }}
+                transition={{ duration: DUR.fast }}
                 className="flex items-center"
               >
                 <CheckIcon className="size-3.5 text-up" />
@@ -95,7 +96,7 @@ export const AddressDisplay = ({
                 initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
-                transition={{ duration: 0.12 }}
+                transition={{ duration: DUR.fast }}
                 className="flex items-center"
               >
                 <CopyIcon className="size-3.5" />
@@ -168,7 +169,7 @@ export const CopyButton = ({
             initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
-            transition={{ duration: 0.12 }}
+            transition={{ duration: DUR.fast }}
             className="flex items-center gap-1.5 text-up"
           >
             <CheckIcon className="size-3.5" />
@@ -180,7 +181,7 @@ export const CopyButton = ({
             initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.9 }}
-            transition={{ duration: 0.12 }}
+            transition={{ duration: DUR.fast }}
             className="flex items-center gap-1.5"
           >
             <CopyIcon className="size-3.5 text-muted-foreground" />

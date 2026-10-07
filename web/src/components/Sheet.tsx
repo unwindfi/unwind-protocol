@@ -5,6 +5,7 @@ import { useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { TOUCH_GESTURE_CLASS } from "@/lib/touch";
 import { useModalFocus } from "@/lib/hooks/use-modal-focus";
+import { DUR } from "@/lib/ease";
 
 /*
  * A bottom sheet, for the panels that are a side column on desktop.
@@ -51,7 +52,7 @@ export function Sheet({
           <motion.div
             className="fixed inset-0 z-40 bg-black/60"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
+            transition={{ duration: DUR.moderate }}
             onClick={() => onOpenChange(false)} />
 
           <motion.div
@@ -61,7 +62,7 @@ export function Sheet({
             ref={panel} tabIndex={-1}
             {...(reduce
               ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 },
-                  transition: { duration: 0.18 } }
+                  transition: { duration: DUR.moderate } }
               : { initial: { y: "100%" }, animate: { y: 0 }, exit: { y: "100%" },
                   transition: { type: "spring" as const, stiffness: 420, damping: 38 } })}
             drag={reduce ? false : "y"}

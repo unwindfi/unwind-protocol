@@ -10,13 +10,13 @@ import {
 } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { EASE_OUT, SPRING_GLIDE } from "@/lib/ease";
+import { DUR, EASE_OUT, SPRING_GLIDE } from "@/lib/ease";
 import { type SliderOptions, useSlider } from "@/lib/hooks/use-slider";
 import { TOUCH_GESTURE_CLASS } from "@/lib/touch";
 import { cn } from "@/lib/utils";
 
 // Grab feedback: a quick, flat ease. A bounce here wobbles under the finger.
-const GRAB = { duration: 0.12, ease: EASE_OUT } as const;
+const GRAB = { duration: DUR.fast, ease: EASE_OUT } as const;
 
 export interface RangeSliderProps extends SliderOptions {
   /** Render a tick dot at each step. */

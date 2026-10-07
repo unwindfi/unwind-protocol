@@ -178,14 +178,14 @@ function SourceMenu({ value, onChange }: { value: SourceKey; onChange: (v: Sourc
           open || value !== "all" ? "bg-panel3" : "bg-panel2 hover:bg-panel3"}`}>
         {SOURCE_LABEL[value]}
         <ChevronDown size={16} strokeWidth={2}
-          className={`text-muted-foreground transition-transform duration-200 ${open ? "-rotate-90" : ""}`} />
+          className={`text-muted-foreground transition-transform duration-moderate ${open ? "-rotate-90" : ""}`} />
       </button>
       {/* The choices slide out to the side: a grid column going from 0fr
           to 1fr, so nothing below moves. */}
-      <div className="grid transition-[grid-template-columns] duration-300 ease-out-strong"
+      <div className="grid transition-[grid-template-columns] duration-slow ease-out-strong"
         style={{ gridTemplateColumns: open ? "1fr" : "0fr" }}>
         <div className="overflow-hidden" inert={!open}>
-          <div className={`flex w-max items-center gap-1.5 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}>
+          <div className={`flex w-max items-center gap-1.5 transition-opacity duration-moderate ${open ? "opacity-100" : "opacity-0"}`}>
             {(Object.keys(SOURCE_LABEL) as SourceKey[]).filter((k) => k !== value).map((k) => (
               <button key={k} type="button"
                 aria-label={`Show ${SOURCE_LABEL[k].toLowerCase()}`}
@@ -416,7 +416,7 @@ export default function Markets() {
                 <img src={`/groups/${g.key}.webp`} alt="" aria-hidden
                   width={118} height={118} draggable={false}
                   className="pointer-events-none absolute -right-5 -top-6 h-[118px] w-[118px] select-none
-                             transition-transform duration-300 ease-out-strong
+                             transition-transform duration-slow ease-out-strong
                              group-hover/card:-translate-y-0.5 group-hover/card:rotate-[-4deg]" />
                 <span className={`absolute bottom-4 left-4 text-[16px] leading-none ${on ? "font-medium text-foreground" : "text-muted-foreground"}`}>
                   {g.key === "all" ? "All markets" : g.label}
@@ -440,7 +440,7 @@ export default function Markets() {
         </div>
 
         <div id="market-filters"
-          className="grid transition-[grid-template-rows] duration-300
+          className="grid transition-[grid-template-rows] duration-slow
                      ease-out-strong"
           style={{ gridTemplateRows: filtersOpen ? "1fr" : "0fr" }}>
           <div className="overflow-hidden" inert={!filtersOpen}>

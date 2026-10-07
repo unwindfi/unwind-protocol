@@ -86,7 +86,22 @@
      curve is EASE_OUT in lib/ease.ts for motion; change both together. */
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* The duration scale. DUR in lib/ease.ts is the same four steps for
+     motion; change both together. Bare `transition` utilities take base
+     and the strong ease, so nothing on the site moves on Tailwind's curve. */
+  --duration-fast: 120ms;
+  --duration-base: 150ms;
+  --duration-moderate: 200ms;
+  --duration-slow: 300ms;
+  --default-transition-duration: var(--duration-base);
+  --default-transition-timing-function: var(--ease-out-strong);
 }
+
+@utility duration-fast { transition-duration: var(--duration-fast); }
+@utility duration-base { transition-duration: var(--duration-base); }
+@utility duration-moderate { transition-duration: var(--duration-moderate); }
+@utility duration-slow { transition-duration: var(--duration-slow); }
 
 /*
  * unwind's own scale, on top of the shadcn set.
@@ -272,7 +287,7 @@
   }
   .rise {
     opacity: 0;
-    animation: rise 0.3s var(--ease-out-strong) forwards;
+    animation: rise var(--duration-slow) var(--ease-out-strong) forwards;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -348,7 +363,7 @@
    */
   :where(a, button, [role="tab"], [role="radio"], input, select, summary) {
     transition-property: color, background-color, border-color, opacity, box-shadow;
-    transition-duration: 150ms;
+    transition-duration: var(--duration-base);
     transition-timing-function: var(--ease-out-strong);
   }
 
@@ -419,8 +434,9 @@
  * transition-property, so the scale snapped in and out. Unlayered, it wins.
  */
 .press {
-  transition: transform 160ms var(--ease-out-strong), color 150ms, background-color 150ms,
-    border-color 150ms, opacity 150ms;
+  transition-property: transform, color, background-color, border-color, opacity;
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-out-strong);
 }
 .press:active { transform: scale(0.96); }
 .press:disabled:active { transform: none; }

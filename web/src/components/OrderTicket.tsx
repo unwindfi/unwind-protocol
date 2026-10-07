@@ -7,7 +7,7 @@ import { RangeSlider } from "@/components/motion/range-slider";
 import { Tooltip } from "@/components/motion/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { NumberTicker } from "@/components/motion/number-ticker";
-import { EASE_OUT } from "@/lib/ease";
+import { DUR, EASE_OUT } from "@/lib/ease";
 import { poolFill, type Account, type Market } from "@/lib/api";
 import { money, pnum, price, tone } from "@/lib/format";
 import { faucetWaitHours } from "@/lib/tx";
@@ -393,7 +393,7 @@ export function OrderTicket({
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: EASE_OUT }}
+              transition={reduceMotion ? { duration: 0 } : { duration: DUR.moderate, ease: EASE_OUT }}
               className="overflow-hidden">
               <div className="pt-4">
                 <RangeSlider value={L} onValueChange={setLev} min={1.1} max={maxLev} step={0.1}
@@ -595,7 +595,7 @@ export function OrderTicket({
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: EASE_OUT }}
+              transition={reduceMotion ? { duration: 0 } : { duration: DUR.moderate, ease: EASE_OUT }}
               className="overflow-hidden">
               <fieldset className="mt-4 min-w-0 rounded-[16px] border border-line px-4 pb-3 pt-1">
                 <legend className="px-1.5 text-[13px] text-foreground">Triggers</legend>

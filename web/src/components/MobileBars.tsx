@@ -61,7 +61,7 @@ export function MobileBars({
             <button key={v} onClick={() => onView(v)}
               aria-current={on ? "page" : undefined}
               className={`press flex h-10 items-center justify-center gap-1.5 rounded-full
-                          text-[13px] transition-colors duration-150
+                          text-[13px] transition-colors duration-base
                           ${on ? "bg-foreground font-medium text-background"
                                : "text-muted-foreground hover:text-foreground"}`}>
               {l}

@@ -65,7 +65,7 @@ export function Switch({
           initial={false}
           data-state={checked ? "checked" : "unchecked"}
           className={cn(
-            "group peer inline-flex h-7 w-12 shrink-0 cursor-pointer items-center px-1 rounded-full outline-none transition-colors duration-200",
+            "group peer inline-flex h-7 w-12 shrink-0 cursor-pointer items-center px-1 rounded-full outline-none transition-colors duration-moderate",
             "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "disabled:cursor-not-allowed disabled:opacity-35",
             checked ? "justify-end bg-primary" : "justify-start bg-muted-foreground/60",

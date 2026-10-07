@@ -14,6 +14,7 @@ import { Moon, Sun } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { DUR } from "@/lib/ease";
 
 // The glyphs cross-fade rather than swap: scale, opacity and blur together,
 // a spring with no bounce.
@@ -21,13 +22,13 @@ const SWAP = {
   initial: { scale: 0.25, opacity: 0, filter: "blur(4px)" },
   animate: { scale: 1, opacity: 1, filter: "blur(0px)" },
   exit: { scale: 0.25, opacity: 0, filter: "blur(4px)" },
-  transition: { type: "spring" as const, duration: 0.3, bounce: 0 },
+  transition: { type: "spring" as const, duration: DUR.slow, bounce: 0 },
 };
 const FADE = {
   initial: { opacity: 0 },
   animate: { opacity: 1 },
   exit: { opacity: 0 },
-  transition: { duration: 0.15 },
+  transition: { duration: DUR.base },
 };
 
 export function ThemeToggle({ className = "" }: { className?: string }) {

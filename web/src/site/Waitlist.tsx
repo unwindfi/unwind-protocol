@@ -85,14 +85,14 @@ function Join() {
        * grid row going from 0fr to 1fr, which is how you animate to a height
        * you do not know.
        */}
-      <div id="what-panel" className="grid transition-[grid-template-rows] duration-300
+      <div id="what-panel" className="grid transition-[grid-template-rows] duration-slow
                                       ease-out-strong"
         style={{ gridTemplateRows: help ? "1fr" : "0fr" }}>
         <div className="overflow-hidden">
           {/* Sized to the column, not the viewport: the wrapper above clips
               for the open animation, so anything wider loses its right edge. */}
           <div className={`mx-auto mt-5 w-full max-w-[440px] rounded-[24px] border border-line
-                           bg-panel2 px-5 pb-2 pt-4 text-left transition-opacity duration-200
+                           bg-panel2 px-5 pb-2 pt-4 text-left transition-opacity duration-moderate
                            ${help ? "opacity-100" : "opacity-0"}`}>
             <p className="pb-3 text-[15px] font-medium">What unwind is</p>
             <dl className="text-[13px] leading-[1.5]">

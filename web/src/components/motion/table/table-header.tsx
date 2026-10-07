@@ -12,7 +12,7 @@ import { motion } from "motion/react";
 import { type PointerEvent as ReactPointerEvent, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Checkbox } from "@/components/motion/checkbox";
-import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
+import { DUR, EASE_OUT, SPRING_PRESS } from "@/lib/ease";
 import { TOUCH_GESTURE_CLASS } from "@/lib/touch";
 import { cn } from "@/lib/utils";
 import { TableMenu } from "./table-menu";
@@ -283,7 +283,7 @@ export function TableHeader<T>({
                       transition={
                         reduce
                           ? { duration: 0 }
-                          : { duration: 0.18, ease: EASE_OUT }
+                          : { duration: DUR.moderate, ease: EASE_OUT }
                       }
                     >
                       <ChevronUp className="h-3.5 w-3.5" />

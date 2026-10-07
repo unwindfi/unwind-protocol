@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion, type Variants } from "motion/react";
 import { useMemo, type ComponentProps, type ReactNode, type Ref } from "react";
-import { EASE_OUT } from "@/lib/ease";
+import { DUR, EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 type Side = "top" | "right" | "bottom" | "left";
@@ -27,20 +27,20 @@ function buildVariants(side: Side): Variants {
       scale: 1,
       x: 0,
       y: 0,
-      transition: { duration: 0.125, ease: EASE_OUT },
+      transition: { duration: DUR.fast, ease: EASE_OUT },
     },
     exit: {
       opacity: 0,
       scale: 0.97,
-      transition: { duration: 0.1, ease: EASE_OUT },
+      transition: { duration: DUR.fast, ease: EASE_OUT },
     },
   };
 }
 
 const REDUCED_VARIANTS: Variants = {
   initial: { opacity: 0 },
-  animate: { opacity: 1, transition: { duration: 0.14, ease: EASE_OUT } },
-  exit: { opacity: 0, transition: { duration: 0.1, ease: EASE_OUT } },
+  animate: { opacity: 1, transition: { duration: DUR.fast, ease: EASE_OUT } },
+  exit: { opacity: 0, transition: { duration: DUR.fast, ease: EASE_OUT } },
 };
 
 /** The shared visual surface for trigger tooltips and chart readouts. Positioning belongs to the caller. */

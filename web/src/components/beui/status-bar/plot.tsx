@@ -1,7 +1,7 @@
 // beUI by Saurabh Chauhan (MIT), adapted: components/charts/status-bar/plot.tsx
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, type PointerEvent, type ReactNode } from "react";
-import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
+import { DUR, EASE_OUT, SPRING_PRESS } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 import { useStatusBar } from "./context";
 
@@ -92,15 +92,15 @@ export function StatusBarPlot({
                     style={{ backgroundColor: status.color }}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0, transition: { duration: 0.12, ease: EASE_OUT } }}
-                    transition={{ duration: 0.16, ease: EASE_OUT }}
+                    exit={{ opacity: 0, transition: { duration: DUR.fast, ease: EASE_OUT } }}
+                    transition={{ duration: DUR.base, ease: EASE_OUT }}
                   />
                 </AnimatePresence>
                 <motion.span
                   className="pointer-events-none absolute -inset-0.5 rounded-[inherit] ring-1 ring-foreground/60"
                   initial={false}
                   animate={{ opacity: active ? 1 : 0 }}
-                  transition={{ duration: 0.1, ease: EASE_OUT }}
+                  transition={{ duration: DUR.fast, ease: EASE_OUT }}
                 />
               </motion.span>
             );
