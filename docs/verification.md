@@ -213,11 +213,37 @@ the suite.
 | A tick of `i32::MIN` panicked instead of being refused | Refused | `sqrt_price_never_panics` |
 | Three casts from u64 to i64 could wrap past about $9.2 trillion | Checked | `lp_borne_past_i64_max` |
 
+## Stateful fuzzing
+
+`fuzz/` runs the compiled program in a local Solana VM and sends it random
+sequences of actions: opens, closes, cancels, clears, settles, trader
+crosses, price walks and gaps of up to 90%, clock jumps, funding accruals,
+liquidations, LP deposits and withdrawals, and backing changes. Rejected
+instructions are fine. After every one that lands, it checks:
+
+1. **Solvency, exactly.** The vault holds liquidity, backing, protocol,
+   chain and insurance balances, trader collateral, escrow and rewards, to
+   the unit.
+2. **Supply.** USDC and LP tokens are conserved.
+3. **Totals.** Open interest, collateral, escrow, close reservations and
+   backing on the pool and each market equal the sums over positions.
+4. **Budget.** A market's net loss never exceeds its loss budget, and the
+   bounds behind haircuts and LP claims never understate.
+5. **Settlement.** An order in a sealed batch can always be settled.
+
+Around specific actions it also checks that funding creates no money and
+that a deposit or claim never dilutes the remaining LPs. About 270,000
+actions have run with no failure. Failing sequences shrink to the shortest
+case and are kept as regressions.
+
+Not yet driven by the fuzzer: trigger orders, splits, in-kind backing,
+referral rewards, and a draw on the insurance fund.
+
 ## What is not proven
 
 1. **Whole instructions.** Account validation, token transfers and the
    instruction handlers end to end are covered by unit and integration
-   tests, not by proofs.
+   tests and by the stateful fuzzer, not by proofs.
 2. **Keeper marks.** `push_mark` sets a market's mark to whatever the keeper
    key sends. The clamp proof covers the permissionless `observe` fold, not
    keeper pushes. What bounds a pushed mark's effect is the risk price,
