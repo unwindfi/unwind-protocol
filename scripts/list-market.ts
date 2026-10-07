@@ -99,7 +99,7 @@ const MIN_WINDOW_SEC = 900;
         closedSessionLeverageBps: 30_000,
         closedSessionOiMultBps: 10_000,
         maxFundingRateBpsPerHour: 100,
-        fundingKBps: 8_000,
+        fundingKBps: 100,
         borrowRateBpsPerHour: 1,
         priceSource: 1, // observed, not Pyth
         observation,

@@ -313,7 +313,7 @@ async function main() {
         closedSessionLeverageBps: 20_000,
         closedSessionOiMultBps: 2_500,
         maxFundingRateBpsPerHour: 100,
-        fundingKBps: 8_000,
+        fundingKBps: 100,
         borrowRateBpsPerHour: 1,
         // Pyth, with no observation account. A market on an asset Pyth does
         // not cover points at one of those instead.

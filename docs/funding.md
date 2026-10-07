@@ -16,7 +16,7 @@ Two charges fold into one cumulative index per side.
 | | Site listing |
 | --- | --- |
 | Borrow rate at 100% utilization | 1 bp an hour |
-| Skew sensitivity (`funding_k`) | 8,000 bps |
+| Skew sensitivity (`funding_k`) | 100 bps: 1 bp an hour per 1% of skew |
 | Skew rate cap | 100 bps an hour |
 | Permissionless cap on the skew rate | 200 bps an hour |
 | Longest single accrual | 8 hours |
@@ -56,8 +56,9 @@ skew leg is skipped: there is nobody to pay. The borrow leg already charges
 for the exposure.
 
 Each rate is computed in whole bps an hour, rounded down. On a site listing
-the borrow leg therefore reads zero until utilization reaches 100%, and the
-skew leg reaches its 100 bps cap at a skew of 1.25%.
+the borrow leg therefore reads zero until utilization reaches 100%. The skew
+leg reads zero below 1% of skew, rises 1 bp an hour per whole percent, and
+reaches its 100 bps cap only when one side is empty of the other.
 
 ## Numerical example
 
@@ -66,13 +67,13 @@ pool.
 
 1. Utilization: $20,000 / $1,000,000 = 2%. Borrow: 1 × 2% = 0.02 bps,
    rounded down to 0.
-2. Skew: ($30,000 - $10,000) / $40,000 = 50%. Skew rate: 8,000 × 50% = 4,000
-   bps, capped at 100 bps an hour.
-3. Longs pay 100 bps an hour: $300.
-4. Shorts receive 100 × $30,000 / $10,000 = 300 bps an hour: $300.
+2. Skew: ($30,000 - $10,000) / $40,000 = 50%. Skew rate: 100 × 50% = 50
+   bps an hour, under the 100 bps cap.
+3. Longs pay 50 bps an hour: $150.
+4. Shorts receive 50 × $30,000 / $10,000 = 150 bps an hour: $150.
 
-At that rate the heavy side pays 1% of its notional an hour, which is what
-pulls the book back to balance.
+At that rate the heavy side pays 0.5% of its notional an hour. The pull
+weakens as the book comes back to balance, and stops below 1% of skew.
 
 ## How it is charged
 

@@ -1512,7 +1512,8 @@ function listingParams(depthUsd: number, choice: { leverageBps?: number; oiUsd?:
     closedSessionLeverageBps: leverageBps,
     closedSessionOiMultBps: 10_000,
     maxFundingRateBpsPerHour: 100,
-    fundingKBps: 8_000,
+    // 1 bp an hour per 1% of skew: only a fully one-sided book reaches the cap.
+    fundingKBps: 100,
     borrowRateBpsPerHour: 1,
   };
 }
@@ -1726,16 +1727,20 @@ const batchPda = (market: PublicKey) =>
 /// market's maximum, and the lighter side receives that payment spread over
 /// its smaller size. Positive is paid, negative received, both in bps an hour.
 function fundingRates(ma: any, longSize: number, shortSize: number, utilizationBps: number) {
-  const borrow = (ma.borrowRateBpsPerHour * utilizationBps) / 10_000;
+  // Whole bps an hour, rounded down at each step, exactly as the program
+  // does: shown as a fraction, a rate the chain truncates to zero read as a
+  // charge nobody was paying.
+  const B = 10_000n;
+  const borrow = Number((BigInt(ma.borrowRateBpsPerHour) * BigInt(Math.trunc(utilizationBps))) / B);
   let long = borrow, short = borrow;
-  const total = longSize + shortSize;
   if (longSize > 0 && shortSize > 0) {
     const longsHeavy = longSize >= shortSize;
-    const heavy = longsHeavy ? longSize : shortSize;
-    const light = longsHeavy ? shortSize : longSize;
-    const skewBps = ((heavy - light) * 10_000) / total;
-    const rate = Math.min((ma.fundingKBps * skewBps) / 10_000, ma.maxFundingRateBpsPerHour);
-    const recv = (rate * heavy) / light;
+    const heavy = BigInt(Math.round((longsHeavy ? longSize : shortSize) * 1e6));
+    const light = BigInt(Math.round((longsHeavy ? shortSize : longSize) * 1e6));
+    const skewBps = ((heavy - light) * B) / (heavy + light);
+    const capped = (BigInt(ma.fundingKBps) * skewBps) / B;
+    const rate = Number(capped < BigInt(ma.maxFundingRateBpsPerHour) ? capped : BigInt(ma.maxFundingRateBpsPerHour));
+    const recv = (rate * Number(heavy)) / Number(light);
     if (longsHeavy) { long += rate; short -= recv; } else { short += rate; long -= recv; }
   }
   return { fundingRateLongBps: long, fundingRateShortBps: short };
