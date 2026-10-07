@@ -31,3 +31,5 @@ test-ledger
 # The docs site (docs-site/) builds on its own.
 docs-site/node_modules
 docs-site/.next
+/target-new
+/target-b

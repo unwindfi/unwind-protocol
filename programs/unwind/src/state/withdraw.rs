@@ -156,4 +156,15 @@ mod tests {
     fn nothing_is_escrowed_for_zero() {
         assert!(request().escrow(0, 0, 1).is_err());
     }
+
+    #[test]
+    fn a_token_claim_is_empty_only_when_every_custody_is_paid() {
+        let mut c = LpTokenClaim { bump: 0, pool: Pubkey::default(), owner: Pubkey::default(), owed: [0; MAX_CUSTODIES] };
+        assert!(c.is_empty());
+        for i in 0..MAX_CUSTODIES {
+            c.owed = [0; MAX_CUSTODIES];
+            c.owed[i] = 1;
+            assert!(!c.is_empty(), "one unit owed from custody {i} keeps it open");
+        }
+    }
 }

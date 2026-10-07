@@ -4,9 +4,10 @@
 
 | | |
 | --- | --- |
-| Kani harnesses | 126, in 9 files under `programs/unwind/src/proofs/` |
-| Rust unit tests | 432 `#[test]` functions in `programs/unwind/src` |
-| Integration tests | `tests/unwind.ts` and `tests/system.ts`, against a local validator |
+| Kani harnesses | 190, in 15 files under `programs/unwind/src/proofs/` |
+| Rust unit tests | 536 `#[test]` functions in `programs/unwind/src` |
+| Integration tests | `tests/unwind.ts`, `tests/system.ts` and `tests/coverage.ts`, against a local validator |
+| Server unit tests | 57 in `scripts/server-logic.test.ts`, run with `npm run test:server` |
 | Audit | None |
 
 [Kani](https://model-checking.github.io/kani/) is a model checker for Rust. A
@@ -19,13 +20,19 @@ them with:
 
 ```
 cd programs/unwind
-cargo kani                                   # all 126
+cargo kani                                   # all 190
 cargo kani --harness proofs::money::pnl_refuses_a_zero_entry --exact   # one
 ```
 
 Each file states its bounds at the top, and each harness repeats any bound
 of its own in its doc comment. The tables below are those doc comments, one
 row per property.
+
+The whole suite takes about two and a half hours on one core. The slowest
+harnesses take ten to eleven minutes each; most take under a minute. A
+128-bit division by a symbolic value is what costs the solver time, so the
+newer files keep each harness to a few of them and say which bounds that
+forced.
 
 ## The auction: `auction.rs` (9) and `clearing.rs` (9)
 
@@ -170,6 +177,94 @@ Balances up to 2^20, payouts up to 2^21, fees up to 2^10.
 | Close reservations never promise more than the position holds; a release gives back exactly what was reserved | `reservations_never_promise_more_than_the_position_holds`, `a_release_gives_back_exactly_what_was_reserved` |
 | A settling close takes only what is there, on its own side | `a_settling_close_takes_only_what_is_there_on_its_own_side` |
 
+## Side tracking: `tracking.rs` (16)
+
+The contracts the stubs in `orders.rs` and `settlement.rs` rely on. Sums
+any value; sizes and entries 0 to 15, or 0 to 7 where a harness takes four
+moment terms or runs a whole `close_side`.
+
+| Property | Harnesses |
+| --- | --- |
+| A moment term rounds `size / entry` down and `size / entry^2` up, the direction the winners bound needs | `moment_terms_round_the_way_the_bound_needs` |
+| A term put into a side's sums and taken out leaves them exactly as they were; a replacement takes out exactly the old term and puts in exactly the new | `a_moment_term_put_in_and_taken_out_leaves_the_sums_as_they_were`, `a_retrack_replaces_one_term_exactly` |
+| The same for the funding sums, whose least cover and worst entry only move toward the worse value | `a_funding_term_put_in_and_taken_out_leaves_the_sums_as_they_were`, `min_cover_and_worst_entry_only_move_toward_the_worse_value` |
+| `retrack` and `retrack_funding` never fail or panic, whatever the sums | `retrack_never_fails_or_panics`, `retrack_funding_never_fails_or_panics` |
+| The side average answers only for a fully tracked side, never zero; one position averages at its entry, two between theirs | `the_side_average_answers_only_for_a_fully_tracked_side`, `one_tracked_position_averages_at_its_entry`, `two_tracked_positions_average_between_their_entries` |
+| `close_side` takes exactly the closed size off an untracked side and leaves every sum alone; on a tracked position it takes its own terms out | `close_side_takes_exactly_the_closed_size_off_an_untracked_side`, `closing_a_tracked_position_takes_its_own_terms_out` |
+| The winners bound is reached only for a fully tracked side; an untracked side counts at its net profit | `the_winners_bound_is_reached_only_for_a_fully_tracked_side` |
+| `isqrt_ceil` is the smallest root, below 2^16 | `isqrt_ceil_is_the_smallest_root` |
+| The winners bound never falls below what one or two tracked positions hold, a winner beside a loser included, and for one is above it only by rounding, at most four units | `the_winners_bound_covers_one_tracked_position`, `the_winners_bound_covers_two_tracked_positions` |
+
+## Funding: `funding.rs` (13)
+
+`funding_k` and the hourly cap any u16 in every harness. Books are concrete
+or 1 to 15 a side, as each harness says: an accrual is half a dozen 128-bit
+divisions, and the solver finishes two to four of them.
+
+| Property | Harnesses |
+| --- | --- |
+| The heavy side's index never falls | `the_heavy_side_index_never_falls` |
+| The light side is never credited more than the heavy side pays, on every book of 1 to 15 a side; settled position by position, funding never mints | `the_light_side_is_never_credited_more_than_the_heavy_side_pays`, `positions_settling_funding_never_mint` |
+| Borrow is one non-negative charge on both sides, added to the skew leg without changing it | `the_borrow_leg_is_one_non_negative_charge_on_both_sides` |
+| One accrual charges at most 8 hours, whatever the clock; a clock that stands still or runs back charges nothing; a second accrual in the same second changes nothing | `elapsed_time_is_clamped_to_the_accrual_window`, `a_clock_that_stands_still_or_runs_back_accrues_nothing`, `a_second_accrual_at_the_same_time_changes_nothing` |
+| The skew rate is the linear curve up to its cap, and more skew never lowers it | `the_skew_rate_is_the_linear_curve_up_to_its_cap`, `more_skew_never_lowers_the_rate` |
+| A one-sided or balanced book pays only borrow | `a_one_sided_or_balanced_book_pays_no_skew_funding` |
+| Accrual never fails on any book, up to sizes near `u64::MAX` | `accrual_never_fails_on_any_book` |
+| Cranking more often never charges the heavy side more | `cranking_more_often_never_charges_the_heavy_side_more` |
+| A position owes nothing at its entry index, and otherwise the index move times its size, rounded toward zero | `funding_owed_starts_at_zero_and_is_the_index_move_rounded_toward_zero` |
+
+## Conservation: `conservation.rs` (14)
+
+Full width where a harness only adds, subtracts or compares; 0 to 15, or
+below 2^16 or 2^32, where it divides by a symbolic value.
+
+| Property | Harnesses |
+| --- | --- |
+| Fee cuts move money from liquidity to their lines and create none, on every split the pool accepts | `fee_cuts_move_money_without_creating_any_on_every_split` |
+| A backer fee is half the LPs' part, rounded down, and only with shares held | `a_backer_fee_is_half_the_lp_part_and_only_with_shares` |
+| Draws and restores conserve held plus drawn backing | `drawing_and_restoring_backing_conserve_held_plus_drawn` |
+| New backing never dilutes, counting what is owed back; two backers are worth at most the pot; an exit takes at most its part less what is held back; in and straight out never profits | `new_backing_never_dilutes_counting_what_is_owed_back`, `two_backers_together_are_worth_at_most_the_pot`, `an_exit_takes_at_most_its_part_less_what_is_held_back`, `backing_in_and_straight_out_never_profits` |
+| An allowed LP claim leaves locked capital in place; its escrow burns at least the claim and empties on the last; released shares return their part of the points | `an_allowed_claim_leaves_locked_capital_in_place`, `an_escrow_burns_the_claim_and_empties_on_the_last`, `releasing_escrowed_shares_returns_their_part_of_the_points` |
+| A payout takes exactly the amount, from liquidity then insurance; the ownerless sweep moves money to insurance and creates none | `a_payout_takes_exactly_the_amount_from_liquidity_then_insurance`, `sweeping_ownerless_liquidity_moves_it_to_insurance_and_creates_nothing` |
+| The pool can always lock its headroom and never past its cap; a market locked to its headroom stays under its cap | `the_pool_can_always_lock_its_headroom_and_never_past_its_cap`, `a_market_locked_to_its_headroom_stays_under_its_cap` |
+
+## Liquidation: `liquidation.rs` (6)
+
+Settlement figures and close sizes up to 2^10, any fee and margin, the
+documented fee split; 0 to 15 where a harness runs `settle`.
+
+| Property | Harnesses |
+| --- | --- |
+| A liquidation splits what is left exactly: fee plus owner is the payable equity, and only the cuts stay in the pool | `a_liquidation_splits_what_is_left_exactly` |
+| The fee never exceeds what is left; a position through zero pays nobody | `the_liquidation_fee_never_exceeds_what_is_left` |
+| Liquidating never leaves the pool worse than a close at the same price | `liquidating_never_leaves_the_pool_worse_than_a_close` |
+| The liquidator keeps at least the LPs' 60% of the fee | `the_liquidator_keeps_the_lps_share_of_the_fee` |
+| A liquidation fails only on a healthy position | `a_liquidation_fails_only_on_a_healthy_position` |
+| Equity never rises as the fill gets worse for the position, so the close never finds healthy what the trigger found failing | `equity_never_rises_as_the_fill_gets_worse_for_the_position` |
+
+## Loss budget and haircut: `haircut.rs` (9)
+
+Budget arithmetic at full width; 0 to 15 where a harness prices a side or
+divides by the winners.
+
+| Property | Harnesses |
+| --- | --- |
+| The haircut is the documented fair share, monotone in what is owed | `the_haircut_is_the_documented_fair_share`, `more_owed_is_never_paid_less` |
+| Closing first wins nothing: a later closer is paid at least the share it would have had first, and the two never exceed what was available | `closing_first_wins_nothing` |
+| The remaining budget never grows past the budget; a raise never falls or passes its cover; a cap at the cover leaves at most the cover | `the_remaining_budget_never_grows_past_the_budget`, `a_raised_budget_never_falls_and_never_passes_its_cover`, `a_budget_capped_at_its_cover_leaves_at_most_the_cover_remaining` |
+| The LPs never count a market past its worst case, and what they owe rises with trader profit | `the_lps_never_count_a_market_past_its_worst_case`, `what_the_lps_owe_rises_with_trader_profit` |
+| Backing held back is at most the budget and the profit | `backing_held_back_is_at_most_the_budget_and_the_profit` |
+
+## Positions and pool value: `positions.rs` (6)
+
+| Property | Harnesses |
+| --- | --- |
+| A trigger closes only what is closable; an order never closes a position opened after its batch | `a_trigger_closes_only_what_is_closable`, `an_order_never_closes_a_position_opened_after_its_batch` |
+| Escrowing more restarts the cooldown for everything | `escrowing_more_restarts_the_cooldown_for_everything` |
+| Utilization is zero when balanced and never past full | `utilization_is_zero_when_balanced_and_never_past_full` |
+| LP value counts profit against USDC and tokens together | `lp_value_counts_profit_against_usdc_and_tokens_together` |
+| The AUM drift reads nothing without a price or open interest | `the_drift_reads_nothing_without_a_price_or_open_interest` |
+
 ## Where harnesses stub, and what covers it
 
 A stub replaces a function with a stand-in so the solver finishes. Every
@@ -178,9 +273,11 @@ either. These stubs replace logic:
 
 | Stub | Harnesses | What it replaces | Covered instead by |
 | --- | --- | --- | --- |
-| `any_retrack`, `any_retrack_funding`, `any_side_avg` | `an_accepted_open_always_books_exactly`, `an_add_books_exactly_and_blends_between`, `an_open_fee_is_booked_exactly_once` | Side tracking: the market's moment sums, funding sums and side average. Any value is returned, so the harness asserts nothing about them. | Randomised tests in `instructions/trade.rs`: `the_sums_match_the_positions_and_no_winner_is_paid_past_its_share` and `the_funding_sums_match_the_positions_and_bound_their_bad_debt` (60 seeds of 250 random opens, closes and price moves each) |
-| `close_side_sizes_only` | `every_close_books_inside_the_budget`, `a_close_that_costs_the_pool_nothing_is_never_haircut` | `Market::close_side`. Open interest comes off exactly; the side average is left as any value and the moment sums untouched. | The same randomised tests, and `a_close_takes_its_own_entry_off_the_side_average` |
-| `winners_bound_unreached` | `a_haircut_pays_no_more_than_the_market_can`, `every_close_books_inside_the_budget`, `a_close_that_costs_the_pool_nothing_is_never_haircut` | The moment bound on a side's winners. Every position in these harnesses is untracked, so each side counts at its net profit, and the stand-in fails the harness if it is ever called. The haircut bound for tracked sides is not proven. | `the_sums_match_the_positions_and_no_winner_is_paid_past_its_share`, `the_bound_is_exact_with_one_entry_and_close_on_the_repro`, `a_side_holding_an_untracked_position_counts_net_until_it_is_gone`, `isqrt_ceil_is_the_smallest_root` |
+| `any_retrack`, `any_retrack_funding`, `any_side_avg` | `an_accepted_open_always_books_exactly`, `an_add_books_exactly_and_blends_between`, `an_open_fee_is_booked_exactly_once` | Side tracking: the market's moment sums, funding sums and side average. Any value is returned, so the harness asserts nothing about them. | Proven: none of the three fails or panics (`retrack_never_fails_or_panics`, `retrack_funding_never_fails_or_panics`, `the_side_average_answers_only_for_a_fully_tracked_side`), and their only reader in `book_open` reads nothing in these markets (`the_drift_reads_nothing_without_a_price_or_open_interest`). Also randomised tests in `instructions/trade.rs`: `the_sums_match_the_positions_and_no_winner_is_paid_past_its_share` and `the_funding_sums_match_the_positions_and_bound_their_bad_debt` (60 seeds of 250 random opens, closes and price moves each) |
+| `close_side_sizes_only` | `every_close_books_inside_the_budget`, `a_close_that_costs_the_pool_nothing_is_never_haircut` | `Market::close_side`. Open interest comes off exactly; the side average is left as any value and the moment sums untouched. | Proven: on an untracked position the real function does exactly this and never fails (`close_side_takes_exactly_the_closed_size_off_an_untracked_side`). Also the same randomised tests, and `a_close_takes_its_own_entry_off_the_side_average` |
+| `winners_bound_unreached` | `a_haircut_pays_no_more_than_the_market_can`, `every_close_books_inside_the_budget`, `a_close_that_costs_the_pool_nothing_is_never_haircut`, and in `haircut.rs` `the_haircut_is_the_documented_fair_share`, `more_owed_is_never_paid_less` | The moment bound on a side's winners. Every position in these harnesses is untracked, so each side counts at its net profit, and the stand-in fails the harness if it is ever called. | Proven: the bound is reached only for a fully tracked side (`the_winners_bound_is_reached_only_for_a_fully_tracked_side`), and for one or two tracked positions it is never below what they hold (`the_winners_bound_covers_one_tracked_position`, `the_winners_bound_covers_two_tracked_positions`). Also `the_sums_match_the_positions_and_no_winner_is_paid_past_its_share`, `the_bound_is_exact_with_one_entry_and_close_on_the_repro`, `a_side_holding_an_untracked_position_counts_net_until_it_is_gone`, `isqrt_ceil_is_the_smallest_root` |
+| `mul_div_u128_when_it_fits` | Every `tracking.rs` harness that reaches `mul_div_u128` | `math::mul_div_u128`. Returns the same floor on the path where the product fits in 128 bits, and fails the harness if it is ever called on the wide path. Every product in those bounds fits. | Exact by construction on the path it allows; `mul_div_is_floor_and_never_panics` and unit tests for the wide path |
+| `isqrt_ceil_by_contract` | `the_winners_bound_covers_one_tracked_position`, `the_winners_bound_covers_two_tracked_positions` | `isqrt_ceil`. Returns the smallest root, and fails the harness for an input of 2^16 or more. | `isqrt_ceil_is_the_smallest_root`, every input below 2^16 |
 
 Two more limits:
 
@@ -188,12 +285,22 @@ Two more limits:
    `claim_withdraw` are Anchor handlers, so the harnesses check helpers that
    repeat their share arithmetic line for line. A change to the handler has
    to be carried into the helper. Unit tests in `instructions/liquidity.rs`
-   run the real two-step round trip.
+   run the real two-step round trip. `conservation.rs` proves the pieces of
+   `claim_withdraw` that are functions of their own
+   (`check_withdrawal_allowed`, `escrow_burn`, `WithdrawRequest::release`)
+   directly. `split_claim` is not proven: it is a dozen 128-bit divisions by
+   symbolic values, which did not finish in ten minutes even at three bits.
 2. **Pure products are left to tests.** Share prices, the utilization cap,
    the fill spread and the band multiply unknowns in 128 bits, which the
    solver does not finish. Exhaustive unit tests cover them.
 
 ## What the proofs found
+
+The 64 harnesses added with `tracking.rs`, `funding.rs`, `conservation.rs`,
+`liquidation.rs`, `haircut.rs` and `positions.rs` found no new bug. One
+claim turned out looser than written: the winners bound on a single tracked
+position is above the profit by up to four units at small sizes, not one,
+all of it rounding up, which only ever pays a winner less.
 
 12 real bugs. Each is fixed, and the check that would catch it again stays in
 the suite.
@@ -216,28 +323,165 @@ the suite.
 ## Stateful fuzzing
 
 `fuzz/` runs the compiled program in a local Solana VM and sends it random
-sequences of actions: opens, closes, cancels, clears, settles, trader
-crosses, price walks and gaps of up to 90%, clock jumps, funding accruals,
-liquidations, LP deposits and withdrawals, and backing changes. Rejected
-instructions are fine. After every one that lands, it checks:
+sequences of actions. It sends 50 of the program's 52 instructions mid-run;
+`initialize_pool` and `add_custody` run once, in the fixture. Rejected
+instructions are fine. A panic, an overflow trap or running out of compute
+is not.
+
+Two fixtures:
+
+| | Main | Thin |
+| --- | --- | --- |
+| LP capital | $1,250,000 | $20,000 |
+| Markets | 3 Pyth, 1 keeper-priced, 1 folded from a pool | 2 Pyth |
+| Backing | $8,000 to $100,000 USDC each, $20,000 in kind behind one | $1,000 and $2,000 USDC, $10,000 in kind behind one |
+| Insurance fund | from fees | $5,000 |
+| Custodies | a stable and an oracle-priced token | the same |
+
+Observed markets read fake Raydium CLMM pool accounts: the right owner and
+the fields the program reads, written directly. Seasoning, keeper pushes and
+depth tracking run in the program.
+
+### What it drives
+
+1. **Trading.** Opens, closes, cancels, clears and settles; traders crossing
+   each other; price walks and gaps of up to 99%; clock jumps; funding;
+   liquidations; the retired deleverage path, which must refuse.
+2. **Trigger orders.** Limits, stops and take-profits placed, fired, expired
+   and cancelled, including after gaps, size changes and liquidations.
+3. **Splits.** Price ratios from a tenth to five times, applied to every
+   market on the feed with positions, resting limits and triggers standing.
+4. **LPs and backers.** Deposits, two-step withdrawals, claims paid in kind
+   and the tokens pulled after; backing in USDC and in kind, withdrawals,
+   syncs and marks; price moves of the oracle-priced custody.
+5. **Referrals and points.** Codes, referrers, syncs to referrers and
+   listers, reward claims, points.
+6. **The authority, mid-flight.** Budget cuts, market and pool pauses,
+   sessions, parameter changes (funding, fees, margin, leverage, caps), fee
+   collection, funding the insurance fund, handing the authority over and
+   back, the points switch, the mark keeper, resizes.
+7. **Observed markets.** Readings, keeper pushes, a pool thinned until the
+   budget is cut to its depth, a new generation seasoned from nothing.
+8. **Listings and batches.** New generations of a feed, by the authority or
+   by a trader within the listing bounds; 64-order batches, the fifth order
+   from one wallet and the 65th in a batch.
+
+### What it checks
+
+After every transaction that lands:
 
 1. **Solvency, exactly.** The vault holds liquidity, backing, protocol,
    chain and insurance balances, trader collateral, escrow and rewards, to
    the unit.
-2. **Supply.** USDC and LP tokens are conserved.
-3. **Totals.** Open interest, collateral, escrow, close reservations and
-   backing on the pool and each market equal the sums over positions.
-4. **Budget.** A market's net loss never exceeds its loss budget, and the
-   bounds behind haircuts and LP claims never understate.
-5. **Settlement.** An order in a sealed batch can always be settled.
+2. **Supply.** USDC, LP shares and both custody tokens are conserved. Each
+   custody's vault holds its backers' tokens, the LPs', what claims are
+   owed and the insurance fund's, and each of the first three is the sum of
+   the accounts behind it.
+3. **Totals.** Open interest, collateral, escrow (orders and open triggers),
+   close reservations and backing equal the sums over the accounts. The
+   rewards line equals what wallets may claim plus what referees and
+   markets owe.
+4. **Bounds.** The bounds behind haircuts and LP claims never understate
+   where a side is tracked. After a split a side's aggregates are the old
+   rule until the positions open across it close (`rescale_market`); there
+   their drift from the positions is measured, not enforced.
 
-Around specific actions it also checks that funding creates no money and
-that a deposit or claim never dilutes the remaining LPs. About 270,000
-actions have run with no failure. Failing sequences shrink to the shortest
-case and are kept as regressions.
+Against the state before it:
 
-Not yet driven by the fuzzer: trigger orders, splits, in-kind backing,
-referral rewards, and a draw on the insurance fund.
+1. **Fees, to the unit.** Every open, close and liquidation splits as
+   [Fees](fees.md) says: 20% protocol, 10% chain, 10% insurance, half the
+   rest to backers on a backed market, the discounts, and the liquidator's
+   60%.
+2. **Rewards.** Only out of the protocol's 20%, exactly what the referrer
+   and the lister are owed, and a claim pays exactly what was owed.
+3. **Who pays a loss.** The insurance fund falls only in a settlement or a
+   liquidation, only with LP liquidity at zero and the market's backing
+   gone. A loss is charged only within the budget. In-kind backing repays
+   the LPs no more than they bore of a market's loss past its USDC backing,
+   after what the fund paid of it, by a ledger of the fund's draws and
+   repayments built from the program's events.
+4. **Points** never fall.
+
+Around particular actions: funding creates no money; a deposit or claim
+never dilutes the LPs who stay; trading alone never raises the LPs' value
+without someone losing it; a split keeps every position's value and moves
+limits, triggers and the risk price with it; settlement is never refused;
+and every settle, claim, trigger, cancel, sync and liquidation sent a
+second time is refused or moves nothing.
+
+Ordering, on a copy of the world: a batch cleared with its orders reversed
+in their slots clears at the same prices and fills every order the same,
+and a sealed batch settled in reverse leaves every trader, the pool and the
+market's backers holding the same, to within a unit of rounding per blended
+fill. Counted rather than failed, as documented: a wallet that closes and
+opens in one batch, haircuts under a binding budget, and fee cuts clamped to
+LP liquidity that is nearly gone.
+
+### Runs
+
+The last campaign, 12 seeds of 2,000 cases of up to 120 actions each:
+1,455,419 actions, 728,543 on the main fixture and 726,876 on the thin one,
+in 29 minutes of CPU. No invariant failed apart from the three findings
+below. Every instruction it sends landed at least once, except
+`auto_deleverage`, which refuses every position by design. Some of what it
+reached:
+
+| | Main | Thin |
+| --- | --- | --- |
+| Settlements | 459,453 | 374,323 |
+| Batches compared cleared in reverse / settled in reverse | 7,636 / 7,910 | 8,766 / 9,190 |
+| Transactions replayed, refused or a no-op | 498,482 | 414,125 |
+| Splits applied | 6,304 | 5,054 |
+| Triggers fired / expired | 2,336 / 247 | 3,178 / 272 |
+| Liquidations | 3,003 | 11,499 |
+| Full 64-order batches | 5,740 | 3,960 |
+| Rewards claimed | 685 | 723 |
+| Budgets cut to a pool's depth | 293 | |
+| New observed marks seasoned | 83 | |
+| Insurance fund draws | | 62 |
+| In-kind payments to the LPs / token claims | | 94 / 34 |
+
+A clearing with the orders reversed never moved a price, a matched total or
+a single order's fill.
+
+Defaults run in seconds. A long run:
+
+```
+cd fuzz
+FUZZ_CASES=2000 FUZZ_STEPS=120 FUZZ_SEED=7 cargo test --release --test stateful_fuzz stateful_fuzz -- --nocapture
+```
+
+`stateful_fuzz_thin` is the thin fixture. Failing sequences shrink to the
+shortest case and are kept as regressions.
+
+### Findings
+
+Three, in `fuzz/FINDINGS.md`, all fixed. Each regression test now runs with
+the rest:
+
+1. The in-kind sync repaid the LPs for losses the insurance fund paid. The
+   fund is now repaid first, in tokens (see
+   [Loss budget](loss-budget.md#backing-held-in-tokens)).
+2. The order a sealed batch was settled in moved value between the market's
+   backers and the LPs. A batch's closes are now netted (see
+   [Loss budget](loss-budget.md#a-batch-is-settled-as-one)).
+3. A split that rounded a position's entry to zero blocked settlement.
+   Rebased entries now floor at one unit (see
+   [Corporate actions](corporate-actions.md)).
+
+After the fixes, 3 seeds of 1,000 cases of up to 120 actions on each
+fixture with `FUZZ_STRICT=1`, which fails on any finding too: 361,960
+actions, no invariant failed.
+
+### Not yet driven
+
+1. **Meteora DLMM pools** and seeding a mark from a Raydium pool's history:
+   observed markets here read CLMM pools only.
+2. **More than one pool**: rewards tied to a pool, and claims from another.
+3. **Accounts from older layouts**: `resize_*` runs only on accounts already
+   at full size.
+4. **New custodies or pools mid-run**: both are created in the fixture.
+5. **Token-2022 mints.**
 
 ## What is not proven
 
@@ -250,8 +494,27 @@ referral rewards, and a draw on the insurance fund.
    which is proven.
 3. **Large batches and prices.** The properties are about structure, not
    magnitude, so small bounds cover every ordering, every tie and the pool on
-   either side. Unit tests run larger values, including a full 64-slot batch.
+   either side. Unit tests run larger values, including a full 64-slot batch,
+   and the stateful fuzzer clears and settles full batches.
 4. **The server and the site.** Keepers, the faucet, seasons and the creator
    score are off-chain and untested by Kani.
+5. **Side tracking beyond two positions.** The winners bound is proven for
+   one or two tracked positions with values to 15 and 7. The bad debt bound
+   (`side_bad_debt_bound_usd`), which `lp_claim_pnl_usd` adds, is not proven;
+   randomised tests cover both.
+6. **Funding over symbolic books.** Every funding harness takes any curve and
+   cap, but most run on concrete books: a symbolic book is a 128-bit
+   division by a symbolic size, and only the no-mint property is proven
+   over every book (1 to 15 a side).
+7. **LP claim splitting and backing at scale.** `split_claim` and the
+   chained share arithmetic of backing are proven only in parts, at four
+   bits; unit tests cover the rest.
+8. **Resource-limited.** These were written and did not finish in 15
+   minutes at the smallest bounds that keep them meaningful, so they are
+   not in the suite: a close that carries its own fee
+   (`apply_settlement_to_pool` with a nonzero fee; the fee-free close and
+   the fee cuts are proven separately), `split_claim` alone and two claims
+   in a row, corporate-action entry adjustment (`adjust_entry_price`), and
+   the size-weighted held clock (`Position::add_held`).
 
 The program has not been audited.

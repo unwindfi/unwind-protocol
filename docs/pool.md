@@ -252,3 +252,17 @@ Paid all in USDC, the last LPs out would have held tokens and no USDC.
 every token vault would not fit in the claim. Earn shows each with a claim
 button. Only the owner can pull them, and nothing after the claim changes the
 amounts.
+
+### Tokens the insurance fund holds
+
+Backing tokens repay the insurance fund before the LPs (see
+[Loss budget](loss-budget.md#backing-held-in-tokens)). The fund pays winners
+in USDC, so it holds those tokens only until the LPs buy them: on every sync
+the LPs pay the fund free liquidity for its tokens at the oracle, and from
+then on they are LP-held tokens like the rest.
+
+1. The fund's tokens are not part of what the pool is worth. When the LPs
+   buy them, the pool gains the tokens and loses the USDC, at the same
+   price, so its value does not move.
+2. Only free liquidity buys them. Nothing reserved against open positions is
+   spent.

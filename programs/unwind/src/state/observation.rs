@@ -347,10 +347,10 @@ pub struct MarkKeeper {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn obs() -> Observation {
+    pub(crate) fn obs() -> Observation {
         Observation {
             bump: 0,
             market: Pubkey::default(),
@@ -653,5 +653,15 @@ mod tests {
             o.fold(1_000, i).unwrap();
         }
         assert!(o.ewma_price > 99, "stuck at {}", o.ewma_price);
+    }
+
+    #[test]
+    fn a_source_kind_reads_back_from_its_byte_and_refuses_any_other() {
+        assert_eq!(SourceKind::from_u8(0).unwrap(), SourceKind::RaydiumClmm);
+        assert_eq!(SourceKind::from_u8(1).unwrap(), SourceKind::OrcaWhirlpool);
+        assert_eq!(SourceKind::from_u8(2).unwrap(), SourceKind::MeteoraDlmm);
+        for v in [3u8, 200, u8::MAX] {
+            assert_eq!(SourceKind::from_u8(v).unwrap_err(), PerpError::InvalidParameter.into());
+        }
     }
 }

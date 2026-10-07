@@ -32,6 +32,10 @@ Both show in the portfolio in their own cards, apart from trading positions
 2. **Gains only up to what was drawn.** When the market recovers, gains go
    back to the backing up to what losses took from it, and no further.
    Backing is not a leveraged claim on the pool's profits.
+3. **Tokens pay after the USDC.** Settlement pays in USDC, so backing posted
+   in USDT or SOL pays once the USDC backing is gone: it repays the
+   insurance fund first, then the LPs, for what they covered. See
+   [Loss budget](loss-budget.md#backing-held-in-tokens).
 
 ## Backing a market that has been drawn on
 

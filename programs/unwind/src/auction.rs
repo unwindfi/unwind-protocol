@@ -1141,5 +1141,74 @@ mod tests {
         let book = [bid(105_000_000, 3_000), bid(104_000_000, 1_000)];
         assert_eq!(clear_with_pool(&book, &quote(99_000_000, 101_000_000, 0), REF).unwrap(), None);
     }
-}
 
+    #[test]
+    fn auction_errors_become_the_programs_errors() {
+        use crate::errors::PerpError;
+        let e: anchor_lang::error::Error = AuctionError::TooManyOrders.into();
+        assert_eq!(e, PerpError::InvalidParameter.into());
+        let e: anchor_lang::error::Error = AuctionError::Overflow.into();
+        assert_eq!(e, PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn the_takers_of_the_buy_flow_bid_and_of_the_sell_flow_ask() {
+        assert!(Flow::Buy.takers_bid());
+        assert!(!Flow::Sell.takers_bid());
+        assert_eq!(bid(1, 1).flow(), Flow::Buy);
+        assert_eq!(ask(1, 1).flow(), Flow::Sell);
+        assert_eq!(maker(ask(1, 1)).flow(), Flow::Buy);
+        assert_eq!(maker(bid(1, 1)).flow(), Flow::Sell);
+    }
+
+    #[test]
+    fn a_batch_past_its_order_limit_is_refused() {
+        let book = vec![bid(REF, 1); MAX_BATCH_ORDERS + 1];
+        assert_eq!(clear(&book, REF), Err(AuctionError::TooManyOrders));
+        assert!(clear(&book[..MAX_BATCH_ORDERS], REF).is_ok());
+    }
+
+    #[test]
+    fn a_zero_price_is_never_a_candidate() {
+        // A market bid recorded at zero would otherwise clear at nothing.
+        let book = [bid(0, 100), ask(0, 100), bid(REF, 10), ask(REF, 10)];
+        let c = clear(&book, REF).unwrap().unwrap();
+        assert_eq!(c.price, REF);
+        let only_zero = [bid(0, 100), ask(0, 100)];
+        assert_eq!(clear(&only_zero, REF).unwrap(), None);
+    }
+
+    #[test]
+    fn the_margin_gets_nothing_when_better_prices_take_it_all() {
+        // Bids ahead of the clearing price exactly fill what trades; the bid
+        // resting at the clearing price is left nothing to share.
+        let book = [bid(REF + 2, 10), bid(REF, 5), ask(REF, 10)];
+        let c = Clearing { price: REF, matched: 10 };
+        assert_eq!(fill_for(&book[0], &book, &c).unwrap(), 10);
+        assert_eq!(fill_for(&book[1], &book, &c).unwrap(), 0);
+        // A zero-size order fills nothing whatever its price.
+        assert_eq!(fill_for(&bid(REF + 5, 0), &book, &c).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_flow_clears_at_the_pools_quote_when_that_crosses_more() {
+        // One small maker inside the pool's spread, a large taker bid. The
+        // book alone crosses ten at the maker's price, where the pool will not
+        // sell; at the pool's ask it crosses the taker against both.
+        let book = [maker(ask(REF, 10)), bid(REF + 2_000_000, 1_000)];
+        let q = quote(REF - 1_000_000, REF + 1_000_000, 500);
+        let out = clear_with_pool(&book, &q, REF).unwrap().unwrap();
+        assert_eq!(out.price, REF + 1_000_000, "moved to the pool's ask");
+        assert_eq!(out.pool_sold, 500);
+        assert_eq!(out.matched, 510);
+    }
+
+    #[test]
+    fn an_order_in_a_flow_that_did_not_trade_fills_nothing() {
+        let book = DualBook::split(&[bid(REF, 100)]);
+        let out = DualOutcome::default();
+        assert!(!out.traded());
+        assert_eq!(dual_fill_for(&bid(REF, 100), &book, &out).unwrap(), 0);
+        assert_eq!(dual_fill_for(&ask(REF, 100), &book, &out).unwrap(), 0);
+    }
+}

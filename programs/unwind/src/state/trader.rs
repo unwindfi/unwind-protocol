@@ -710,4 +710,16 @@ pub(crate) mod tests {
         assert_eq!(stake_points(1_000_000, 1, 100, 100), 0);
         assert_eq!(stake_points(1_000_000, 1, 100, 50), 0, "clock went backwards");
     }
+
+    #[test]
+    fn a_trader_holds_a_code_once_its_first_byte_is_set() {
+        let mut t = trader();
+        assert!(!t.has_code());
+        t.code = code("abc");
+        assert!(t.has_code());
+        // Only the first byte is read: a code is written left-aligned.
+        let mut t = trader();
+        t.code[1] = b'x';
+        assert!(!t.has_code());
+    }
 }

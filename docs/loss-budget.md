@@ -106,6 +106,76 @@ A loss the market takes is paid in this order:
 All three only up to the remaining budget. A later gain repays backing first,
 up to what losses drew from it, then goes to the LPs.
 
+### Backing held in tokens
+
+Settlement pays in USDC only, so a loss reaches LP liquidity and the fund
+once the USDC backing is spent, even when the market's backers also posted
+tokens. The tokens then pay back what the LPs and the fund covered, at the
+oracle (`sync_backing`, and every backing deposit or withdrawal).
+
+1. **The fund first, then the LPs.** That is the reverse of the order the two
+   were drawn. Each market records what the fund has paid toward it and not
+   been repaid.
+2. **The fund holds the tokens it is repaid in.** The LPs buy them back at
+   the oracle with free liquidity on every sync, which puts the USDC where
+   settlement can use it again. At the oracle the LPs neither gain nor lose.
+3. **A recovery refunds the backers.** If the market later wins the loss
+   back, the gain reaches the LPs, and the LPs refund the backers in USDC,
+   the fund's part included. The fund keeps what it was repaid.
+4. **Tokens the LPs no longer bore a loss for go to the fund.** If a gain has
+   repaid the LPs for a loss they were already paid tokens for, while the
+   fund is still owed, the LPs pass that part to the fund in USDC before
+   anything goes back to the backers.
+
+Example: a market's USDC backing of $2,000 is spent, LP liquidity pays $3,
+and the fund pays $4,999. Earlier liquidations had paid the LPs $1,001 on the
+market, so the loss past the USDC backing is $4,001, and the backers hold
+$10,000 of tokens. A sync moves $4,001 of tokens to the fund. The LPs get
+none: the market has not cost them anything. The fund is still owed $998,
+which the tokens do not owe because the market's loss past the USDC backing
+is only $4,001. Before this rule the $4,001 went to the LPs.
+
+### A batch is settled as one
+
+Settlement is permissionless, so whoever settles a sealed batch chooses the
+order of its closes. Closed one at a time, a winner drew the backing and a
+loser repaid it only up to what had been drawn so far: settled winner first,
+the loser's loss repaid the backers; settled loser first, it went to the
+LPs and the winner's profit drew the backing for good.
+
+Now a close settled out of a batch moves the backing to where the batch's
+net so far would leave it as one close:
+
+1. **Net down:** drawn up to what the backing held when the batch began.
+   Fees the batch pays the backers are not drawn on.
+2. **Net up:** restored up to what was drawn before the batch.
+3. **The fund:** a gain in the batch puts back what the fund paid a winner
+   earlier in the same batch.
+4. **Never against the close's own direction:** a winner is never paid by
+   restoring backing, and a loser's gain never pays a draw.
+
+Once every order has settled, the backers, the LPs and the fund hold the
+same in any order. Traders are paid the same as before; only where the
+pool's side of their PnL lands changed.
+
+Example: $2,000 of backing, nothing drawn. A short and a long, $2,000 at 2x
+each, close in one batch after a 3% move. The winner is up $13.88 and the
+loser down the same.
+
+| Settled | Before | Now |
+| --- | --- | --- |
+| Winner first | backing $2,000, LPs flat | backing $2,000, LPs flat |
+| Loser first | backing $1,987, LPs +$13.88 | backing $2,000, LPs flat |
+
+Fees aside: the backers also keep their share of the two close fees.
+
+Two things still depend on the order. Profit haircuts, when a market's
+winners can reach its remaining budget (see
+[Profit haircuts](auto-deleveraging.md)). And the cuts of a close fee when LP
+liquidity is nearly gone: a cut liquidity cannot cover is not taken, so a
+settlement that lands before a fee refills liquidity gives up a cut that one
+after it takes. That moves at most the cuts of the batch's fees.
+
 ## Numerical example
 
 An observed market whose pool costs $40,000 to move 1%.

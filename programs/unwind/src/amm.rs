@@ -1089,4 +1089,200 @@ mod tests {
         assert_eq!(to_usd_scale(999, 9).unwrap(), 0);
         assert_eq!(apply_decimals(999, 6, 9).unwrap(), 0);
     }
+
+    // ------------------------------------------- Readers, through accounts
+
+    fn leak<T>(t: T) -> &'static mut T {
+        Box::leak(Box::new(t))
+    }
+
+    fn account(key: Pubkey, owner: Pubkey, data: &[u8]) -> AccountInfo<'static> {
+        AccountInfo::new(
+            leak(key),
+            false,
+            false,
+            leak(0u64),
+            Box::leak(data.to_vec().into_boxed_slice()),
+            leak(owner),
+            false,
+            0,
+        )
+    }
+
+    const SOL_USDC_RING: Pubkey = pubkey!("3Y695CuQ8AP4anbwAqiEBeQF9KxqHFr8piEwvw3UePnQ");
+
+    fn sol_pool() -> AccountInfo<'static> {
+        account(SOL_USDC_POOL, RAYDIUM_CLMM_ID, POOL_BYTES)
+    }
+
+    #[test]
+    fn a_live_pool_reads_its_spot_and_depth_through_the_account() {
+        let a = sol_pool();
+        let sqrt = read_u128(POOL_BYTES, off::SQRT_PRICE_X64).unwrap();
+        let spot = clmm_spot_price(&a, &SOL_USDC_POOL, false, 0).unwrap();
+        assert_eq!(spot, to_usd_price(clmm_price_num(sqrt).unwrap(), CLMM_PRICE_BITS, 9, 6, false, 0).unwrap());
+        // The same figures `scripts/pools.ts` reads from these bytes
+        // (`scripts/server-logic.test.ts` pins them on that side).
+        assert_eq!(spot, 114_225_000);
+        let liquidity = read_u128(POOL_BYTES, off::LIQUIDITY).unwrap();
+        let depth = clmm_depth_usd(&a, &SOL_USDC_POOL, false).unwrap();
+        assert_eq!(depth as u128, to_usd_scale(clmm_depth_raw(liquidity, sqrt, false).unwrap(), 6).unwrap());
+        assert_eq!(depth, 173_442_294_000);
+    }
+
+    #[test]
+    fn a_pool_read_checks_the_key_the_owner_and_the_layout() {
+        let a = sol_pool();
+        let other = Pubkey::new_unique();
+        assert_eq!(clmm_spot_price(&a, &other, false, 0).unwrap_err(), PerpError::WrongOracleFeed.into());
+        assert_eq!(clmm_depth_usd(&a, &other, false).unwrap_err(), PerpError::WrongOracleFeed.into());
+        let foreign = account(SOL_USDC_POOL, Pubkey::new_unique(), POOL_BYTES);
+        assert_eq!(clmm_spot_price(&foreign, &SOL_USDC_POOL, false, 0).unwrap_err(), PerpError::WrongOracleOwner.into());
+        assert_eq!(clmm_depth_usd(&foreign, &SOL_USDC_POOL, false).unwrap_err(), PerpError::WrongOracleOwner.into());
+        // Cut short of the fields, or another account type's discriminator.
+        assert_eq!(check_clmm_pool(&RAYDIUM_CLMM_ID, &POOL_BYTES[..off::END - 1]).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        let mut wrong = POOL_BYTES.to_vec();
+        wrong[0] ^= 1;
+        assert_eq!(check_clmm_pool(&RAYDIUM_CLMM_ID, &wrong).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        check_clmm_pool(&RAYDIUM_CLMM_ID, POOL_BYTES).unwrap();
+    }
+
+    #[test]
+    fn a_pool_with_no_liquidity_reads_zero_depth_and_no_root_no_price() {
+        let mut d = POOL_BYTES.to_vec();
+        d[off::LIQUIDITY..off::LIQUIDITY + 16].copy_from_slice(&0u128.to_le_bytes());
+        let a = account(SOL_USDC_POOL, RAYDIUM_CLMM_ID, &d);
+        assert_eq!(clmm_depth_usd(&a, &SOL_USDC_POOL, false).unwrap(), 0, "no liquidity halts, never quotes");
+        let mut d = POOL_BYTES.to_vec();
+        d[off::SQRT_PRICE_X64..off::SQRT_PRICE_X64 + 16].copy_from_slice(&0u128.to_le_bytes());
+        let a = account(SOL_USDC_POOL, RAYDIUM_CLMM_ID, &d);
+        assert_eq!(clmm_depth_usd(&a, &SOL_USDC_POOL, false).unwrap(), 0);
+        assert_eq!(clmm_spot_price(&a, &SOL_USDC_POOL, false, 0).unwrap_err(), PerpError::InvalidOraclePrice.into());
+    }
+
+    #[test]
+    fn a_pools_own_history_prices_it_through_the_accounts() {
+        let (p, h) = (sol_pool(), account(SOL_USDC_RING, RAYDIUM_CLMM_ID, RING_BYTES));
+        let now = RING_LAST_TS + 5;
+        let twap = clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, now).unwrap().unwrap();
+        let want = to_usd_price(
+            clmm_price_num(sqrt_price_at_tick(-21_680).unwrap()).unwrap(),
+            CLMM_PRICE_BITS, 9, 6, false, 0,
+        ).unwrap();
+        assert_eq!(twap, want);
+        assert_eq!(twap, 114_418_000, "as scripts/pools.ts reads it");
+        // A window the ring does not reach is not an answer, and not an error.
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 3_600, RING_LAST_TS).unwrap(), None);
+    }
+
+    #[test]
+    fn a_history_read_refuses_another_pools_ring() {
+        let p = sol_pool();
+        // The ring the pool does not record.
+        let h = account(Pubkey::new_unique(), RAYDIUM_CLMM_ID, RING_BYTES);
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::WrongOracleFeed.into());
+        // The right key, but owned by someone else.
+        let h = account(SOL_USDC_RING, Pubkey::new_unique(), RING_BYTES);
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::WrongOracleOwner.into());
+        // Not a ring at all.
+        let mut d = RING_BYTES.to_vec();
+        d[0] ^= 1;
+        let h = account(SOL_USDC_RING, RAYDIUM_CLMM_ID, &d);
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        let h = account(SOL_USDC_RING, RAYDIUM_CLMM_ID, &RING_BYTES[..ring::END - 1]);
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        // A ring that names a different pool.
+        let mut d = RING_BYTES.to_vec();
+        d[ring::POOL_ID] ^= 1;
+        let h = account(SOL_USDC_RING, RAYDIUM_CLMM_ID, &d);
+        assert_eq!(clmm_twap_price(&p, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::WrongOracleFeed.into());
+        // A pool too short to hold its current tick.
+        let short = account(SOL_USDC_POOL, RAYDIUM_CLMM_ID, &POOL_BYTES[..off::TICK_CURRENT + 3]);
+        let h = account(SOL_USDC_RING, RAYDIUM_CLMM_ID, RING_BYTES);
+        assert_eq!(clmm_twap_price(&short, &SOL_USDC_POOL, &h, false, 0, 900, RING_LAST_TS).unwrap_err(), PerpError::InvalidOracleAccount.into());
+    }
+
+    #[test]
+    fn a_ring_that_cannot_answer_says_none() {
+        // An index past the ring.
+        let mut d = RING_BYTES.to_vec();
+        d[ring::INDEX..ring::INDEX + 2].copy_from_slice(&(ring::COUNT as u16).to_le_bytes());
+        assert_eq!(ring_twap_tick(&d, -21_697, 900, RING_LAST_TS), None);
+        // A newest sample from after `now`.
+        assert_eq!(ring_twap_tick(RING_BYTES, -21_697, 900, RING_LAST_TS - 1), None);
+        // A ring never written.
+        let mut d = RING_BYTES.to_vec();
+        for b in &mut d[ring::SAMPLES..ring::END] {
+            *b = 0;
+        }
+        assert_eq!(ring_twap_tick(&d, -21_697, 900, RING_LAST_TS), None);
+        // Only the newest sample written: nothing reaches back.
+        let idx = u16::from_le_bytes(RING_BYTES[ring::INDEX..ring::INDEX + 2].try_into().unwrap()) as usize;
+        let mut d = RING_BYTES.to_vec();
+        for i in 0..ring::COUNT {
+            if i != idx {
+                let at = ring::SAMPLES + i * ring::SAMPLE_SIZE;
+                for b in &mut d[at..at + ring::SAMPLE_SIZE] {
+                    *b = 0;
+                }
+            }
+        }
+        assert_eq!(ring_twap_tick(&d, -21_697, 900, RING_LAST_TS + 5), None);
+    }
+
+    #[test]
+    fn a_dlmm_read_through_the_accounts_matches_the_parsed_figures() {
+        let (pair, array) = live();
+        let arrays = [array];
+        let src = account(BONK_USDC_PAIR, METEORA_DLMM_ID, PAIR_BYTES);
+        let bins = [account(Pubkey::new_unique(), METEORA_DLMM_ID, ARRAY_BYTES)];
+        let (spot, depth) = dlmm_read(&src, &BONK_USDC_PAIR, &bins, BONK_DEC, USDC_DEC, false, 6).unwrap();
+        assert_eq!(spot, dlmm_spot_price(&pair, &arrays, BONK_DEC, USDC_DEC, false, 6).unwrap());
+        assert_eq!(depth, dlmm_depth_usd(&pair, &arrays, BONK_DEC, USDC_DEC, false).unwrap());
+    }
+
+    #[test]
+    fn a_dlmm_read_checks_the_pair_and_every_bin_array() {
+        let src = account(BONK_USDC_PAIR, METEORA_DLMM_ID, PAIR_BYTES);
+        let bins = [account(Pubkey::new_unique(), METEORA_DLMM_ID, ARRAY_BYTES)];
+        assert_eq!(
+            dlmm_read(&src, &Pubkey::new_unique(), &bins, BONK_DEC, USDC_DEC, false, 6).unwrap_err(),
+            PerpError::WrongOracleFeed.into()
+        );
+        let foreign = account(BONK_USDC_PAIR, Pubkey::new_unique(), PAIR_BYTES);
+        assert_eq!(
+            dlmm_read(&foreign, &BONK_USDC_PAIR, &bins, BONK_DEC, USDC_DEC, false, 6).unwrap_err(),
+            PerpError::WrongOracleOwner.into()
+        );
+        // A bin array somebody else owns is refused, not skipped.
+        let bad = [account(Pubkey::new_unique(), Pubkey::new_unique(), ARRAY_BYTES)];
+        assert!(dlmm_read(&src, &BONK_USDC_PAIR, &bad, BONK_DEC, USDC_DEC, false, 6).is_err());
+    }
+
+    fn mint(decimals: u8, initialized: bool) -> Vec<u8> {
+        let mut d = vec![0u8; 82];
+        d[44] = decimals;
+        d[45] = initialized as u8;
+        d
+    }
+
+    #[test]
+    fn mint_decimals_reads_either_token_program() {
+        let key = Pubkey::new_unique();
+        assert_eq!(mint_decimals(&account(key, anchor_spl::token::ID, &mint(9, true)), &key).unwrap(), 9);
+        assert_eq!(mint_decimals(&account(key, anchor_spl::token_2022::ID, &mint(6, true)), &key).unwrap(), 6);
+    }
+
+    #[test]
+    fn mint_decimals_refuses_a_wrong_or_unready_mint() {
+        let key = Pubkey::new_unique();
+        let a = account(key, anchor_spl::token::ID, &mint(9, true));
+        assert_eq!(mint_decimals(&a, &Pubkey::new_unique()).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        let a = account(key, Pubkey::new_unique(), &mint(9, true));
+        assert_eq!(mint_decimals(&a, &key).unwrap_err(), PerpError::WrongOracleOwner.into());
+        let a = account(key, anchor_spl::token::ID, &mint(9, false));
+        assert_eq!(mint_decimals(&a, &key).unwrap_err(), PerpError::InvalidOracleAccount.into());
+        let a = account(key, anchor_spl::token::ID, &mint(9, true)[..81]);
+        assert_eq!(mint_decimals(&a, &key).unwrap_err(), PerpError::InvalidOracleAccount.into());
+    }
 }

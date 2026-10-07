@@ -286,10 +286,10 @@ impl Batch {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn batch() -> Batch {
+    pub(crate) fn batch() -> Batch {
         Batch {
             bump: 0,
             market: Pubkey::default(),
@@ -308,7 +308,7 @@ mod tests {
         }
     }
 
-    fn order(price: u64) -> BatchOrder {
+    pub(crate) fn order(price: u64) -> BatchOrder {
         // A different owner per order, so the per-wallet limit is not what a
         // test about something else runs into.
         let mut key = [0u8; 32];
@@ -552,5 +552,31 @@ mod tests {
         b.roll(1_000);
         assert!(!b.is_due(1_000 + BATCH_INTERVAL_SEC - 1));
         assert!(b.is_due(1_000 + BATCH_INTERVAL_SEC));
+    }
+
+    #[test]
+    fn an_order_settles_at_its_own_flows_price() {
+        let mut b = batch();
+        b.buy_price = 101;
+        b.sell_price = 99;
+        let mut o = order(100);
+        // A taker bid buys; a maker ask sells into the same buy flow.
+        o.is_bid = 1;
+        o.is_maker = 0;
+        assert!(!o.maker());
+        assert_eq!(o.flow(), Flow::Buy);
+        assert_eq!(b.price_for(&o), 101);
+        o.is_bid = 0;
+        o.is_maker = 1;
+        assert!(o.maker());
+        assert_eq!(o.flow(), Flow::Buy);
+        assert_eq!(b.price_for(&o), 101);
+        // A taker ask and a maker bid are the sell flow.
+        o.is_bid = 0;
+        o.is_maker = 0;
+        assert_eq!(b.price_for(&o), 99);
+        o.is_bid = 1;
+        o.is_maker = 1;
+        assert_eq!(b.price_for(&o), 99);
     }
 }

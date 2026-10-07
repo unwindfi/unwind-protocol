@@ -7,6 +7,7 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "build": "anchor build -- --features devnet",
     "test:unit": "cargo test -p unwind --lib",
+    "test:server": "ts-mocha -p ./tsconfig.json -t 60000 scripts/*.test.ts",
     "test:integration": "ts-node scripts/gen-oracle-accounts.ts && anchor test --skip-build",
     "gen:oracles": "ts-node scripts/gen-oracle-accounts.ts",
     "localnet": "./scripts/localnet.sh",

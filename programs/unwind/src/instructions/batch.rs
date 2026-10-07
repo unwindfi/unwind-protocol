@@ -4,7 +4,7 @@ use crate::auction::{
 use crate::constants::*;
 use crate::errors::PerpError;
 use crate::instructions::trade::{
-    book_cleared_open, book_close_at, check_open, plan_open, BackerFeePaid, ProfitHaircut,
+    book_batch_close_at, book_cleared_open, check_open, plan_open, BackerFeePaid, ProfitHaircut,
     PositionClosed,
 };
 use crate::math::*;
@@ -559,6 +559,9 @@ pub fn clear_batch(ctx: Context<ClearBatch>) -> Result<()> {
         &market_key,
     )?;
     ctx.accounts.market.accept_price(&oracle, clock.slot)?;
+    // Whatever this batch's closes cost the pool is netted from here
+    // (`Market::settle_backing_in_batch`).
+    ctx.accounts.market.end_batch_netting();
 
     // The pool fills takers the makers left standing. Its size is capped out
     // of the budget it was listed with, so it can seed a market nobody is
@@ -1027,6 +1030,10 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
             clearing,
             now,
         )?;
+        // Kept out of what this batch's closes may draw on
+        // (`Market::settle_backing_in_batch`).
+        ctx.accounts.market.batch_backer_fees_usd =
+            ctx.accounts.market.batch_backer_fees_usd.saturating_add(to_backers);
         if to_backers > 0 {
             emit!(BackerFeePaid {
                 market: market_key,
@@ -1073,6 +1080,7 @@ pub fn settle_order(ctx: Context<SettleOrder>, index: u8) -> Result<()> {
     if batch.unsettled == 0 {
         let now = Clock::get()?.unix_timestamp;
         batch.roll(now);
+        ctx.accounts.market.end_batch_netting();
     }
     Ok(())
 }
@@ -1128,7 +1136,7 @@ fn settle_close(
     if close_size > 0 {
         // Read before the close, which resets the clock of a position it empties.
         let held_secs = ctx.accounts.position.held_secs(now);
-        let closed = book_close_at(
+        let closed = book_batch_close_at(
             &mut ctx.accounts.pool,
             &mut ctx.accounts.market,
             &mut ctx.accounts.position,
@@ -1225,6 +1233,7 @@ fn settle_close(
     if batch.unsettled == 0 {
         let now = Clock::get()?.unix_timestamp;
         batch.roll(now);
+        ctx.accounts.market.end_batch_netting();
     }
     Ok(())
 }
@@ -1352,5 +1361,160 @@ mod tests {
         credit_fill(&mut p, &mut m, Pubkey::new_unique(), Some(&mut tr), &route,
                     owner, size, 0, 0, Some(pos.held_secs(NOON + 900)), NOON + 900).unwrap();
         assert_eq!(tr.points, 2 * size, "ten minutes on the blended clock");
+    }
+
+    // ---- Admission, the trader record, and the price slot ----
+
+    /// A batch holding `long` of resting long opens, plus a reduce-only bid
+    /// and a short open that must not count toward the long side.
+    fn batch_with_pending_longs(long: u64) -> Batch {
+        use crate::state::batch::tests::{batch, order};
+        let mut b = batch();
+        let mut o = order(t::PX);
+        o.size_usd = long;
+        b.orders[0] = o;
+        let mut reduce = order(t::PX + 1);
+        reduce.size_usd = 500_000_000_000;
+        reduce.reduce_only = 1;
+        b.orders[1] = reduce;
+        let mut short = order(t::PX + 2);
+        short.size_usd = 500_000_000_000;
+        short.is_bid = 0;
+        b.orders[2] = short;
+        b
+    }
+
+    #[test]
+    fn an_open_is_admitted_up_to_the_cap_counting_what_already_rests() {
+        let (p, m, pos) = (t::pool(), t::market(), t::position());
+        // A $1m cap with $900k of longs resting: $100k more fits exactly.
+        let b = batch_with_pending_longs(900_000_000_000);
+        admit_open(&p, &m, &pos, &b, true, 10_000_000_000, 100_000_000_000, t::PX).unwrap();
+        assert_eq!(
+            admit_open(&p, &m, &pos, &b, true, 10_000_000_000, 100_000_000_001, t::PX).unwrap_err(),
+            PerpError::OpenInterestCapExceeded.into()
+        );
+        // The short side has only its own $500k resting.
+        admit_open(&p, &m, &pos, &b, false, 50_000_000_000, 500_000_000_000, t::PX).unwrap();
+    }
+
+    #[test]
+    fn an_open_counts_the_side_already_held() {
+        let (p, mut m, pos) = (t::pool(), t::market(), t::position());
+        m.long_size_usd = 950_000_000_000;
+        let b = batch_with_pending_longs(0);
+        admit_open(&p, &m, &pos, &b, true, 5_000_000_000, 50_000_000_000, t::PX).unwrap();
+        assert_eq!(
+            admit_open(&p, &m, &pos, &b, true, 5_000_000_000, 50_000_000_001, t::PX).unwrap_err(),
+            PerpError::OpenInterestCapExceeded.into()
+        );
+    }
+
+    #[test]
+    fn a_closed_session_admits_against_the_tightened_cap() {
+        let (p, mut m, pos) = (t::pool(), t::market(), t::position());
+        m.session = Session::Closed as u8;
+        // A quarter of $1m while the underlying is shut, at 2x.
+        let b = batch_with_pending_longs(0);
+        admit_open(&p, &m, &pos, &b, true, 125_000_000_000, 250_000_000_000, t::PX).unwrap();
+        assert_eq!(
+            admit_open(&p, &m, &pos, &b, true, 125_000_000_000, 250_000_000_001, t::PX).unwrap_err(),
+            PerpError::OpenInterestCapExceeded.into()
+        );
+    }
+
+    #[test]
+    fn admission_applies_the_open_checks_first() {
+        let (p, m, pos) = (t::pool(), t::market(), t::position());
+        let b = batch_with_pending_longs(0);
+        // 20x against a 10x market.
+        assert_eq!(
+            admit_open(&p, &m, &pos, &b, true, 1_000_000_000, 20_000_000_000, t::PX).unwrap_err(),
+            PerpError::LeverageTooHigh.into()
+        );
+    }
+
+    #[test]
+    fn a_trader_is_filled_in_once_and_never_overwritten() {
+        let mut tr = crate::state::trader::tests::trader();
+        tr.owner = Pubkey::default();
+        let first = Pubkey::new_unique();
+        open_trader(&mut tr, first, 7, 100);
+        assert_eq!((tr.owner, tr.bump, tr.created_ts, tr.backing_ts, tr.lp_ts), (first, 7, 100, 100, 100));
+        open_trader(&mut tr, Pubkey::new_unique(), 9, 200);
+        assert_eq!((tr.owner, tr.bump, tr.created_ts), (first, 7, 100), "a second call changes nothing");
+    }
+
+    fn leak<T>(x: T) -> &'static mut T {
+        Box::leak(Box::new(x))
+    }
+
+    fn info(key: Pubkey, owner: Pubkey, data: Vec<u8>) -> AccountInfo<'static> {
+        AccountInfo::new(leak(key), false, true, leak(0u64), Box::leak(data.into_boxed_slice()), leak(owner), false, 0)
+    }
+
+    #[test]
+    fn a_trader_record_round_trips_and_a_short_or_foreign_one_reads_as_missing() {
+        let mut tr = crate::state::trader::tests::trader();
+        tr.points = 42;
+        let a = info(Pubkey::new_unique(), crate::ID, vec![0; 8 + Trader::INIT_SPACE]);
+        store_trader(&a, &tr).unwrap();
+        let back = load_trader(&a).unwrap().unwrap();
+        assert_eq!((back.owner, back.points), (tr.owner, 42));
+        // From before `Trader` grew: too short to read or write back.
+        let short = info(Pubkey::new_unique(), crate::ID, a.try_borrow_data().unwrap()[..8 + Trader::INIT_SPACE - 1].to_vec());
+        assert!(load_trader(&short).unwrap().is_none());
+        // Somebody else's account of the right size.
+        let foreign = info(Pubkey::new_unique(), Pubkey::new_unique(), a.try_borrow_data().unwrap().to_vec());
+        assert!(load_trader(&foreign).unwrap().is_none());
+        // Ours, but not a trader.
+        let other = info(Pubkey::new_unique(), crate::ID, vec![1; 8 + Trader::INIT_SPACE]);
+        assert!(load_trader(&other).is_err());
+    }
+
+    fn observed(m: &mut Market) -> (Pubkey, AccountInfo<'static>) {
+        let (mkey, okey) = (Pubkey::new_unique(), Pubkey::new_unique());
+        m.price_source = PriceSource::Observed as u8;
+        m.observation = okey;
+        let mut o = crate::state::observation::tests::obs();
+        o.market = mkey;
+        let mut data = Vec::new();
+        o.try_serialize(&mut data).unwrap();
+        (mkey, info(okey, crate::ID, data))
+    }
+
+    #[test]
+    fn an_observed_market_reads_only_its_own_observation() {
+        let (p, mut m) = (t::pool(), t::market());
+        let (mkey, obs) = observed(&mut m);
+        // Unseasoned: the source's own refusal, so it is the right account.
+        assert_eq!(market_price(&obs, &p, &m, &mkey).unwrap_err(), PerpError::OracleNotSeasoned.into());
+        // Another account in the slot.
+        let other = info(Pubkey::new_unique(), crate::ID, obs.try_borrow_data().unwrap().to_vec());
+        assert_eq!(market_price(&other, &p, &m, &mkey).unwrap_err(), PerpError::WrongOracleFeed.into());
+        // The right key, owned by somebody else.
+        let forged = info(m.observation, Pubkey::new_unique(), obs.try_borrow_data().unwrap().to_vec());
+        assert_eq!(market_price(&forged, &p, &m, &mkey).unwrap_err(), PerpError::WrongOracleOwner.into());
+        // Ours, but not an observation.
+        let wrong = info(m.observation, crate::ID, vec![0; 64]);
+        assert!(market_price(&wrong, &p, &m, &mkey).is_err());
+        // The observation of another market.
+        assert_eq!(market_price(&obs, &p, &m, &Pubkey::new_unique()).unwrap_err(), PerpError::WrongOracleFeed.into());
+    }
+
+    #[test]
+    fn a_pyth_market_reads_through_the_pools_receiver() {
+        let (mut p, m) = (t::pool(), t::market());
+        p.pyth_receiver = Pubkey::new_unique();
+        let a = info(Pubkey::new_unique(), Pubkey::new_unique(), vec![0; 200]);
+        assert_eq!(market_price(&a, &p, &m, &Pubkey::new_unique()).unwrap_err(), PerpError::WrongOracleOwner.into());
+    }
+
+    #[test]
+    fn a_market_with_an_unknown_price_source_is_refused() {
+        let (p, mut m) = (t::pool(), t::market());
+        m.price_source = 2;
+        let a = info(Pubkey::new_unique(), Pubkey::new_unique(), vec![]);
+        assert_eq!(market_price(&a, &p, &m, &Pubkey::new_unique()).unwrap_err(), PerpError::InvalidParameter.into());
     }
 }

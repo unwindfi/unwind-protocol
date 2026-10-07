@@ -91,14 +91,55 @@ fn sync(
     book: &mut BackingBook,
     custodies: &mut [(Account<Custody>, u64)],
 ) -> Result<()> {
-    let plan = plan_sync(
+    let plan = plan_sync_with_fund(
         lp_borne_usd(market.net_loss_usd, market.backing_drawn_usd),
         book.baseline_usd,
         book.reimbursed_usd,
+        book.fund_reimbursed_usd,
+        market.insurance_drawn_usd,
         &held(book, custodies),
         pool.free_liquidity_usd(),
     )?;
-    match plan {
+    // The fund first, in tokens, which it holds from here
+    // (`Custody::insurance_amount`); and out of whatever the LPs were handed
+    // for a loss that is no longer theirs.
+    if plan.fund_in_kind_usd > 0 || plan.fund_usdc > 0 {
+        for (c, _) in custodies.iter_mut() {
+            let i = c.index as usize;
+            let t = plan.fund_taken[i];
+            if t == 0 {
+                continue;
+            }
+            book.amounts[i] -= t;
+            c.backing_amount = c.backing_amount.saturating_sub(t);
+            c.insurance_amount = c
+                .insurance_amount
+                .checked_add(t)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+        pool.liquidity_usd -= plan.fund_usdc;
+        pool.insurance_usd = pool
+            .insurance_usd
+            .checked_add(plan.fund_usdc)
+            .ok_or(PerpError::MathOverflow)?;
+        let repaid = plan.fund_in_kind_usd + plan.fund_usdc;
+        market.insurance_drawn_usd = market.insurance_drawn_usd.saturating_sub(repaid);
+        book.reimbursed_usd = book
+            .reimbursed_usd
+            .checked_add(plan.fund_in_kind_usd)
+            .ok_or(PerpError::MathOverflow)?;
+        book.fund_reimbursed_usd = book
+            .fund_reimbursed_usd
+            .checked_add(repaid)
+            .ok_or(PerpError::MathOverflow)?;
+        emit!(BackingRepaidFund {
+            market: book.market,
+            in_kind_usd: plan.fund_in_kind_usd,
+            taken: plan.fund_taken,
+            usdc_usd: plan.fund_usdc,
+        });
+    }
+    match plan.sync {
         Sync::Nothing => {}
         Sync::PayLps { usd, taken } => {
             for (c, _) in custodies.iter_mut() {
@@ -130,8 +171,34 @@ fn sync(
                 .checked_add(usd)
                 .ok_or(PerpError::MathOverflow)?;
             book.reimbursed_usd -= usd;
+            book.fund_reimbursed_usd =
+                fund_after_refund(book.fund_reimbursed_usd, plan.fund_target, usd);
             emit!(BackingRefunded { market: book.market, amount_usd: usd });
         }
+    }
+
+    // Tokens the fund holds, from this market or any other, go to the LPs
+    // for USDC at the oracle while there is free liquidity to pay with.
+    for (c, price) in custodies.iter_mut() {
+        if c.insurance_amount == 0 {
+            continue;
+        }
+        let h = Held {
+            amount: c.insurance_amount,
+            price: *price,
+            decimals: c.decimals,
+            is_stable: c.is_stable,
+            weight_bps: c.budget_weight_bps,
+        };
+        let (tokens, usd) = fund_tokens_bought(&h, pool.free_liquidity_usd())?;
+        if tokens == 0 {
+            continue;
+        }
+        c.insurance_amount -= tokens;
+        c.lp_amount = c.lp_amount.checked_add(tokens).ok_or(PerpError::MathOverflow)?;
+        pool.liquidity_usd -= usd;
+        pool.insurance_usd = pool.insurance_usd.checked_add(usd).ok_or(PerpError::MathOverflow)?;
+        emit!(FundTokensSoldToLps { mint: c.mint, amount: tokens, usd });
     }
 
     // A falling price shrinks what the backing can stand behind, and the
@@ -430,6 +497,7 @@ pub fn back_market<'info>(
         // these backers' to be refunded, and losses before now are not
         // theirs to repay.
         book.reimbursed_usd = 0;
+        book.fund_reimbursed_usd = 0;
         book.baseline_usd = lp_borne_usd(market.net_loss_usd, 0);
     }
     match custody_pos {
@@ -956,6 +1024,27 @@ pub struct BackingRefunded {
     pub amount_usd: u64,
 }
 
+/// In-kind backing repaid the insurance fund for this market's losses:
+/// tokens worth `in_kind_usd` (`taken`, by custody) moved to the fund, and
+/// `usdc_usd` came out of LP liquidity, from tokens the LPs had been handed
+/// for a loss a gain has since repaid them.
+#[event]
+pub struct BackingRepaidFund {
+    pub market: Pubkey,
+    pub in_kind_usd: u64,
+    pub taken: [u64; MAX_CUSTODIES],
+    pub usdc_usd: u64,
+}
+
+/// The LPs bought `amount` of the fund's tokens for `usd` of liquidity, at
+/// the oracle.
+#[event]
+pub struct FundTokensSoldToLps {
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub usd: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,7 +1058,8 @@ mod tests {
             amounts: [0; MAX_CUSTODIES],
             reimbursed_usd: 0,
             baseline_usd: 0,
-            _reserved: [0; 32],
+            fund_reimbursed_usd: 0,
+            _reserved: [0; 24],
         }
     }
 
@@ -995,6 +1085,40 @@ mod tests {
         m.backing_shares = 1;
         sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
         assert_eq!(m.backing_usd, 10 * K);
+    }
+
+    #[test]
+    fn a_sync_repays_the_fund_out_of_what_the_lps_hold_for_it() {
+        // The LPs were paid $50 in kind for a loss of their own; the fund has
+        // since paid $100 and a gain to the LPs brought the loss past the
+        // USDC down to $90. The LPs hold $50 they no longer bore; the fund is
+        // owed first, so it goes there.
+        let mut pool = crate::instructions::trade::tests::pool();
+        pool.liquidity_usd = 1_000 * K;
+        pool.insurance_usd = 0;
+        let mut m = crate::instructions::trade::tests::market();
+        m.backing_shares = 1;
+        m.net_loss_usd = 90 * K as i64;
+        m.insurance_drawn_usd = 100 * K;
+        let mut b = book();
+        b.reimbursed_usd = 50 * K;
+        sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
+        assert_eq!(pool.insurance_usd, 50 * K);
+        assert_eq!(pool.liquidity_usd, 950 * K);
+        assert_eq!(m.insurance_drawn_usd, 50 * K);
+        assert_eq!((b.reimbursed_usd, b.fund_reimbursed_usd), (50 * K, 50 * K));
+        // Again: nothing more to move.
+        sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
+        assert_eq!((pool.insurance_usd, m.insurance_drawn_usd), (50 * K, 50 * K));
+
+        // The market wins it all back. The backers are refunded the whole
+        // $50, the fund's part included: the LPs had the gain.
+        m.net_loss_usd = 0;
+        sync(&mut pool, &mut m, &mut b, &mut []).unwrap();
+        assert_eq!((b.reimbursed_usd, b.fund_reimbursed_usd), (0, 0));
+        assert_eq!(m.backing_usd, 50 * K);
+        assert_eq!(pool.insurance_usd, 50 * K, "the fund keeps what it was repaid");
+        assert_eq!(m.insurance_drawn_usd, 50 * K, "and is still owed the rest");
     }
 
     #[test]
@@ -1162,5 +1286,171 @@ mod tests {
         assert_eq!(basis_cut(100 * K, 50 * K), 50 * K);
         // A stake worth more than was posted keeps its basis.
         assert_eq!(basis_cut(100 * K, 120 * K), 0);
+    }
+
+    // ---- What a leaver leaves behind, and the custody list ----
+
+    #[test]
+    fn a_failed_price_counts_at_worst_only_when_it_is_unusable() {
+        for e in [PerpError::StaleOracle, PerpError::OracleConfidenceTooWide, PerpError::OracleNotSeasoned] {
+            assert!(price_unusable(&e.into()), "{e:?}");
+        }
+        for e in [PerpError::WrongOracleFeed, PerpError::WrongOracleOwner, PerpError::MathOverflow] {
+            assert!(!price_unusable(&e.into()), "{e:?}");
+        }
+        assert!(!price_unusable(&ProgramError::InvalidAccountData.into()));
+    }
+
+    /// A market with $10k of longs from $100 and a $5k budget left.
+    fn long_book() -> Market {
+        let mut m = crate::instructions::trade::tests::market();
+        m.long_size_usd = 10 * K;
+        m.long_avg_entry_price = 100_000_000;
+        m.loss_budget_usd = 5 * K;
+        m.net_loss_usd = 0;
+        m.risk_price = 0;
+        m
+    }
+
+    #[test]
+    fn nothing_is_held_back_for_a_market_with_nothing_open() {
+        let m = crate::instructions::trade::tests::market();
+        assert_eq!(held_back_usd(&m, Ok(200_000_000), 50 * K).unwrap(), 0);
+        // Not even a price is needed.
+        assert_eq!(held_back_usd(&m, Err(PerpError::WrongOracleFeed.into()), 50 * K).unwrap(), 0);
+    }
+
+    #[test]
+    fn what_traders_are_up_is_held_back_at_the_worse_of_the_two_prices() {
+        let mut m = long_book();
+        // At $110 the longs are up $1k.
+        assert_eq!(held_back_usd(&m, Ok(110_000_000), 50 * K).unwrap(), K);
+        // A lagging risk price above the oracle holds back more.
+        m.risk_price = 120_000_000;
+        assert_eq!(held_back_usd(&m, Ok(110_000_000), 50 * K).unwrap(), 2 * K);
+        // Below it, the oracle's figure stands.
+        m.risk_price = 105_000_000;
+        assert_eq!(held_back_usd(&m, Ok(110_000_000), 50 * K).unwrap(), K);
+        // Traders down hold back nothing.
+        m.risk_price = 0;
+        assert_eq!(held_back_usd(&m, Ok(90_000_000), 50 * K).unwrap(), 0);
+    }
+
+    #[test]
+    fn held_back_is_capped_by_the_budget_and_the_pot() {
+        let m = long_book();
+        // Up $10k at $200, but the budget pays at most $5k.
+        assert_eq!(held_back_usd(&m, Ok(200_000_000), 50 * K).unwrap(), 5 * K);
+        // And never more than the pot holds.
+        assert_eq!(held_back_usd(&m, Ok(200_000_000), 3 * K).unwrap(), 3 * K);
+    }
+
+    #[test]
+    fn an_unusable_price_holds_back_the_whole_budget_and_a_wrong_one_fails() {
+        let m = long_book();
+        assert_eq!(held_back_usd(&m, Err(PerpError::StaleOracle.into()), 50 * K).unwrap(), 5 * K);
+        assert_eq!(held_back_usd(&m, Err(PerpError::OracleNotSeasoned.into()), 2 * K).unwrap(), 2 * K);
+        assert_eq!(
+            held_back_usd(&m, Err(PerpError::WrongOracleOwner.into()), 50 * K).unwrap_err(),
+            PerpError::WrongOracleOwner.into()
+        );
+    }
+
+    #[test]
+    fn an_empty_pot_or_share_count_pays_nobody_on_exit() {
+        assert_eq!(exit_part(50 * K, 25 * K, 0, 50 * K, 0), 0);
+        assert_eq!(exit_part(50 * K, 25 * K, 50 * K, 0, 0), 0);
+        // All the shares, nothing held back: everything.
+        assert_eq!(exit_part(u64::MAX, 7, 7, u64::MAX, 0), u64::MAX);
+    }
+
+    #[test]
+    fn an_entry_pot_past_u64_is_refused() {
+        assert_eq!(entry_pot_usd(u64::MAX, 1, 0).unwrap_err(), PerpError::MathOverflow.into());
+        assert_eq!(entry_pot_usd(u64::MAX - 1, 1, 1).unwrap_err(), PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn a_raised_budget_never_falls_and_never_passes_the_cover() {
+        assert_eq!(raised_budget(5 * K, 3 * K, 10 * K), 5 * K, "never lowered");
+        assert_eq!(raised_budget(5 * K, u64::MAX, u64::MAX), u64::MAX, "saturates");
+        assert_eq!(budget_cap(u64::MAX, i64::MAX), u64::MAX);
+    }
+
+    fn leak<T>(x: T) -> &'static mut T {
+        Box::leak(Box::new(x))
+    }
+
+    fn info(key: Pubkey, owner: Pubkey, data: Vec<u8>) -> &'static AccountInfo<'static> {
+        leak(AccountInfo::new(leak(key), false, true, leak(0u64), Box::leak(data.into_boxed_slice()), leak(owner), false, 0))
+    }
+
+    fn custody(pool: Pubkey, index: u8, is_stable: bool) -> Custody {
+        Custody {
+            bump: 0, vault_bump: 0, pool,
+            mint: Pubkey::default(), vault: Pubkey::default(),
+            decimals: 6, index, is_stable,
+            feed_id: [0; 32], max_price_age_sec: 0, max_conf_bps: 0,
+            budget_weight_bps: 10_000,
+            backing_amount: 0, lp_amount: 0, lp_owed_amount: 0, insurance_amount: 0,
+            _reserved: [0; 16],
+        }
+    }
+
+    fn custody_pairs(cs: &[Custody]) -> &'static [AccountInfo<'static>] {
+        let mut v = Vec::new();
+        for c in cs {
+            let mut d = Vec::new();
+            c.try_serialize(&mut d).unwrap();
+            v.push(info(Pubkey::new_unique(), crate::ID, d).clone());
+            // A stable is priced at $1 without reading its feed.
+            v.push(info(Pubkey::new_unique(), Pubkey::default(), vec![]).clone());
+        }
+        Box::leak(v.into_boxed_slice())
+    }
+
+    #[test]
+    fn every_custody_must_be_listed_in_order_and_of_this_pool() {
+        let key = Pubkey::new_unique();
+        let mut p = crate::instructions::trade::tests::pool();
+        p.num_custodies = 2;
+        let both = custody_pairs(&[custody(key, 0, true), custody(key, 1, true)]);
+        let got = load_custodies(&p, key, both).unwrap();
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|(_, price)| *price == PRICE_SCALE as u64));
+        // One short.
+        assert_eq!(load_custodies(&p, key, &both[..2]).err().unwrap(), PerpError::IncompleteCustodyList.into());
+        // Out of order.
+        let swapped = custody_pairs(&[custody(key, 1, true), custody(key, 0, true)]);
+        assert_eq!(load_custodies(&p, key, swapped).err().unwrap(), PerpError::IncompleteCustodyList.into());
+        // Another pool's.
+        let foreign = custody_pairs(&[custody(key, 0, true), custody(Pubkey::new_unique(), 1, true)]);
+        assert_eq!(load_custodies(&p, key, foreign).err().unwrap(), PerpError::MarketPoolMismatch.into());
+    }
+
+    #[test]
+    fn a_sync_moves_tokens_the_lps_are_owed_out_of_the_book_into_their_custody() {
+        let key = Pubkey::new_unique();
+        let mut pool = crate::instructions::trade::tests::pool();
+        pool.num_custodies = 1;
+        let pairs = custody_pairs(&[custody(key, 0, true)]);
+        let mut cs = load_custodies(&pool, key, pairs).unwrap();
+        cs[0].0.backing_amount = 10 * K;
+        let mut m = crate::instructions::trade::tests::market();
+        // The LPs have paid a $3k loss past the USDC backing.
+        m.net_loss_usd = 3 * K as i64;
+        m.backing_drawn_usd = 0;
+        m.backing_usd = 0;
+        let mut b = book();
+        b.amounts[0] = 10 * K; // $10k of a $1 stable
+        sync(&mut pool, &mut m, &mut b, &mut cs).unwrap();
+        assert_eq!(b.amounts[0], 7 * K);
+        assert_eq!(b.reimbursed_usd, 3 * K);
+        assert_eq!((cs[0].0.backing_amount, cs[0].0.lp_amount), (7 * K, 3 * K));
+        // The budget is held to what stands behind the market now.
+        assert!(m.remaining_budget_usd() <= 7 * K);
+        // Run again, nothing more is owed.
+        sync(&mut pool, &mut m, &mut b, &mut cs).unwrap();
+        assert_eq!(b.amounts[0], 7 * K);
     }
 }

@@ -772,4 +772,17 @@ mod tests {
         assert_eq!(crank(&mut o, 2_500 * K, 1_000), 3);
         assert_eq!(crank(&mut o, 5 * K, 1_001), 2);
     }
+
+    #[test]
+    fn the_unclamped_fold_is_the_weighted_mean_rounded_down() {
+        // A 5% fold from $100 toward $200 is $105.
+        assert_eq!(folded_unclamped(100_000_000, 200_000_000, 500), 105_000_000);
+        assert_eq!(folded_unclamped(100_000_000, 0, 500), 95_000_000);
+        // All weight on the reading, or none.
+        assert_eq!(folded_unclamped(7, 9, BPS as u16), 9);
+        assert_eq!(folded_unclamped(7, 9, 0), 7);
+        // No overflow at the top of the range.
+        assert_eq!(folded_unclamped(u64::MAX, u64::MAX, 500), u64::MAX);
+        assert_eq!(folded_unclamped(3, 4, 5_000), 3, "3.5 rounds down");
+    }
 }

@@ -140,4 +140,36 @@ mod tests {
         assert!(!o.is_expired(999));
         assert!(o.is_expired(1_000));
     }
+
+    #[test]
+    fn a_kind_reads_back_from_its_byte_and_refuses_any_other() {
+        assert_eq!(OrderKind::from_u8(0).unwrap(), OrderKind::Close);
+        assert_eq!(OrderKind::from_u8(1).unwrap(), OrderKind::Open);
+        for v in [2u8, 7, u8::MAX] {
+            assert_eq!(OrderKind::from_u8(v).unwrap_err(), PerpError::InvalidParameter.into());
+        }
+        let mut o = order(1, true);
+        assert_eq!(o.kind().unwrap(), OrderKind::Close);
+        o.kind = OrderKind::Open as u8;
+        assert_eq!(o.kind().unwrap(), OrderKind::Open);
+        o.kind = 9;
+        assert!(o.kind().is_err(), "a stored kind nobody wrote is refused, not guessed");
+    }
+
+    #[test]
+    fn a_trigger_rebased_past_u64_is_refused() {
+        // A reverse split so large the rebased trigger no longer fits.
+        let mut o = order(u64::MAX, true);
+        o.trigger_factor = PRICE_FACTOR_ONE;
+        assert_eq!(o.trigger_at(PRICE_FACTOR_ONE * 2).unwrap_err(), PerpError::MathOverflow.into());
+        // And one whose product overflows u128 before the division.
+        assert_eq!(o.trigger_at(u128::MAX).unwrap_err(), PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn a_trigger_rebased_toward_zero_stays_at_one_unit() {
+        let mut o = order(3, false);
+        o.trigger_factor = PRICE_FACTOR_ONE * 100;
+        assert_eq!(o.trigger_at(PRICE_FACTOR_ONE).unwrap(), 1, "never a zero trigger");
+    }
 }

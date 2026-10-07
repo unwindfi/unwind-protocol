@@ -306,4 +306,28 @@ mod tests {
         let p = blend_entry_price(1, 100 * P, u64::MAX, 200 * P).unwrap();
         assert!((100 * P..=200 * P).contains(&p));
     }
+
+    #[test]
+    fn funding_owed_past_i64_is_refused_rather_than_truncated() {
+        let idx = FUNDING_SCALE * (i64::MAX as i128 + 1);
+        assert_eq!(funding_owed_usd(1, 0, idx).unwrap_err(), PerpError::MathOverflow.into());
+        assert_eq!(funding_owed_usd(1, idx, 0).unwrap(), i64::MIN, "exactly i64::MIN still fits");
+        assert_eq!(funding_owed_usd(1, idx + FUNDING_SCALE, 0).unwrap_err(), PerpError::MathOverflow.into());
+        assert_eq!(funding_owed_usd(1, i128::MIN, 1).unwrap_err(), PerpError::MathOverflow.into());
+        assert_eq!(funding_owed_usd(u64::MAX, 0, i128::MAX).unwrap_err(), PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn a_blend_with_an_unpriced_add_keeps_the_old_entry() {
+        assert_eq!(blend_entry_price(1_000, 100 * P, 1_000, 0).unwrap(), 100 * P);
+        assert_eq!(blend_entry_price(1_000, 0, 1_000, 100 * P).unwrap(), 100 * P, "an unpriced lot takes the new price");
+    }
+
+    #[test]
+    fn a_zero_entry_is_refused_as_a_bad_price() {
+        assert_eq!(
+            position_pnl_usd(false, 1, 0, 1).unwrap_err(),
+            PerpError::InvalidOraclePrice.into()
+        );
+    }
 }

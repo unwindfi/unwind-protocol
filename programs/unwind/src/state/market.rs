@@ -200,7 +200,12 @@ pub struct Market {
     /// `DEPLOYER_POINTS_BPS` of the trading points this market's traders are
     /// credited, the deployer's own excluded. Was eight bytes of `_reserved`.
     pub deployer_points_owed: u64,
-    pub _reserved: [u8; 12],
+    /// What the insurance fund has paid toward this market's losses and has
+    /// not been repaid. The fund ranks after the backers, in kind included,
+    /// so this is the first thing in-kind backing repays (`backing::sync`).
+    /// Was eight bytes of `_reserved`.
+    pub insurance_drawn_usd: u64,
+    pub _reserved: [u8; 4],
 
     // Added after `_reserved`, which grew the account again; run
     // `resize_market` on a market listed before. Zero reads as "no position
@@ -223,6 +228,24 @@ pub struct Market {
     /// hold (`side_bad_debt_bound_usd`).
     pub long_funding: SideFunding,
     pub short_funding: SideFunding,
+
+    // Added after the funding sums, which grew the account again; run
+    // `resize_market` on a market listed before. Zero is "no sealed batch
+    // being settled", which is what an older market is between batches.
+
+    /// What the closes settled so far out of this market's sealed batch have
+    /// cost the pool, net: positive when the pool paid. See
+    /// `settle_backing_in_batch`.
+    pub batch_net_usd: i64,
+    /// What those closes have drawn from the backing, net of what they put
+    /// back: negative when they restored more than they drew.
+    pub batch_backing_usd: i64,
+    /// What those closes have drawn from the insurance fund and not put back.
+    pub batch_insurance_usd: u64,
+    /// Fees the batch's settlements have paid the backers. Not drawn on by
+    /// the batch's own closes, so that whether a fee lands before or after a
+    /// draw that empties the backing does not decide who keeps it.
+    pub batch_backer_fees_usd: u64,
 }
 
 /// Sums over one side's tracked positions, each held at its entry in today's
@@ -405,6 +428,63 @@ impl Market {
         self.backing_usd = self.backing_usd.saturating_add(owed);
         self.backing_drawn_usd -= owed;
         owed
+    }
+
+    /// Draws on or restores the backing for one close settled out of a sealed
+    /// batch, `loss` being what the close costs the pool (negative: what it
+    /// leaves it). Returns what was drawn, negative for what was restored.
+    ///
+    /// Closed one at a time, a batch's winner draws the backing and a loser
+    /// repays it only up to what has been drawn so far, so the order the
+    /// batch is settled in, which whoever settles it chooses, moved value
+    /// between the backers and the LPs. Here the backing follows the batch's
+    /// running net instead: after every close it stands where the net so far
+    /// would leave it if it were one close (drawn up to what the backing held
+    /// when the batch began, or restored up to what had been drawn before
+    /// it), so once every close has settled it is the same in any order.
+    ///
+    /// Never moved against the close's own direction or by more than it: a
+    /// winner is never paid by restoring backing, nor a loser's gain spent on
+    /// a draw.
+    pub fn settle_backing_in_batch(&mut self, loss: i64) -> Result<i64> {
+        let net = self
+            .batch_net_usd
+            .checked_add(loss)
+            .ok_or(PerpError::MathOverflow)?;
+        let done = self.batch_backing_usd as i128;
+        let target: i128 = if net >= 0 {
+            // Drawable: the backing as the batch found it, without the fees
+            // the batch has paid into it since.
+            (net as i128).min((self.backing_usd as i128 + done - self.batch_backer_fees_usd as i128).max(0))
+        } else {
+            // Restorable: what was drawn before the batch.
+            -(net.unsigned_abs() as i128).min((self.backing_drawn_usd as i128 - done).max(0))
+        };
+        let step = if loss >= 0 {
+            (target - done).clamp(0, loss as i128)
+        } else {
+            (target - done).clamp(loss as i128, 0)
+        };
+        let moved = if step >= 0 {
+            self.draw_backing(step as u64) as i64
+        } else {
+            -(self.restore_backing(step.unsigned_abs() as u64) as i64)
+        };
+        self.batch_net_usd = net;
+        self.batch_backing_usd = self
+            .batch_backing_usd
+            .checked_add(moved)
+            .ok_or(PerpError::MathOverflow)?;
+        Ok(moved)
+    }
+
+    /// Forgets the batch netting: when a batch seals and when its last order
+    /// settles.
+    pub fn end_batch_netting(&mut self) {
+        self.batch_net_usd = 0;
+        self.batch_backing_usd = 0;
+        self.batch_insurance_usd = 0;
+        self.batch_backer_fees_usd = 0;
     }
 
     /// Pays this market's backers their cut of `lp_fee`, the LPs' part of a
@@ -659,6 +739,11 @@ impl Market {
     }
 
     /// Converts an entry price recorded under `entry_factor` into today's terms.
+    ///
+    /// Never below one unit for a set entry, as `rescale_price` floors the
+    /// market's own prices: a split can take an entry under a unit, and zero
+    /// is an entry `position_pnl_usd` refuses, which would leave the position
+    /// unsettleable and its sealed batch unable to roll.
     pub fn adjust_entry_price(&self, entry_price: u64, entry_factor: u128) -> Result<u64> {
         if entry_factor == self.price_factor {
             return Ok(entry_price);
@@ -669,7 +754,8 @@ impl Market {
             .ok_or(PerpError::MathOverflow)?
             .checked_div(entry_factor)
             .ok_or(PerpError::MathOverflow)?;
-        u64::try_from(adjusted).map_err(|_| PerpError::MathOverflow.into())
+        let adjusted = u64::try_from(adjusted).map_err(|_| PerpError::MathOverflow)?;
+        Ok(if entry_price > 0 { adjusted.max(1) } else { 0 })
     }
 
     /// Aggregate unrealized trader PnL in this market, which is the pool's
@@ -1353,11 +1439,16 @@ mod tests {
             generation: 0,
             aum_drift_usd: 0,
             deployer_points_owed: 0,
-            _reserved: [0; 12],
+            insurance_drawn_usd: 0,
+            _reserved: [0; 4],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
             long_funding: SideFunding::default(),
             short_funding: SideFunding::default(),
+            batch_net_usd: 0,
+            batch_backing_usd: 0,
+            batch_insurance_usd: 0,
+            batch_backer_fees_usd: 0,
         }
     }
 
@@ -1700,6 +1791,48 @@ mod tests {
         // A holder who was flat at $400 pre-split is still flat at $100 post-split.
         let pnl = position_pnl_usd(true, 1_000_000_000, adjusted, 100_000_000).unwrap();
         assert_eq!(pnl, 0);
+    }
+
+    #[test]
+    fn batch_backing_follows_the_running_net() {
+        let mut m = market();
+        m.backing_usd = 100;
+        m.backing_shares = 100;
+        m.end_batch_netting();
+        // A loser first: nothing was drawn before the batch, nothing restored.
+        assert_eq!(m.settle_backing_in_batch(-150).unwrap(), 0);
+        // A winner then: the net is zero, so the backing is not drawn.
+        assert_eq!(m.settle_backing_in_batch(150).unwrap(), 0);
+        // A second winner draws for the net, up to what the backing held.
+        assert_eq!(m.settle_backing_in_batch(130).unwrap(), 100);
+        assert_eq!((m.backing_usd, m.backing_drawn_usd, m.batch_backing_usd), (0, 100, 100));
+        // A loser puts back what the net no longer needs.
+        assert_eq!(m.settle_backing_in_batch(-80).unwrap(), -50);
+        assert_eq!((m.backing_usd, m.backing_drawn_usd, m.batch_net_usd), (50, 50, 50));
+        // A loser's step never draws, nor a winner's restores.
+        m.end_batch_netting();
+        m.backing_usd = 10;
+        m.batch_backing_usd = 0;
+        m.batch_net_usd = 500;
+        assert_eq!(m.settle_backing_in_batch(-20).unwrap(), 0);
+        m.end_batch_netting();
+        assert_eq!((m.batch_net_usd, m.batch_backing_usd, m.batch_insurance_usd, m.batch_backer_fees_usd), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_split_never_rebases_an_entry_to_zero() {
+        let mut m = market();
+        let entry_factor = m.price_factor;
+        // 1-for-10: an entry of five units would rebase to half a unit.
+        m.price_factor /= 10;
+        assert_eq!(m.adjust_entry_price(5, entry_factor).unwrap(), 1);
+        assert_eq!(m.adjust_entry_price(1, entry_factor).unwrap(), 1);
+        // Above a unit it is the plain quotient, rounded down.
+        assert_eq!(m.adjust_entry_price(25, entry_factor).unwrap(), 2);
+        // Nothing recorded stays nothing.
+        assert_eq!(m.adjust_entry_price(0, entry_factor).unwrap(), 0);
+        // And a floored entry still prices the position.
+        assert!(position_pnl_usd(true, 10_000_000, 1, 1).is_ok());
     }
 
     #[test]
@@ -2217,5 +2350,136 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- Gaps found by coverage: the money helpers' edges and refusals. ----
+
+    #[test]
+    fn only_the_winning_side_counts_toward_winning_pnl() {
+        let mut m = market();
+        assert_eq!(m.winning_pnl_usd(100_000_000).unwrap(), 0, "no positions, nothing won");
+        m.long_size_usd = 1_000_000_000; // $1,000 long at $100
+        m.long_avg_entry_price = 100_000_000;
+        m.short_size_usd = 500_000_000; // $500 short at $100
+        m.short_avg_entry_price = 100_000_000;
+        // At $110 the long is up $100 and the short down $50: not netted.
+        assert_eq!(m.winning_pnl_usd(110_000_000).unwrap(), 100_000_000);
+        assert_eq!(m.trader_pnl_usd(110_000_000).unwrap(), 50_000_000);
+        // At $90 the short is up $50, the long's loss counts as zero.
+        assert_eq!(m.winning_pnl_usd(90_000_000).unwrap(), 50_000_000);
+        // At entry nobody is up.
+        assert_eq!(m.winning_pnl_usd(100_000_000).unwrap(), 0);
+    }
+
+    #[test]
+    fn winning_pnl_refuses_a_side_with_no_entry() {
+        let mut m = market();
+        m.long_size_usd = 1;
+        m.long_avg_entry_price = 0;
+        assert_eq!(m.winning_pnl_usd(1).unwrap_err(), PerpError::InvalidOraclePrice.into());
+    }
+
+    #[test]
+    fn the_worst_lp_pnl_is_the_budget_left_less_backing() {
+        let mut m = market();
+        m.loss_budget_usd = 1_000_000_000;
+        m.net_loss_usd = 0;
+        m.backing_usd = 0;
+        assert_eq!(m.lp_worst_pnl_usd(), 1_000_000_000);
+        m.net_loss_usd = 400_000_000;
+        assert_eq!(m.lp_worst_pnl_usd(), 600_000_000);
+        m.backing_usd = 100_000_000;
+        assert_eq!(m.lp_worst_pnl_usd(), 500_000_000);
+        // Backing past the budget leaves the LPs nothing to lose, not a gain.
+        m.backing_usd = u64::MAX;
+        assert_eq!(m.lp_worst_pnl_usd(), 0);
+        // A budget past i64 saturates rather than wrapping negative.
+        m.loss_budget_usd = u64::MAX;
+        m.net_loss_usd = 0;
+        m.backing_usd = 0;
+        assert_eq!(m.lp_worst_pnl_usd(), i64::MAX);
+    }
+
+    #[test]
+    fn an_entry_under_its_own_factor_is_returned_unchanged() {
+        let m = market();
+        assert_eq!(m.adjust_entry_price(123, m.price_factor).unwrap(), 123);
+    }
+
+    #[test]
+    fn an_entry_under_a_zero_factor_is_refused() {
+        let m = market();
+        assert_eq!(m.adjust_entry_price(100, 0).unwrap_err(), PerpError::InvalidParameter.into());
+    }
+
+    #[test]
+    fn an_entry_rebased_past_u64_is_refused() {
+        let mut m = market();
+        let before = m.price_factor;
+        // A 1-for-4 reverse split of an entry already near the top.
+        m.price_factor = before * 4;
+        assert_eq!(m.adjust_entry_price(u64::MAX, before).unwrap_err(), PerpError::MathOverflow.into());
+        m.price_factor = u128::MAX;
+        assert_eq!(m.adjust_entry_price(2, 1).unwrap_err(), PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn a_rebased_entry_rounds_down() {
+        let mut m = market();
+        let before = m.price_factor;
+        m.price_factor = before / 3; // 3-for-1
+        assert_eq!(m.adjust_entry_price(100, before).unwrap(), 33);
+    }
+
+    #[test]
+    fn utilization_is_the_imbalance_against_the_pool() {
+        let mut m = market();
+        assert_eq!(m.utilization_bps(0), 0, "an empty book borrows nothing, even from an empty pool");
+        m.long_size_usd = 500;
+        m.short_size_usd = 500;
+        assert_eq!(m.utilization_bps(1_000), 0, "a balanced book borrows nothing");
+        m.long_size_usd = 750;
+        assert_eq!(m.utilization_bps(1_000), 2_500);
+        assert_eq!(m.utilization_bps(0), BPS as u16, "an imbalance against no pool is full");
+        m.long_size_usd = 1_000_000;
+        assert_eq!(m.utilization_bps(1_000), BPS as u16, "capped at the whole pool");
+        m.long_size_usd = 500;
+        m.short_size_usd = 1_500;
+        assert_eq!(m.utilization_bps(10_000), 1_000, "a heavy short side counts the same");
+    }
+
+    #[test]
+    fn funding_does_not_move_when_no_time_has_passed() {
+        let mut m = market();
+        m.long_size_usd = 1_000_000_000;
+        m.last_funding_ts = 1_000;
+        let (l, s) = (m.cumulative_long_funding, m.cumulative_short_funding);
+        m.accrue_funding(1_000, BPS as u16).unwrap();
+        assert_eq!((m.cumulative_long_funding, m.cumulative_short_funding), (l, s));
+        // A clock that went backwards accrues nothing and does not run in reverse.
+        m.accrue_funding(500, BPS as u16).unwrap();
+        assert_eq!((m.cumulative_long_funding, m.cumulative_short_funding), (l, s));
+        assert_eq!(m.last_funding_ts, 500);
+    }
+
+    #[test]
+    fn an_untrackable_position_has_no_moment_or_funding_terms() {
+        assert_eq!(moment_terms(1_000, 0), None, "no entry, no terms");
+        assert!(moment_terms(1_000, 1).is_some());
+        let t = FundingTerm { size: 0, entry_funding: 0, collateral: 10, entry: 1 };
+        assert_eq!(t.cover(), None, "a zero-size position has no cover");
+        let t = FundingTerm { size: 4, entry_funding: 7, collateral: 1, entry: 1 };
+        assert_eq!(t.cover(), Some(FUNDING_SCALE / 4 + 7));
+        let t = FundingTerm { size: 1, entry_funding: i128::MAX, collateral: 1, entry: 1 };
+        assert_eq!(t.cover(), None, "a cover that overflows is not tracked");
+    }
+
+    #[test]
+    fn moment_terms_round_inverse_entry_down_and_its_square_up() {
+        let (u, q) = moment_terms(1, 3).unwrap();
+        assert_eq!(u, MOMENT_U_SCALE / 3);
+        // ceil(ceil(1e12 / 3) * 1e12 / 3)
+        let a = MOMENT_Q_STEP / 3 + 1;
+        assert_eq!(q, (a * MOMENT_Q_STEP) / 3 + 1);
     }
 }

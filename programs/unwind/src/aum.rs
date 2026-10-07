@@ -415,7 +415,8 @@ mod tests {
             backing_amount: 123_000_000,
             lp_amount,
             lp_owed_amount: 0,
-            _reserved: [0; 24],
+            insurance_amount: 0,
+            _reserved: [0; 16],
         }
     }
 
@@ -859,5 +860,131 @@ mod tests {
         let c = owned(Pubkey::new_unique(), &custody(key, 0, 10, true));
         assert_eq!(lp_in_kind_usd(&p, accounts(vec![c, unread()])).unwrap(), 10);
         assert_eq!(p.aum_usd(10), 0);
+    }
+
+    #[test]
+    fn only_a_price_that_is_unusable_right_now_may_be_counted_at_worst() {
+        for e in [PerpError::StaleOracle, PerpError::OracleConfidenceTooWide, PerpError::OracleNotSeasoned] {
+            assert!(price_unusable(&e.into()), "{e:?}");
+        }
+        // A wrong account must fail the pass, or anyone could mark a market
+        // unpriced by passing something else.
+        for e in [PerpError::WrongOracleFeed, PerpError::WrongOracleOwner, PerpError::InvalidOracleAccount] {
+            assert!(!price_unusable(&e.into()), "{e:?}");
+        }
+        assert!(!price_unusable(&ProgramError::InvalidAccountData.into()));
+    }
+
+    /// A market of `pool` priced from an observation that is not seasoned
+    /// yet, with open interest, and the observation account the pass reads.
+    fn observed_market(pool: Pubkey, budget: u64) -> (AccountInfo<'static>, AccountInfo<'static>) {
+        let (mkey, okey) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let mut m = crate::instructions::trade::tests::market();
+        m.pool = pool;
+        m.price_source = crate::state::PriceSource::Observed as u8;
+        m.observation = okey;
+        m.long_size_usd = 1_000_000;
+        m.long_avg_entry_price = 1_000_000;
+        m.loss_budget_usd = budget;
+        m.net_loss_usd = 0;
+        m.backing_usd = 0;
+        let mut o = crate::state::observation::tests::obs();
+        o.market = mkey;
+        (owned(mkey, &m), owned(okey, &o))
+    }
+
+    /// Two observed markets of the pool at `key`, in increasing address order.
+    fn two_markets(key: Pubkey) -> Vec<AccountInfo<'static>> {
+        let (a, ao) = observed_market(key, 3_000_000);
+        let (b, bo) = observed_market(key, 4_000_000);
+        if a.key < b.key { vec![a, ao, b, bo] } else { vec![b, bo, a, ao] }
+    }
+
+    #[test]
+    fn a_pass_counts_an_unseasoned_market_at_its_worst() {
+        let (key, p) = pool_account(&pool(7_000_000, 2, 0));
+        let mut c = done(key, 0, 2, 0, 500);
+        fold_checkpoint(&p, &mut c, true, NOW, accounts(two_markets(key))).unwrap();
+        assert!(!c.pass_open, "both counted, so the pass completes");
+        assert_eq!((c.done_markets, c.done_unpriced), (2, 2));
+        // Each at its whole remaining budget, deposit and claim side alike.
+        assert_eq!(c.done_pnl_usd, 7_000_000);
+        assert_eq!(c.done_claim_pnl_usd, 7_000_000);
+        assert_eq!(c.done_ts, NOW);
+    }
+
+    #[test]
+    fn a_pass_can_be_finished_across_transactions() {
+        let (key, p) = pool_account(&pool(7_000_000, 2, 0));
+        let mut c = done(key, 0, 2, 0, 500);
+        let list = accounts(two_markets(key));
+        fold_checkpoint(&p, &mut c, true, NOW, &list[..2]).unwrap();
+        assert!(c.pass_open);
+        assert_eq!(c.pass_counted, 1);
+        // The same market again is refused: the order must strictly increase.
+        let e = fold_checkpoint(&p, &mut c, false, NOW, &list[..2]).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
+        fold_checkpoint(&p, &mut c, false, NOW + 1, &list[2..]).unwrap();
+        assert!(!c.pass_open);
+        assert_eq!(c.done_pnl_usd, 7_000_000);
+    }
+
+    #[test]
+    fn a_pass_refuses_markets_out_of_order() {
+        let (key, p) = pool_account(&pool(7_000_000, 2, 0));
+        let mut c = done(key, 0, 2, 0, 500);
+        let mut v = two_markets(key);
+        v.swap(0, 2);
+        v.swap(1, 3);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(v)).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
+    }
+
+    #[test]
+    fn a_pass_refuses_an_unpaired_account() {
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 0, 500);
+        let (m, _) = observed_market(key, 1);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(vec![m])).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
+    }
+
+    #[test]
+    fn a_pass_refuses_a_market_of_another_pool() {
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 0, 500);
+        let (m, o) = observed_market(Pubkey::new_unique(), 1);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(vec![m, o])).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::MarketPoolMismatch));
+    }
+
+    #[test]
+    fn a_pass_refuses_a_market_with_nothing_open() {
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 0, 500);
+        let mut m = crate::instructions::trade::tests::market();
+        m.pool = key;
+        let (_, o) = observed_market(key, 1);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(vec![owned(Pubkey::new_unique(), &m), o])).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
+    }
+
+    #[test]
+    fn a_pass_refuses_more_markets_than_the_set_holds() {
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 0, 500);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(two_markets(key))).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
+    }
+
+    #[test]
+    fn a_pass_fails_rather_than_counting_a_wrong_price_account_at_worst() {
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 0, 500);
+        let (m, _) = observed_market(key, 1);
+        let (_, other) = observed_market(key, 1);
+        let e = fold_checkpoint(&p, &mut c, true, NOW, accounts(vec![m, other])).unwrap_err();
+        assert_eq!(code(e), u32::from(PerpError::WrongOracleFeed));
+        assert_eq!(c.pass_counted, 0);
     }
 }

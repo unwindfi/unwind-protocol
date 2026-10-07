@@ -556,16 +556,13 @@ pub fn rescale_market(market: &mut Market, numerator: u64, denominator: u64) -> 
 
     // Aggregates are stored in current-factor terms, so they adjust immediately;
     // individual positions adjust lazily via `adjust_entry_price`.
-    market.long_avg_entry_price = crate::math::mul_div_u64(
-        market.long_avg_entry_price,
-        numerator as u128,
-        denominator as u128,
-    )?;
-    market.short_avg_entry_price = crate::math::mul_div_u64(
-        market.short_avg_entry_price,
-        numerator as u128,
-        denominator as u128,
-    )?;
+    // Floored at one unit like every other price here (`rescale_price`), and
+    // like a position's own rebased entry (`Market::adjust_entry_price`): a
+    // side average of zero is one `position_pnl_usd` refuses.
+    market.long_avg_entry_price =
+        rescale_price(market.long_avg_entry_price, numerator, denominator, false)?;
+    market.short_avg_entry_price =
+        rescale_price(market.short_avg_entry_price, numerator, denominator, false)?;
     // The step remainder belongs to the old walk; the new risk price starts
     // where the old one stood, in the new terms.
     market.risk_price = rescale_price(market.risk_price, numerator, denominator, false)?;
@@ -1250,6 +1247,29 @@ mod corporate_action_tests {
     }
 
     #[test]
+    fn a_split_floors_entries_at_one_unit_and_the_position_still_settles() {
+        // Five units, then 1-for-10: every entry would rebase to half a unit.
+        let (mut m, p) = one_position(true, 5);
+        let mut short = m.clone();
+        short.long_size_usd = 0;
+        short.long_avg_entry_price = 0;
+        short.short_size_usd = 10_000_000_000;
+        short.short_avg_entry_price = 5;
+        rescale_market(&mut m, 1, 10).unwrap();
+        rescale_market(&mut short, 1, 10).unwrap();
+        assert_eq!(m.long_avg_entry_price, 1);
+        assert_eq!(short.short_avg_entry_price, 1);
+        // An empty side stays empty rather than gaining a price.
+        assert_eq!(m.short_avg_entry_price, 0);
+        assert_eq!(short.long_avg_entry_price, 0);
+        assert_eq!(m.adjust_entry_price(p.entry_price, p.entry_price_factor).unwrap(), 1);
+        // The close and the side's PnL both read, at any price.
+        assert!(settle(&p, &m, p.size_usd, 1).is_ok());
+        assert!(m.trader_pnl_usd(1).is_ok());
+        assert!(short.trader_pnl_usd(2).is_ok());
+    }
+
+    #[test]
     fn a_healthy_short_stays_healthy_across_a_split() {
         let (mut m, p) = one_position(false, OLD);
         rescale_market(&mut m, 1, 4).unwrap();
@@ -1324,5 +1344,40 @@ mod corporate_action_tests {
         o.last_spot = OLD;
         rescale_observation(&mut o, 1, 4).unwrap();
         assert_eq!((o.ewma_price, o.last_spot), (NEW, NEW));
+    }
+
+    #[test]
+    fn an_unset_price_stays_unset_through_a_split() {
+        assert_eq!(rescale_price(0, 1, 4, false).unwrap(), 0);
+        assert_eq!(rescale_price(0, 4, 1, true).unwrap(), 0);
+        let mut o = crate::state::observation::tests::obs();
+        o.ewma_price = 0;
+        o.last_spot = 0;
+        rescale_observation(&mut o, 1, 4).unwrap();
+        assert_eq!((o.ewma_price, o.last_spot), (0, 0), "a mark never read is not given one");
+    }
+
+    #[test]
+    fn a_rescaled_price_rounds_the_way_asked_and_never_to_zero() {
+        assert_eq!(rescale_price(10, 1, 4, false).unwrap(), 2);
+        assert_eq!(rescale_price(10, 1, 4, true).unwrap(), 3);
+        assert_eq!(rescale_price(12, 1, 4, true).unwrap(), 3, "exact needs no rounding");
+        assert_eq!(rescale_price(1, 1, 1_000, false).unwrap(), 1, "floored at one unit");
+        assert_eq!(rescale_price(u64::MAX, 2, 1, false).unwrap_err(), PerpError::MathOverflow.into());
+    }
+
+    #[test]
+    fn a_split_that_would_zero_the_factor_is_refused() {
+        let mut m = market();
+        let f = m.price_factor;
+        assert_eq!(rescale_market(&mut m, 1, u64::MAX).unwrap_err(), PerpError::MathOverflow.into());
+        let mut m = market();
+        m.price_factor = u128::MAX;
+        assert_eq!(rescale_market(&mut m, 2, 1).unwrap_err(), PerpError::MathOverflow.into());
+        // A reverse split multiplies the factor.
+        let mut m = market();
+        rescale_market(&mut m, 4, 1).unwrap();
+        assert_eq!(m.price_factor, f * 4);
+        assert_eq!(m.split_epoch, 1);
     }
 }

@@ -538,6 +538,40 @@ pub fn apply_settlement_to_pool(
     close_size: u64,
     is_long: bool,
 ) -> Result<u64> {
+    settle_into_pool(pool, market, position, settlement, payout, fee_usd, close_size, is_long, false)
+}
+
+/// `apply_settlement_to_pool` for a close settled out of a sealed batch: the
+/// backing and the fund follow the batch's running net rather than each close
+/// on its own (`Market::settle_backing_in_batch`), so the order the batch is
+/// settled in does not decide what the backers, the LPs and the fund end up
+/// with.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_batch_settlement_to_pool(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &Position,
+    settlement: &Settlement,
+    payout: u64,
+    fee_usd: u64,
+    close_size: u64,
+    is_long: bool,
+) -> Result<u64> {
+    settle_into_pool(pool, market, position, settlement, payout, fee_usd, close_size, is_long, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_into_pool(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &Position,
+    settlement: &Settlement,
+    payout: u64,
+    fee_usd: u64,
+    close_size: u64,
+    is_long: bool,
+    in_batch: bool,
+) -> Result<u64> {
     // Everything below moves PnL between "owed" and liquidity; the AUM
     // checkpoint hears of it through the drift (`aum::book_lp_drift`).
     let owed_before = crate::aum::lp_owed_now(market)?;
@@ -548,6 +582,7 @@ pub fn apply_settlement_to_pool(
         .saturating_sub(settlement.collateral_share);
 
     let mut from_insurance = 0u64;
+    let mut to_insurance = 0u64;
     if payout >= settlement.collateral_share {
         let loss = payout - settlement.collateral_share;
         // Charged before anything moves, so a market that has spent its budget
@@ -559,22 +594,64 @@ pub fn apply_settlement_to_pool(
         // Whoever underwrote this market pays before the LPs do. The draw is
         // taken here rather than inside `pay_out` because it is per market and
         // the pool's balances are not.
-        let from_backing = market.draw_backing(loss);
+        let mut from_backing = if in_batch {
+            let signed = i64::try_from(loss).map_err(|_| PerpError::MathOverflow)?;
+            market.settle_backing_in_batch(signed)? as u64
+        } else {
+            market.draw_backing(loss)
+        };
+        if in_batch {
+            // The batch's net can leave this close to the LPs, and the LPs may
+            // have left since the gain that netted against it. What liquidity
+            // cannot cover still comes from the backing before the fund, as
+            // it would have closed on its own.
+            let short = (loss - from_backing).saturating_sub(pool.liquidity_usd);
+            let extra = market.draw_backing(short);
+            market.batch_backing_usd = market
+                .batch_backing_usd
+                .checked_add(extra as i64)
+                .ok_or(PerpError::MathOverflow)?;
+            from_backing += extra;
+        }
         pool.backing_usd = pool.backing_usd.saturating_sub(from_backing);
         from_insurance = pool.pay_out(loss - from_backing)?;
+        // Recorded per market so the market's in-kind backing, which ranks
+        // ahead of the fund, repays it (`backing::sync`).
+        market.insurance_drawn_usd = market.insurance_drawn_usd.saturating_add(from_insurance);
+        if in_batch {
+            market.batch_insurance_usd = market.batch_insurance_usd.saturating_add(from_insurance);
+        }
     } else {
         let gain = settlement.collateral_share - payout;
         market.credit_gain(gain)?;
         // Backing is repaid before the pool books a profit, and only up to
         // what this market's losses took out of it.
-        let to_backing = market.restore_backing(gain);
+        let to_backing = if in_batch {
+            let signed = i64::try_from(gain).map_err(|_| PerpError::MathOverflow)?;
+            market.settle_backing_in_batch(-signed)?.unsigned_abs()
+        } else {
+            market.restore_backing(gain)
+        };
         pool.backing_usd = pool
             .backing_usd
             .checked_add(to_backing)
             .ok_or(PerpError::MathOverflow)?;
+        // In a batch, a gain puts back what the fund paid an earlier close of
+        // the same batch first: netted, the fund would not have been drawn.
+        if in_batch {
+            to_insurance = (gain - to_backing)
+                .min(market.batch_insurance_usd)
+                .min(market.insurance_drawn_usd);
+            market.batch_insurance_usd -= to_insurance;
+            market.insurance_drawn_usd -= to_insurance;
+            pool.insurance_usd = pool
+                .insurance_usd
+                .checked_add(to_insurance)
+                .ok_or(PerpError::MathOverflow)?;
+        }
         pool.liquidity_usd = pool
             .liquidity_usd
-            .checked_add(gain - to_backing)
+            .checked_add(gain - to_backing - to_insurance)
             .ok_or(PerpError::MathOverflow)?;
     }
 
@@ -590,6 +667,9 @@ pub fn apply_settlement_to_pool(
     let to_backers = market
         .credit_backer_fee(lp_fee.min(pool.liquidity_usd))?;
     pool.liquidity_usd -= to_backers;
+    if in_batch {
+        market.batch_backer_fees_usd = market.batch_backer_fees_usd.saturating_add(to_backers);
+    }
     pool.backing_usd = pool
         .backing_usd
         .checked_add(to_backers)
@@ -599,6 +679,12 @@ pub fn apply_settlement_to_pool(
         emit!(InsuranceDrawn {
             amount_usd: from_insurance,
             remaining_usd: pool.insurance_usd,
+        });
+    }
+    if to_insurance > 0 {
+        emit!(InsuranceRepaid {
+            amount_usd: to_insurance,
+            total_usd: pool.insurance_usd,
         });
     }
 
@@ -755,6 +841,35 @@ pub fn book_close_at(
     now: i64,
     discount_bps: u16,
 ) -> Result<Close> {
+    close_into(pool, market, position, close_size, fill, now, discount_bps, false)
+}
+
+/// `book_close_at` for a close settled out of a sealed batch, netted against
+/// the rest of the batch (`apply_batch_settlement_to_pool`).
+#[allow(clippy::too_many_arguments)]
+pub fn book_batch_close_at(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &mut Position,
+    close_size: u64,
+    fill: u64,
+    now: i64,
+    discount_bps: u16,
+) -> Result<Close> {
+    close_into(pool, market, position, close_size, fill, now, discount_bps, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn close_into(
+    pool: &mut Pool,
+    market: &mut Market,
+    position: &mut Position,
+    close_size: u64,
+    fill: u64,
+    now: i64,
+    discount_bps: u16,
+    in_batch: bool,
+) -> Result<Close> {
     require!(position.is_open(), PerpError::PositionEmpty);
     require!(close_size > 0, PerpError::ZeroAmount);
     require!(close_size <= position.size_usd, PerpError::PositionTooSmall);
@@ -778,8 +893,8 @@ pub fn book_close_at(
     let haircut_usd = owed - haircut_profit_usd(pool, market, owed, fill, is_long)?;
     let payout = gross - haircut_usd;
 
-    let backer_fee_usd = apply_settlement_to_pool(
-        pool, market, position, &settlement, payout, fee_usd, close_size, is_long,
+    let backer_fee_usd = settle_into_pool(
+        pool, market, position, &settlement, payout, fee_usd, close_size, is_long, in_batch,
     )?;
 
     position.size_usd = remaining;
@@ -843,6 +958,15 @@ pub fn book_close_at(
 pub struct InsuranceDrawn {
     pub amount_usd: u64,
     pub remaining_usd: u64,
+}
+
+/// A loser's gain put back what the fund paid a winner earlier in the same
+/// sealed batch (`apply_batch_settlement_to_pool`).
+#[event]
+pub struct InsuranceRepaid {
+    pub amount_usd: u64,
+    /// The fund after the repayment.
+    pub total_usd: u64,
 }
 
 /// Emitted by settlement when a reduce-only order unwinds size.
@@ -996,11 +1120,16 @@ pub(crate) mod tests {
             generation: 0,
             aum_drift_usd: 0,
             deployer_points_owed: 0,
-            _reserved: [0; 12],
+            insurance_drawn_usd: 0,
+            _reserved: [0; 4],
             long_moments: SideMoments::default(),
             short_moments: SideMoments::default(),
             long_funding: SideFunding::default(),
             short_funding: SideFunding::default(),
+            batch_net_usd: 0,
+            batch_backing_usd: 0,
+            batch_insurance_usd: 0,
+            batch_backer_fees_usd: 0,
         };
         m.last_funding_ts = 0;
         m
@@ -1769,6 +1898,7 @@ pub(crate) mod tests {
         assert_eq!((m.backing_usd, p.backing_usd, m.backing_drawn_usd), (0, 0, 100));
         assert_eq!(p.liquidity_usd, 0);
         assert_eq!(p.insurance_usd, 850);
+        assert_eq!(m.insurance_drawn_usd, 150, "the fund's part is recorded against the market");
         assert_eq!(m.net_loss_usd, 300);
         assert_eq!(vault_books(&p), books - 1_300);
     }
@@ -1786,6 +1916,150 @@ pub(crate) mod tests {
         assert_eq!((m.backing_usd, p.backing_usd, m.backing_drawn_usd), (200, 200, 0));
         assert_eq!(p.liquidity_usd, liq + 200, "the rest is the LPs'");
         assert_eq!(m.net_loss_usd, -300);
+    }
+
+    /// Every order of `items`.
+    fn permutations(items: &[i64]) -> Vec<Vec<i64>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        let mut out = vec![];
+        for i in 0..items.len() {
+            let mut rest = items.to_vec();
+            let first = rest.remove(i);
+            for mut tail in permutations(&rest) {
+                tail.insert(0, first);
+                out.push(tail);
+            }
+        }
+        out
+    }
+
+    /// Settles closes costing the pool `losses` (negative: a loser's gain)
+    /// out of one sealed batch, in that order, and returns where the money
+    /// ends up.
+    fn settle_batch(backing: u64, drawn: u64, liquidity: u64, fund: u64, losses: &[i64]) -> [u64; 6] {
+        let (mut p, mut m) = (pool(), market());
+        backed(&mut p, &mut m, backing);
+        m.backing_drawn_usd = drawn;
+        p.liquidity_usd = liquidity;
+        p.insurance_usd = fund;
+        p.trader_collateral_usd = 1_000_000;
+        m.end_batch_netting();
+        for &d in losses {
+            let equity = (1_000 + d) as u64;
+            apply_batch_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, equity), equity, 0, 0, true)
+                .unwrap();
+        }
+        [m.backing_usd, m.backing_drawn_usd, p.backing_usd, p.liquidity_usd, p.insurance_usd, m.insurance_drawn_usd]
+    }
+
+    #[test]
+    fn a_batch_splits_the_same_way_in_any_settlement_order() {
+        // The fuzzer's case: a winner and a loser of the same size. Winner
+        // first, the loser repaid the backing the winner drew; loser first,
+        // the loss went to the LPs and the winner drew the backing for good.
+        assert_eq!(settle_batch(200, 0, 1_000, 0, &[14, -14]), settle_batch(200, 0, 1_000, 0, &[-14, 14]));
+        assert_eq!(settle_batch(200, 0, 1_000, 0, &[14, -14]), [200, 0, 200, 1_000, 0, 0]);
+
+        let cases: &[(u64, u64, u64, u64, &[i64])] = &[
+            (100, 0, 1_000, 0, &[150, -100, 30]),
+            (100, 50, 1_000, 0, &[-80, 20, -10, 60]),
+            (0, 300, 500, 0, &[-200, 50, -150]),
+            (100, 0, 0, 1_000, &[150, -150]),
+            (100, 0, 10, 1_000, &[300, -120, -60, 40]),
+            (500, 200, 100, 50, &[-400, 300, 250, -20]),
+            (0, 0, 0, 1_000, &[90, -40, 30]),
+        ];
+        for &(backing, drawn, liquidity, fund, losses) in cases {
+            let all = permutations(losses);
+            let first = settle_batch(backing, drawn, liquidity, fund, &all[0]);
+            for order in &all[1..] {
+                assert_eq!(settle_batch(backing, drawn, liquidity, fund, order), first,
+                    "backing {backing} drawn {drawn} liquidity {liquidity} fund {fund}: {order:?} vs {:?}", all[0]);
+            }
+            // And it is where the batch's net would leave it as one close,
+            // backing first, as long as liquidity stayed positive throughout.
+            let net: i64 = losses.iter().sum();
+            if liquidity >= losses.iter().map(|d| d.unsigned_abs()).sum::<u64>() {
+                assert_eq!(first, settle_batch(backing, drawn, liquidity, fund, &[net]), "{losses:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_fee_the_batch_pays_the_backers_is_theirs_in_any_order() {
+        // A winner that empties the backing, and an open whose fee pays the
+        // backers $10. Closed first, the winner left the fee to the backers;
+        // after the open it drew the fee too.
+        let run = |fee_first: bool| {
+            let (mut p, mut m) = (pool(), market());
+            backed(&mut p, &mut m, 100);
+            p.liquidity_usd = 1_000;
+            p.trader_collateral_usd = 1_000_000;
+            m.end_batch_netting();
+            let fee = |p: &mut Pool, m: &mut Market| {
+                m.backing_usd += 10;
+                p.backing_usd += 10;
+                m.batch_backer_fees_usd += 10;
+            };
+            if fee_first {
+                fee(&mut p, &mut m);
+            }
+            apply_batch_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 1_300), 1_300, 0, 0, true)
+                .unwrap();
+            if !fee_first {
+                fee(&mut p, &mut m);
+            }
+            (m.backing_usd, p.liquidity_usd)
+        };
+        assert_eq!(run(true), run(false));
+        assert_eq!(run(false), (10, 800));
+    }
+
+    #[test]
+    fn a_batch_draws_the_fund_only_for_its_net() {
+        // No LP liquidity: closed on its own the winner draws the fund. A
+        // loser in the same batch puts it back, whichever settles first.
+        let [.., fund, fund_owed] = settle_batch(0, 0, 0, 1_000, &[150, -150]);
+        assert_eq!((fund, fund_owed), (1_000, 0));
+        let [.., fund, fund_owed] = settle_batch(0, 0, 0, 1_000, &[150, -100]);
+        assert_eq!((fund, fund_owed), (950, 50));
+    }
+
+    #[test]
+    fn a_close_out_of_a_batch_is_never_short_where_it_was_not_before() {
+        // A loser settled first left its gain to the LPs, who then took it out
+        // before the winner settled. The winner is still paid, from the
+        // backing before the fund, as it would have been on its own.
+        let (mut p, mut m) = (pool(), market());
+        backed(&mut p, &mut m, 500);
+        p.liquidity_usd = 0;
+        p.insurance_usd = 0;
+        p.trader_collateral_usd = 1_000_000;
+        m.end_batch_netting();
+        apply_batch_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 700), 700, 0, 0, true).unwrap();
+        assert_eq!(p.liquidity_usd, 300);
+        p.liquidity_usd = 0;
+        apply_batch_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, 1_300), 1_300, 0, 0, true)
+            .unwrap();
+        assert_eq!((m.backing_usd, p.insurance_usd), (200, 0));
+    }
+
+    #[test]
+    fn a_single_close_out_of_a_batch_is_booked_as_it_always_was() {
+        for (backing, drawn, liquidity, d) in [(100u64, 0u64, 1_000u64, 150i64), (100, 40, 1_000, -70), (0, 0, 10, 50), (30, 0, 0, 20)] {
+            let netted = settle_batch(backing, drawn, liquidity, 1_000, &[d]);
+            let (mut p, mut m) = (pool(), market());
+            backed(&mut p, &mut m, backing);
+            m.backing_drawn_usd = drawn;
+            p.liquidity_usd = liquidity;
+            p.insurance_usd = 1_000;
+            p.trader_collateral_usd = 1_000_000;
+            let equity = (1_000 + d) as u64;
+            apply_settlement_to_pool(&mut p, &mut m, &position(), &settlement(1_000, equity), equity, 0, 0, true).unwrap();
+            assert_eq!(netted, [m.backing_usd, m.backing_drawn_usd, p.backing_usd, p.liquidity_usd, p.insurance_usd, m.insurance_drawn_usd]);
+        }
     }
 
     #[test]
@@ -1971,6 +2245,54 @@ pub(crate) mod tests {
         book_cleared_open(&mut p, &mut m, &mut pos, order.owner, 1, true, used - fee, fee,
                           Pubkey::default(), filled, PX, 1).unwrap();
         assert_eq!(pos.size_usd, 11_000_000_000);
+    }
+
+    /// A capped close, swept over small budgets, odd sizes and prices and a
+    /// fee discount so the rounding lands every way: the size returned never
+    /// costs more than the budget and is never more than was asked. (No case
+    /// here needs the shrink step after the proportional guess; it stays as
+    /// the guard the doc comment describes.)
+    #[test]
+    fn a_capped_close_never_costs_past_the_budget_whatever_the_rounding() {
+        for (size, collateral) in [(5_000_000_007u64, 1_000_000_003u64), (777_777_777, 111_111_111), (10_000_001, 1_000_001)] {
+            for up_bps in [1u64, 7, 333, 1_001, 5_000] {
+                let fill = PX + PX * up_bps / 10_000 + 3;
+                for budget in (0..60u64).chain([997, 10_007, 123_457]) {
+                    let (mut p, mut m, pos) = long_at(PX, size, collateral);
+                    m.charge_loss(m.remaining_budget_usd() - budget).unwrap();
+                    p.insurance_usd = 0;
+                    for discount in [0u16, 1_000] {
+                        let got = close_within_budget_at(&p, &pos, &m, size, fill, discount).unwrap();
+                        assert!(got <= size);
+                        if got > 0 {
+                            let loss = close_loss_usd(&pos, &m, got, fill, discount).unwrap();
+                            assert!(loss <= budget, "size {size} fill {fill} budget {budget}: {got} costs {loss}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_close_against_a_spent_budget_fills_nothing() {
+        let (p, mut m, pos) = long_at(PX, 5_000_000_000, 1_000_000_000);
+        m.charge_loss(m.remaining_budget_usd()).unwrap();
+        // In profit, so it would cost the pool: nothing of it can fill.
+        assert_eq!(close_within_budget(&p, &pos, &m, 5_000_000_000, PX * 11 / 10).unwrap(), 0);
+        // At a loss it costs nothing and fills in full.
+        assert_eq!(close_within_budget(&p, &pos, &m, 5_000_000_000, PX * 9 / 10).unwrap(), 5_000_000_000);
+    }
+
+    #[test]
+    fn a_close_is_capped_by_what_there_is_to_pay_with() {
+        let (mut p, m, pos) = long_at(PX, 5_000_000_000, 1_000_000_000);
+        // Budget to spare, but only $100 of liquidity, insurance and backing.
+        p.liquidity_usd = 100_000_000;
+        p.insurance_usd = 0;
+        let got = close_within_budget(&p, &pos, &m, 5_000_000_000, PX * 11 / 10).unwrap();
+        assert!(got > 0 && got < 5_000_000_000);
+        assert!(close_loss_usd(&pos, &m, got, PX * 11 / 10, 0).unwrap() <= 100_000_000);
     }
 }
 

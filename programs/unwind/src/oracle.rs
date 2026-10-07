@@ -497,4 +497,153 @@ mod tests {
             VerificationLevel::Partial { num_signatures: 5 }
         );
     }
+
+    // ---- Account validation, everything `read_price` checks before the
+    // clock. The clock is a syscall a unit test has no stub for, so the
+    // checks after it (staleness, a zero price, confidence) run in the
+    // integration tests (`tests/system.ts`, "localnet oracle").
+
+    fn leak<T>(t: T) -> &'static mut T {
+        Box::leak(Box::new(t))
+    }
+
+    fn account(owner: Pubkey, data: Vec<u8>) -> AccountInfo<'static> {
+        AccountInfo::new(
+            leak(Pubkey::new_unique()),
+            false,
+            false,
+            leak(0u64),
+            Box::leak(data.into_boxed_slice()),
+            leak(owner),
+            false,
+            0,
+        )
+    }
+
+    const FEED: [u8; 32] = [7; 32];
+
+    fn update(level: VerificationLevel) -> PriceUpdateV2 {
+        PriceUpdateV2 {
+            write_authority: Pubkey::default(),
+            verification_level: level,
+            price_message: PriceFeedMessage {
+                feed_id: FEED,
+                price: 20_000_000_000,
+                conf: 1_000_000,
+                exponent: -8,
+                publish_time: 1_700_000_000,
+                prev_publish_time: 1_699_999_999,
+                ema_price: 20_000_000_000,
+                ema_conf: 1_000_000,
+            },
+            posted_slot: 1,
+        }
+    }
+
+    fn bytes(u: &PriceUpdateV2) -> Vec<u8> {
+        let mut d = PRICE_UPDATE_V2_DISCRIMINATOR.to_vec();
+        u.serialize(&mut d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_well_formed_update_loads_back_as_written() {
+        let a = account(PYTH_RECEIVER_ID, bytes(&update(VerificationLevel::Full)));
+        let u = load_price_update(&a, &PYTH_RECEIVER_ID).unwrap();
+        assert_eq!(u.verification_level, VerificationLevel::Full);
+        assert_eq!(u.price_message.price, 20_000_000_000);
+        assert_eq!(u.price_message.feed_id, FEED);
+    }
+
+    #[test]
+    fn an_update_owned_by_anyone_but_the_receiver_is_refused() {
+        let a = account(Pubkey::new_unique(), bytes(&update(VerificationLevel::Full)));
+        assert_eq!(load_price_update(&a, &PYTH_RECEIVER_ID).unwrap_err(), PerpError::WrongOracleOwner.into());
+        // The receiver a pool records is the one checked, not the default.
+        let mine = Pubkey::new_unique();
+        let a = account(mine, bytes(&update(VerificationLevel::Full)));
+        assert!(load_price_update(&a, &mine).is_ok());
+        assert_eq!(load_price_update(&a, &PYTH_RECEIVER_ID).unwrap_err(), PerpError::WrongOracleOwner.into());
+    }
+
+    #[test]
+    fn an_account_that_is_not_a_price_update_is_refused() {
+        let bad = PerpError::InvalidOracleAccount.into();
+        // Empty, or nothing past the discriminator.
+        assert_eq!(load_price_update(&account(PYTH_RECEIVER_ID, vec![]), &PYTH_RECEIVER_ID).unwrap_err(), bad);
+        let d = PRICE_UPDATE_V2_DISCRIMINATOR.to_vec();
+        let bad = PerpError::InvalidOracleAccount.into();
+        assert_eq!(load_price_update(&account(PYTH_RECEIVER_ID, d), &PYTH_RECEIVER_ID).unwrap_err(), bad);
+        // Another account type's discriminator.
+        let mut d = bytes(&update(VerificationLevel::Full));
+        d[0] ^= 1;
+        let bad = PerpError::InvalidOracleAccount.into();
+        assert_eq!(load_price_update(&account(PYTH_RECEIVER_ID, d), &PYTH_RECEIVER_ID).unwrap_err(), bad);
+        // The right discriminator over a body cut short.
+        let mut d = bytes(&update(VerificationLevel::Full));
+        d.truncate(40);
+        let bad = PerpError::InvalidOracleAccount.into();
+        assert_eq!(load_price_update(&account(PYTH_RECEIVER_ID, d), &PYTH_RECEIVER_ID).unwrap_err(), bad);
+    }
+
+    #[test]
+    fn a_partially_verified_update_is_refused() {
+        let a = account(PYTH_RECEIVER_ID, bytes(&update(VerificationLevel::Partial { num_signatures: 12 })));
+        assert_eq!(
+            read_price(&a, &PYTH_RECEIVER_ID, &FEED, 60, 10_000).unwrap_err(),
+            PerpError::InsufficientOracleVerification.into()
+        );
+    }
+
+    #[test]
+    fn an_update_for_another_feed_is_refused() {
+        let a = account(PYTH_RECEIVER_ID, bytes(&update(VerificationLevel::Full)));
+        assert_eq!(
+            read_price(&a, &PYTH_RECEIVER_ID, &[8; 32], 60, 10_000).unwrap_err(),
+            PerpError::WrongOracleFeed.into()
+        );
+    }
+
+    #[test]
+    fn a_valid_update_gets_as_far_as_the_clock() {
+        // Off chain there is no clock sysvar, so the read stops there: every
+        // account check before it has passed.
+        let a = account(PYTH_RECEIVER_ID, bytes(&update(VerificationLevel::Full)));
+        let e = read_price(&a, &PYTH_RECEIVER_ID, &FEED, 60, 10_000).unwrap_err();
+        assert!(matches!(e, Error::ProgramError(_)), "{e:?}");
+    }
+
+    #[test]
+    fn an_observation_for_another_market_or_unseasoned_is_refused() {
+        let mut o = crate::state::observation::tests::obs();
+        o.market = Pubkey::new_unique();
+        o.ewma_price = 1_000_000;
+        assert_eq!(
+            read_observed_price(&o, &Pubkey::new_unique(), 60, 10_000, 100).unwrap_err(),
+            PerpError::WrongOracleFeed.into()
+        );
+        // Right market, too few readings.
+        let market = o.market;
+        assert!(!o.is_seasoned());
+        assert_eq!(
+            read_observed_price(&o, &market, 60, 10_000, 100).unwrap_err(),
+            PerpError::OracleNotSeasoned.into()
+        );
+        // Seasoned: on to the clock.
+        o.observations = crate::state::MIN_OBSERVATIONS;
+        o.first_update_ts = 0;
+        o.last_update_ts = crate::state::MIN_OBSERVATION_WINDOW_SEC;
+        assert!(o.is_seasoned());
+        assert!(matches!(read_observed_price(&o, &market, 60, 10_000, 100).unwrap_err(), Error::ProgramError(_)));
+    }
+
+    #[test]
+    fn conf_bps_refuses_a_zero_price_and_saturates() {
+        let p = OraclePrice { price: 0, conf: 1, published_ts: 0 };
+        assert_eq!(p.conf_bps().unwrap_err(), PerpError::InvalidOraclePrice.into());
+        let p = OraclePrice { price: 1, conf: u64::MAX, published_ts: 0 };
+        assert_eq!(p.conf_bps().unwrap(), u64::MAX);
+        let p = OraclePrice { price: 10_000, conf: 1, published_ts: 0 };
+        assert_eq!(p.conf_bps().unwrap(), 1);
+    }
 }

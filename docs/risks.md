@@ -73,6 +73,11 @@ A market's losses are paid in this order:
 2. Pool liquidity, up to the market's loss budget.
 3. The insurance fund.
 
+Settlement pays in USDC, so backing posted in tokens pays afterwards: it
+repays the fund first, then the LPs. A batch's closes are netted, so the
+order anyone settles them in does not change who pays. See
+[Loss budget](loss-budget.md#who-pays-a-loss).
+
 A winner is never paid past the budget. When a market cannot pay every
 winner, each winning close gets the same share of its profit and the rest is
 not paid. A profitable position can be paid less than its paper gain. See

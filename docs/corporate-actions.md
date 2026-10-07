@@ -37,7 +37,11 @@ Left behind, the risk price would walk down at 1.2% a step, and every short
 would read 300% down for over a hundred steps.
 
 Rounding never loosens a limit: a buy's ceiling rounds down and a sell's floor
-rounds up. Positions rebase through the factor rather than being rewritten,
+rounds up. No price rounds to zero: every rebased price, entries and side
+averages included, is at least one unit (a millionth of a dollar). Before
+that floor, a 1-for-10 split of an entry of five units rebased it to zero,
+and a position with a zero entry could not be settled, which held its whole
+batch. Positions rebase through the factor rather than being rewritten,
 so the action costs the same however many positions the market holds.
 Triggers placed before the factor was recorded read as placed at the original
 factor.
