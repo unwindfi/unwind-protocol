@@ -3013,6 +3013,8 @@ async function marketsView() {
         // now, from `haircut_profit_usd`: what the market can still pay over
         // the profit every winning side holds. 100 when it covers them all.
         payoutPct: payoutPct(ma, p, price),
+        // Batch clears against the mark, last hour, by volume. Not charged.
+        premiumBps: premiumOf(m.symbol),
         backingInKind: books[m.address.toBase58()]?.amounts ?? {},
         lossBudgetUsd: num(ma.lossBudgetUsd) / 1e6,
         // The most the pool fills on each side of one batch: its quote is
@@ -3129,6 +3131,13 @@ async function recordClear(symbol: string, sig: string) {
     const sellPrice = Number(ev.data.sellPrice) / 1e6 || null;
     const matched = (Number(ev.data.buyMatchedUsd) + Number(ev.data.sellMatchedUsd)) / 1e6;
     const poolUsd = (Number(ev.data.poolBought) + Number(ev.data.poolSold)) / 1e6;
+    // Against the mark the clear was banded around, read as it landed.
+    const live = Object.values(rt).find((x) => x.symbol === symbol);
+    if (live) {
+      const mark = px(live);
+      notePremium(symbol, buyPrice, Number(ev.data.buyMatchedUsd) / 1e6, mark);
+      notePremium(symbol, sellPrice, Number(ev.data.sellMatchedUsd) / 1e6, mark);
+    }
     lastClear[symbol] = {
       buyPrice, sellPrice,
       matched, poolUsd,
@@ -3144,6 +3153,31 @@ async function recordClear(symbol: string, sig: string) {
     }
   }
 }
+
+/*
+ * How far the batches clear from the mark, averaged by volume over the last
+ * hour, in bps: positive when buyers paid above it.
+ *
+ * Reported, not charged. Funding is driven by skew alone today; this is the
+ * figure a premium leg would be built on, collected first so there is a
+ * record of how it behaves before anything is charged off it.
+ */
+const PREMIUM_WINDOW_MS = 60 * 60 * 1000;
+const premiumSamples: Record<string, { t: number; bps: number; usd: number }[]> = {};
+
+function notePremium(symbol: string, clearPrice: number | null, matchedUsd: number, mark: number) {
+  if (!clearPrice || matchedUsd <= 0 || !(mark > 0)) return;
+  const list = (premiumSamples[symbol] ??= []);
+  list.push({ t: Date.now(), bps: ((clearPrice - mark) / mark) * 10_000, usd: matchedUsd });
+}
+
+const premiumOf = (symbol: string) => {
+  const since = Date.now() - PREMIUM_WINDOW_MS;
+  const list = (premiumSamples[symbol] ?? []).filter((x) => x.t >= since);
+  premiumSamples[symbol] = list;
+  const usd = list.reduce((s, x) => s + x.usd, 0);
+  return usd > 0 ? list.reduce((s, x) => s + x.bps * x.usd, 0) / usd : null;
+};
 
 type BookOrder = { price: number; size: number; isBid: boolean; isMaker: boolean };
 

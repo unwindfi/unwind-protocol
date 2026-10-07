@@ -36,6 +36,10 @@ export interface Market {
   /// what the market can still pay over what every winning side is up. 100
   /// when it covers them all; below that, profit is cut to a fair share.
   payoutPct?: number;
+  /// How far batches cleared from the mark over the last hour, by volume, in
+  /// bps (positive: buyers paid above it). Reported only; funding does not
+  /// use it. Null with no trades in the hour; absent from an older server.
+  premiumBps?: number | null;
   /// Paused by the pool's authority: no new opens or backing, exits only.
   paused?: boolean;
   sparkline: number[];
