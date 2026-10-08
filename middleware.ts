@@ -38,7 +38,34 @@ export default async function middleware(req: Request) {
   // either way. A market's, vault's, search's or referral's page is never a
   // file, even when its name has a dot.
   if (/\.[^/]*$/.test(path) && !/^\/(trade|vault|list|r)\/[^/]+$/.test(path)) return next();
+  // A link preview of one market gets that market's card; people get the app.
+  const sym = path.match(/^\/trade\/([^/]+)$/)?.[1];
+  if (sym && PREVIEWERS.test(req.headers.get("user-agent") ?? "")) return marketPreview(url, decodeURIComponent(sym));
   return rewrite(new URL("/unlocked/index.html", url));
+}
+
+/*
+ * Link previewers: the crawlers X, Telegram, Discord, Slack and the rest send
+ * to read a page's title and picture. They never run the app, so the page they
+ * fetch has to carry its own tags.
+ */
+const PREVIEWERS = /Twitterbot|facebookexternalhit|Facebot|Discordbot|Slackbot|TelegramBot|LinkedInBot|WhatsApp|redditbot|Applebot|Embedly|SkypeUriPreview|Iframely|bingbot|Googlebot/i;
+
+/// The app's page with one market's title, link and card in its share tags.
+/// The card is drawn by the devnet server from live figures; the query is a
+/// five-minute bucket so a fresh post shows fresh figures.
+async function marketPreview(url: URL, sym: string) {
+  const html = await (await fetch(new URL("/unlocked/index.html", url))).text();
+  const safe = sym.replace(/[^A-Za-z0-9]/g, "").slice(0, 16);
+  const img = `https://api.unwindfi.xyz/api/og/trade/${safe}.png?v=${Math.floor(Date.now() / 300_000)}`;
+  const page = `https://unwindfi.xyz/trade/${safe}`;
+  const out = html
+    .replace(/<title>[^<]*<\/title>/, `<title>Trade ${safe} · unwind</title>`)
+    .replace(/(property="og:title" content=")[^"]*/, `$1Trade ${safe} · unwind`)
+    .replace(/(property="og:url" content=")[^"]*/, `$1${page}`)
+    .replace(/(property="og:image" content=")[^"]*/, `$1${img}`)
+    .replace(/(name="twitter:image" content=")[^"]*/, `$1${img}`);
+  return new Response(out, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
 }
 
 const page = (wrong: boolean) => `<!doctype html>

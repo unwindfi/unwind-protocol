@@ -49,6 +49,7 @@ import { GET as mainnetPoolPreview } from "../api/pool/[address]";
 import { backingBookPda, baseUnits } from "./custodies";
 import { readTokenMeta } from "./token-meta";
 import { marketGenerationsPda, nextMarket, pickGeneration } from "./market-address";
+import { marketCard } from "./og/card";
 
 const ROOT = path.join(__dirname, "..");
 const PORT = Number(process.env.PORT || 3000);
@@ -2851,6 +2852,34 @@ app.get("/api/markets", async (req, res) => {
   }
 });
 
+
+/*
+ * A market's share card, for the link preview X, Telegram and Discord show.
+ *
+ * Read off the same snapshot /api/markets serves and drawn once per market
+ * every five minutes: crawlers fetch a link's card when it is posted and
+ * again whenever they please, and a card that is a few minutes old says so
+ * in its own timestamp. A hidden market gets none, the same as the list.
+ */
+const OG_FRESH_MS = 5 * 60_000;
+const ogCards = new Map<string, { at: number; png: Promise<Buffer> }>();
+app.get("/api/og/trade/:file", async (req, res) => {
+  const sym = String(req.params.file).replace(/\.png$/i, "");
+  try {
+    const body = marketsLast?.body ?? await (marketsInFlight ?? marketsView());
+    const m = (listedOnly(body, false) as any[]).find((x) => x.symbol.toLowerCase() === sym.toLowerCase());
+    if (!m) return res.status(404).json({ error: "no such market" });
+    let hit = ogCards.get(m.symbol);
+    if (!hit || Date.now() - hit.at > OG_FRESH_MS) {
+      hit = { at: Date.now(), png: marketCard(m) };
+      ogCards.set(m.symbol, hit);
+      hit.png.catch(() => ogCards.delete(m.symbol));
+    }
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=300");
+    res.send(await hit.png);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 /// The program's POOL_QUOTE_BUDGET_BPS (500, in state/batch.rs) as a share.
 const POOL_QUOTE_SHARE = 0.05;

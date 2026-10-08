@@ -22,10 +22,12 @@
     "@fontsource/inter": "^5.3.0",
     "@meteora-ag/dlmm": "^1.9.14",
     "@pythnetwork/pyth-solana-receiver": "^0.8.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@solana/spl-token": "^0.4.9",
     "express": "^5.2.1",
     "lightweight-charts": "^5.2.1",
     "lucide-static": "^1.47.0",
+    "satori": "^0.18.4",
     "simple-icons": "^16.31.0"
   },
   "devDependencies": {
