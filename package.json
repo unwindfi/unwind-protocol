@@ -24,13 +24,16 @@
     "@pythnetwork/pyth-solana-receiver": "^0.8.0",
     "@resvg/resvg-js": "^2.6.2",
     "@solana/spl-token": "^0.4.9",
+    "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "lightweight-charts": "^5.2.1",
     "lucide-static": "^1.47.0",
+    "playwright-core": "1.62.1",
     "satori": "^0.18.4",
     "simple-icons": "^16.31.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^4.3.0",
     "@types/express": "^5.0.6",

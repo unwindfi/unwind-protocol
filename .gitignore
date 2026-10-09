@@ -33,3 +33,11 @@ docs-site/node_modules
 docs-site/.next
 /target-new
 /target-b
+
+# UI testers: persona keys and run data live outside the repo (TESTERS_KEYS,
+# TESTERS_DATA); these catch a copy made by mistake.
+testers*.json
+!testers/tsconfig.json
+/testers/data/
+/testers/keys/
+*.testers-keys.json

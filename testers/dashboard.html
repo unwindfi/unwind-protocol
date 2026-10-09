@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>unwind testers</title>
+<style>
+  @font-face { font-family: Inter; font-weight: 400; src: url(fonts/inter-latin-400-normal.woff2) format("woff2"); font-display: swap; }
+  @font-face { font-family: Inter; font-weight: 500; src: url(fonts/inter-latin-500-normal.woff2) format("woff2"); font-display: swap; }
+  @font-face { font-family: Inter; font-weight: 600; src: url(fonts/inter-latin-600-normal.woff2) format("woff2"); font-display: swap; }
+  :root {
+    --bg: #0e1012; --panel: #15171a; --panel2: #1b1e22; --line: #25292e;
+    --fg: #e9eaec; --muted: #8d939a; --dim: #5d636a;
+    --high: #f0616d; --medium: #e3b04b; --low: #7f8790; --up: #3fbf7f; --bar: #8f7cf7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font: 13.5px/1.5 Inter, system-ui, sans-serif; font-feature-settings: "tnum" 1, "cv11" 1; }
+  a { color: inherit; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+  .muted { color: var(--muted); } .dim { color: var(--dim); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; min-width: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line);
+           border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
+  .tile { background: var(--panel); padding: 12px 14px; }
+  .tile .k { color: var(--muted); font-size: 12px; }
+  .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; letter-spacing: -.01em; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 400; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .num { text-align: right; white-space: nowrap; }
+  .sev { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .sev.high { background: var(--high); } .sev.medium { background: var(--medium); } .sev.low { background: var(--low); }
+  .msg { max-width: 560px; overflow-wrap: anywhere; }
+  .msg .t { color: var(--muted); font-size: 12px; }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .thumb { width: 96px; height: 60px; object-fit: cover; object-position: top; border-radius: 6px; border: 1px solid var(--line); display: block; }
+  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+  button { cursor: pointer; } button:hover { border-color: #3a3f45; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--panel2); color: var(--fg); }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); background: var(--bg);
+        border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; margin: 8px 0 0; }
+  .scroll { overflow-x: auto; }
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 96px; padding-top: 8px; }
+  .chart div { flex: 1; background: var(--bar); border-radius: 3px 3px 0 0; min-height: 1px; position: relative; }
+  .chart div.fail { background: linear-gradient(to top, var(--high) var(--f), var(--bar) var(--f)); }
+  .axis { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 4px; }
+  .ok { color: var(--up); } .bad { color: var(--high); }
+  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>unwind testers</h1>
+    <span class="muted" id="sub">Loading</span>
+  </header>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="panel">
+    <h2>New in the last 24 hours</h2>
+    <div id="summary" class="scroll"></div>
+  </div>
+
+  <div class="panel">
+    <div class="bar">
+      <h2 style="margin:0;margin-right:auto">Issues</h2>
+      <div class="seg" role="group" aria-label="Status" id="status">
+        <button data-s="open" aria-pressed="true">Open</button>
+        <button data-s="fixed" aria-pressed="false">Fixed</button>
+        <button data-s="ignored" aria-pressed="false">Ignored</button>
+        <button data-s="all" aria-pressed="false">All</button>
+      </div>
+      <select id="sev" aria-label="Severity"><option value="">Any severity</option><option>high</option><option>medium</option><option>low</option></select>
+      <select id="type" aria-label="Type"><option value="">Any type</option></select>
+      <input id="q" placeholder="Filter by route or text" aria-label="Filter">
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Issue</th><th>Route</th><th>Seen on</th><th class="num">Count</th><th class="num">24h</th><th>First / last</th><th>Screenshot</th><th></th></tr></thead>
+      <tbody id="issues"></tbody>
+    </table></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Sessions per hour, last 24 hours</h2>
+      <div class="chart" id="chart" aria-label="Sessions per hour"></div>
+      <div class="axis"><span id="axis0"></span><span>failed share in red</span><span>now</span></div>
+      <h2 style="margin-top:18px">Journeys, last 24 hours</h2>
+      <div class="scroll"><table><thead><tr><th>Journey</th><th class="num">Runs</th><th class="num">Passed</th><th class="num">Failed</th><th class="num">Average</th></tr></thead><tbody id="journeys"></tbody></table></div>
+      <h2 style="margin-top:18px">Most frequent failures</h2>
+      <div class="scroll"><table><tbody id="failures"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>Transactions, last 24 hours</h2>
+      <div class="scroll"><table><thead><tr><th>Kind</th><th>Status</th><th class="num">Count</th></tr></thead><tbody id="txs"></tbody></table></div>
+      <h2 style="margin-top:18px">Personas</h2>
+      <div class="scroll" style="max-height:520px;overflow:auto"><table><thead><tr><th>Persona</th><th>Role</th><th>Device</th><th>Last run</th><th class="num">24h</th></tr></thead><tbody id="personas"></tbody></table></div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ago = (t) => {
+  if (!t) return "never";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return Math.round(s) + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+};
+const pct = (x) => x == null ? "–" : (x * 100).toFixed(0) + "%";
+let status = "open", issues = [];
+
+async function get(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
+
+async function setStatus(sig, s) {
+  await fetch("api/issues/" + sig + "/status", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: s }) });
+  loadIssues();
+}
+
+function renderIssues() {
+  const sev = $("sev").value, type = $("type").value, q = $("q").value.toLowerCase();
+  const rows = issues.filter((i) => (!sev || i.severity === sev) && (!type || i.type === type)
+    && (!q || (i.route + " " + i.message).toLowerCase().includes(q)));
+  rows.sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.severity] - { high: 0, medium: 1, low: 2 }[b.severity]) || b.last_seen - a.last_seen);
+  $("issues").innerHTML = rows.length ? rows.map((i) => `
+    <tr>
+      <td class="msg"><div><span class="sev ${esc(i.severity)}" title="${esc(i.severity)}"></span><span class="t">${esc(i.type)}</span></div>
+        <div class="clamp">${esc(i.message)}</div>
+        <details data-sig="${esc(i.sig)}"><summary>Details</summary><div class="d">Loading</div></details></td>
+      <td>${esc(i.route)}</td>
+      <td class="muted">${esc(i.devices.join(", "))}<br>${esc(i.themes.join(", "))}<br><span class="dim">${esc(i.personas.slice(-4).join(", "))}</span></td>
+      <td class="num">${i.count}</td>
+      <td class="num">${i.day}</td>
+      <td class="muted" style="white-space:nowrap">${ago(i.first_seen)}<br>${ago(i.last_seen)}</td>
+      <td>${i.screenshot ? `<a href="shots/${esc(i.screenshot)}" target="_blank" rel="noreferrer"><img class="thumb" loading="lazy" src="shots/${esc(i.screenshot)}" alt="Screenshot of ${esc(i.route)}"></a>` : '<span class="dim">–</span>'}</td>
+      <td style="white-space:nowrap">${i.status === "open"
+        ? `<button data-act="fixed" data-sig="${esc(i.sig)}" title="Hide until it shows up again after a new deploy">Fixed</button> <button data-act="ignored" data-sig="${esc(i.sig)}" title="Hide for good">Ignore</button>`
+        : `<span class="dim">${esc(i.status)}</span> <button data-act="open" data-sig="${esc(i.sig)}">Reopen</button>`}</td>
+    </tr>`).join("") : `<tr><td colspan="8" class="empty">Nothing ${status === "all" ? "" : status} here.</td></tr>`;
+}
+
+async function loadIssues() {
+  issues = await get("api/issues?status=" + status);
+  const types = [...new Set(issues.map((i) => i.type))].sort();
+  const keep = $("type").value;
+  $("type").innerHTML = '<option value="">Any type</option>' + types.map((t) => `<option ${t === keep ? "selected" : ""}>${esc(t)}</option>`).join("");
+  renderIssues();
+}
+
+async function loadHealth() {
+  const h = await get("api/health");
+  const open = Object.fromEntries(h.open.map((o) => [o.severity, o.n]));
+  const runs = h.journeys.reduce((s, j) => s + j.n, 0), ok = h.journeys.reduce((s, j) => s + (j.ok || 0), 0);
+  $("sub").textContent = `build ${h.build ?? "unknown"} · last session ended ${ago(h.lastSession)} · refreshes every 30s`;
+  const tile = (k, v, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+  $("tiles").innerHTML = [
+    tile("Open, high", open.high ?? 0, open.high ? "bad" : ""),
+    tile("Open, medium", open.medium ?? 0),
+    tile("Open, low", open.low ?? 0),
+    tile("Sessions, last hour", h.lastHour),
+    tile("Journeys passed, 24h", runs ? `${pct(ok / runs)} of ${runs}` : "–"),
+    tile("Transactions confirmed, 24h", h.txSettled ? `${pct(h.txRate)} of ${h.txSettled}` : h.dryRuns ? `${h.dryRuns} dry runs` : "–"),
+    tile("Chrome memory, 6h", h.mem.avg ? `${Math.round(h.mem.avg)} MB avg` : "–"),
+  ].join("");
+  const max = Math.max(1, ...h.perHour.map((p) => p.n));
+  $("chart").innerHTML = h.perHour.map((p) => {
+    const f = p.n ? (1 - p.ok / p.n) * 100 : 0;
+    return `<div class="${f ? "fail" : ""}" style="height:${(p.n / max) * 100}%;--f:${f}%" title="${new Date(p.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: ${p.n} sessions, ${p.n - p.ok} with a failure"></div>`;
+  }).join("");
+  $("axis0").textContent = "24h ago";
+  $("journeys").innerHTML = h.journeys.length ? h.journeys.map((j) => `<tr><td>${esc(j.name)}</td><td class="num">${j.n}</td><td class="num ok">${j.ok}</td><td class="num ${j.n - j.ok ? "bad" : ""}">${j.n - j.ok}</td><td class="num">${(j.ms / 1000).toFixed(0)}s</td></tr>`).join("")
+    : '<tr><td colspan="5" class="empty">No journeys yet.</td></tr>';
+  $("failures").innerHTML = h.failures.length ? h.failures.map((f) => `<tr><td class="num">${f.n}</td><td>${esc(f.name)}</td><td class="msg muted">${esc(f.error)}</td></tr>`).join("")
+    : '<tr><td class="empty">No failures in 24 hours.</td></tr>';
+  $("txs").innerHTML = h.txs.length ? h.txs.sort((a, b) => a.kind.localeCompare(b.kind)).map((t) => `<tr><td>${esc(t.kind)}</td><td class="${t.status === "confirmed" ? "ok" : /failed|timeout/.test(t.status) ? "bad" : "muted"}">${esc(t.status)}</td><td class="num">${t.n}</td></tr>`).join("")
+    : '<tr><td colspan="3" class="empty">No transactions yet.</td></tr>';
+  $("personas").innerHTML = h.personas.map((p) => `<tr><td>${esc(p.id)} <span class="muted">${esc(p.name)}</span></td><td>${esc(p.role)}</td><td class="muted">${esc(p.device)}, ${esc(p.theme)}</td><td class="${p.ok === false ? "bad" : p.ok ? "" : "dim"}">${ago(p.last)}${p.ok === false ? ", failed" : ""}</td><td class="num">${p.sessions}</td></tr>`).join("");
+}
+
+async function loadSummary() {
+  const s = await get("api/summary");
+  $("summary").innerHTML = s.top.length ? `<table><thead><tr><th>Issue</th><th>Route</th><th class="num">Count</th><th>First seen</th></tr></thead><tbody>${
+    s.top.map((i) => `<tr><td class="msg"><span class="sev ${esc(i.severity)}"></span><span class="muted">${esc(i.type)}</span> ${esc(i.message)}</td><td>${esc(i.route)}</td><td class="num">${i.count}</td><td class="muted">${ago(i.first_seen)}</td></tr>`).join("")
+  }</tbody></table><p class="muted" style="margin:8px 0 0">${s.total} new in 24 hours.</p>` : '<div class="empty">Nothing new in 24 hours.</div>';
+}
+
+$("status").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  status = b.dataset.s;
+  for (const x of $("status").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+  loadIssues();
+});
+for (const id of ["sev", "type"]) $(id).addEventListener("change", renderIssues);
+$("q").addEventListener("input", renderIssues);
+$("issues").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (b) setStatus(b.dataset.sig, b.dataset.act);
+});
+$("issues").addEventListener("toggle", async (e) => {
+  const d = e.target;
+  if (!d.open || d.dataset.loaded) return;
+  d.dataset.loaded = "1";
+  const i = await get("api/issue/" + d.dataset.sig);
+  d.querySelector(".d").innerHTML = `<pre>${esc(i.message)}${i.detail ? "\n\n" + esc(i.detail) : ""}</pre>
+    <pre>${i.events.map((ev) => `${new Date(ev.t).toISOString().replace("T", " ").slice(0, 19)}  ${esc(ev.persona)}  ${esc(ev.device)}/${esc(ev.theme)}  ${esc(ev.step)}`).join("\n")}</pre>`;
+}, true);
+
+async function all() {
+  try { await Promise.all([loadIssues(), loadHealth(), loadSummary()]); }
+  catch (e) { $("sub").textContent = "Could not load: " + e.message; }
+}
+all();
+setInterval(() => { if (!document.querySelector("details[open]")) all(); else loadHealth(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# The tester fleet: headless Chrome sessions against the live site.
+# Capped so the devnet server on the same box always has room.
+[Unit]
+Description=unwind tester fleet
+After=network-online.target unwind-testnet.service
+
+[Service]
+User=unwind
+WorkingDirectory=/opt/unwind
+EnvironmentFile=/etc/unwind/testers.env
+ExecStart=/opt/unwind/node_modules/.bin/ts-node --transpile-only -P testers/tsconfig.json testers/run.ts
+Nice=10
+CPUQuota=110%
+MemoryMax=3G
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

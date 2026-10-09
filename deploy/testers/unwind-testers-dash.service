@@ -1,0 +1,17 @@
+# The testers' dashboard on 127.0.0.1:3100, behind basic auth and Caddy.
+[Unit]
+Description=unwind tester dashboard
+After=network-online.target
+
+[Service]
+User=unwind
+WorkingDirectory=/opt/unwind
+EnvironmentFile=/etc/unwind/testers.env
+ExecStart=/opt/unwind/node_modules/.bin/ts-node --transpile-only -P testers/tsconfig.json testers/dashboard.ts
+Nice=5
+MemoryMax=300M
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
