@@ -12,9 +12,17 @@ export const portfolio: Journey = {
     const page = ctx.page;
     await ctx.step("open /portfolio", () => ctx.goto("/portfolio", (p) => p.getByRole("heading", { level: 1 })));
     await ctx.step("empty state", async () => {
-      // Before connecting, the page should say what connecting gives.
       const prompt = page.getByRole("heading", { name: "Connect a wallet to see your portfolio." });
-      if (!(await prompt.first().waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false))) {
+      if (ctx.connected) {
+        // An earlier journey in this session left the wallet connected (the
+        // adapter reconnects it on load), so the page shows the portfolio.
+        // The prompt is wrong here; its absence is not.
+        await ctx.addressTile().first().waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+        if (await prompt.first().isVisible().catch(() => false)) {
+          await ctx.rec.issue("empty-state", "low", "Portfolio asks to connect a wallet that is connected", { key: "portfolio empty connected" });
+        }
+      } else if (!(await prompt.first().waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false))) {
+        // Before connecting, the page should say what connecting gives.
         await ctx.rec.issue("empty-state", "low", "Portfolio without a wallet does not say to connect one", { key: "portfolio empty" });
       }
       await ctx.checkPage();
