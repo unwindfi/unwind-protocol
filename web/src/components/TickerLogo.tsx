@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { Market } from "@/lib/api";
+import { logoSrc, type Market } from "@/lib/api";
 
 /// Real logo when one exists at /logos/<symbol>.svg, else the token's own
-/// logo from the API, monogram otherwise.
+/// logo through the server, monogram otherwise.
 export function TickerLogo({ m, size = 26, bare = false }: {
   m: Market; size?: number;
   /// No dark disc behind a real logo: for a small icon beside a word, where
@@ -10,16 +10,20 @@ export function TickerLogo({ m, size = 26, bare = false }: {
   bare?: boolean;
 }) {
   // Official xStocks artwork ships as PNG; the hand-drawn SVGs are the
-  // fallback for anything it does not cover.
+  // fallback for anything it does not cover; then the real token's own logo,
+  // through the server. Each is loaded before it is shown, so a slow or
+  // missing one leaves the monogram in place rather than a broken image.
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setSrc(null);
+    // A token marked per thousand or million is listed as `1MBONK`; its
+    // logo is the token's own.
+    const file = m.symbol.replace(/^1[KMB](?=[A-Z])/, "");
+    const tries = [`/logos/${file}.png`, `/logos/${file}.svg`, logoSrc(m.icon)]
+      .filter((u): u is string => !!u);
     (async () => {
-      for (const ext of ["png", "svg"]) {
-        // A token marked per thousand or million is listed as `1MBONK`; its
-        // logo is the token's own.
-        const url = `/logos/${m.symbol.replace(/^1[KMB](?=[A-Z])/, "")}.${ext}`;
+      for (const url of tries) {
         const loaded = await new Promise<boolean>((res) => {
           const img = new Image();
           img.onload = () => res(true);
@@ -29,8 +33,6 @@ export function TickerLogo({ m, size = 26, bare = false }: {
         if (!alive) return;
         if (loaded) { setSrc(url); return; }
       }
-      // No file for this ticker: the real token's own logo, when known.
-      if (m.icon) setSrc(m.icon);
     })();
     return () => { alive = false; };
   }, [m.symbol, m.icon]);
@@ -39,7 +41,7 @@ export function TickerLogo({ m, size = 26, bare = false }: {
     <span className="grid flex-none place-items-center overflow-hidden rounded-full font-bold text-white"
       style={{ width: size, height: size, background: src ? (bare ? "transparent" : "var(--color-panel3)") : m.color,
                fontSize: size * 0.45 }}>
-      {src ? <img src={src} alt="" style={{ width: bare ? "100%" : "86%", height: bare ? "100%" : "86%" }} />
+      {src ? <img src={src} alt="" onError={() => setSrc(null)} style={{ width: bare ? "100%" : "86%", height: bare ? "100%" : "86%" }} />
            : m.mono}
     </span>
   );

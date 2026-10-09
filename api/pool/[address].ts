@@ -23,6 +23,7 @@ import {
 } from "../../scripts/listing-policy";
 
 import { forward } from "../_forward";
+import { BROWSER_UA } from "../../scripts/token-icon";
 
 const RPC = process.env.MAINNET_RPC_URL || "https://api.mainnet-beta.solana.com";
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -48,7 +49,8 @@ async function accounts(keys: string[]): Promise<Account[]> {
 /// account, because it is one request and it is what every wallet shows.
 async function tokenName(mint: string) {
   try {
-    const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`);
+    const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`,
+      { headers: { "user-agent": BROWSER_UA } });
     const hit = ((await r.json()) as any[]).find((t) => t.id === mint);
     if (hit) return { symbol: String(hit.symbol), name: String(hit.name), icon: hit.icon ?? null };
   } catch { /* fall through to the address */ }

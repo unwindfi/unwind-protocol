@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/motion/checkbox";
 import { WalletActions } from "@/components/WalletActions";
 import { Ripeness, statusOf } from "@/components/Ripeness";
 import {
-  canSign, getAllMarkets, mirrorToDevnet, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
+  canSign, getAllMarkets, logoSrc, mirrorToDevnet, getPool, getTestnetPools, usePoll, type Market, type PoolPreview,
   type TestnetPool,
 } from "@/lib/api";
 import {
@@ -114,8 +114,13 @@ function Fold({ label, open, onToggle, children }: {
 }
 
 /// The token's own art, over its initial. The initial is always drawn, so a
-/// slow or dead image host shows a letter rather than an empty circle.
-function TokenIcon({ src, label, size = 32 }: { src?: string | null; label: string; size?: number }) {
+/// slow or dead image host shows a letter rather than an empty circle. The
+/// art comes through the server by mint (see `logoSrc`), never from the
+/// metadata's own host.
+function TokenIcon({ icon, mint, label, size = 32 }: {
+  icon?: string | null; mint?: string | null; label: string; size?: number;
+}) {
+  const src = logoSrc(icon, mint);
   const [state, setState] = useState<"loading" | "ok" | "broken">("loading");
   useEffect(() => setState("loading"), [src]);
   return (
@@ -586,7 +591,7 @@ export default function List() {
                               <a href={tradeHref(markets.find((m) => m.observed?.source === p.pool)?.symbol ?? p.symbol)}
                                 onMouseDown={(e) => e.preventDefault()}
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
-                                <TokenIcon src={p.icon ?? null} label={p.symbol} />
+                                <TokenIcon icon={p.icon} mint={p.real} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
                                   <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
                                   <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
@@ -597,7 +602,7 @@ export default function List() {
                               <button type="button" onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => { setOpen(false); void readPoolAddress(p.pool); }}
                                 className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel2">
-                                <TokenIcon src={p.icon ?? null} label={p.symbol} />
+                                <TokenIcon icon={p.icon} mint={p.real} label={p.symbol} />
                                 <span className="min-w-0 flex-1">
                                   <span title={p.symbol} className="block truncate text-[13.5px] font-medium">{p.symbol}</span>
                                   <span title={p.name} className="block truncate text-[11.5px] text-muted-foreground">{p.name} · devnet pool</span>
@@ -615,7 +620,7 @@ export default function List() {
                               onClick={() => pick(t)}
                               className="flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left
                                          hover:bg-panel2">
-                              <TokenIcon src={t.icon} label={t.symbol} />
+                              <TokenIcon icon={t.icon} mint={t.mint} label={t.symbol} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1 text-[13.5px] font-medium">
                                   <span title={t.symbol} className="truncate">{t.symbol}</span>
@@ -649,7 +654,7 @@ export default function List() {
                               onClick={() => pick(t)}
                               className={`flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2
                                           text-left ${i === cursor ? "bg-panel2" : ""}`}>
-                              <TokenIcon src={t.icon} label={t.symbol} />
+                              <TokenIcon icon={t.icon} mint={t.mint} label={t.symbol} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1 text-[13.5px] font-medium">
                                   <span title={t.symbol} className="truncate">{t.symbol}</span>
@@ -952,7 +957,8 @@ export default function List() {
               <div className="flex items-start gap-3 rounded-[16px] border border-line bg-panel
                               px-4 py-3.5">
                 {token
-                  ? <TokenIcon src={preview?.icon ?? token.icon} label={token.symbol} size={36} />
+                  ? <TokenIcon icon={preview?.icon ?? token.icon} mint={preview?.icon ? preview.base : token.mint}
+                      label={token.symbol} size={36} />
                   : <span className="grid size-9 flex-none place-items-center rounded-full bg-panel3">
                       <GlassMark className="size-[22px]" />
                     </span>}
@@ -967,7 +973,8 @@ export default function List() {
                                 rounded-[14px] border border-line bg-panel2">
                   {token || preview ? (
                     <div className="flex flex-col items-center gap-3">
-                      <TokenIcon src={preview?.icon ?? token?.icon} label={name || token?.symbol || "?"} size={72} />
+                      <TokenIcon icon={preview?.icon ?? token?.icon} mint={preview?.icon ? preview.base : token?.mint}
+                        label={name || token?.symbol || "?"} size={72} />
                       <span className="text-[12px] uppercase tracking-[.12em] text-dim">
                         {preview ? `live from ${onDevnet ? "devnet" : "mainnet"}` : "reading pool"}
                       </span>

@@ -50,6 +50,7 @@ import { backingBookPda, baseUnits } from "./custodies";
 import { readTokenMeta } from "./token-meta";
 import { marketGenerationsPda, nextMarket, pickGeneration } from "./market-address";
 import { marketCard } from "./og/card";
+import { BROWSER_UA, IconStore, isMint } from "./token-icon";
 
 const ROOT = path.join(__dirname, "..");
 const PORT = Number(process.env.PORT || 3000);
@@ -1044,7 +1045,7 @@ function loadIcons(mints: (string | null | undefined)[]) {
       const chunk = missing.slice(i, i + 100);
       try {
         const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${chunk.join(",")}`,
-          { signal: AbortSignal.timeout(8_000) });
+          { headers: { "user-agent": BROWSER_UA }, signal: AbortSignal.timeout(8_000) });
         if (!r.ok) continue;
         const rows = (await r.json()) as any[];
         for (const m of chunk) tokenIcons.set(m, rows.find((x) => x.id === m)?.icon ?? null);
@@ -1053,6 +1054,28 @@ function loadIcons(mints: (string | null | undefined)[]) {
   })().finally(() => { iconsLoading = null; });
   return iconsLoading;
 }
+
+/*
+ * GET /api/icon/:mint -- a token's logo, from our own origin.
+ *
+ * Pages show this rather than the URL in the token's metadata, which is
+ * often an IPFS gateway the browser refuses (see token-icon.ts). Keyed by
+ * mainnet mint, and never by URL, so this cannot be pointed at an arbitrary
+ * address. The logo's URL comes from Jupiter, once per mint, through the
+ * same map the market list fills.
+ */
+const icons = new IconStore(path.join(ROOT, ".cache", "icons"), async (mint) => {
+  if (!tokenIcons.has(mint)) {
+    const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`,
+      { headers: { "user-agent": BROWSER_UA }, signal: AbortSignal.timeout(8_000) });
+    if (!r.ok) return null;
+    tokenIcons.set(mint, ((await r.json()) as any[]).find((x) => x.id === mint)?.icon ?? null);
+  }
+  return tokenIcons.get(mint) ?? null;
+});
+/// Where a page finds a mint's logo, or null when Jupiter knows of none.
+const iconPath = (mint: string | null | undefined) =>
+  mint && tokenIcons.get(mint) ? `/api/icon/${mint}` : null;
 
 /*
  * The real token's price, for the keeper to mark a devnet test copy at.
@@ -2832,6 +2855,24 @@ let marketsLast: { at: number; body: any } | null = null;
 const listedOnly = (body: any, all: boolean) =>
   all || !Array.isArray(body) ? body : body.filter((m: any) => !m.hidden);
 
+app.get("/api/icon/:mint", async (req, res) => {
+  const mint = String(req.params.mint);
+  // Readable from any page as an image, which a cross-origin <img> needs
+  // now that browsers block opaque responses they cannot place.
+  res.set("Cross-Origin-Resource-Policy", "cross-origin");
+  res.set("X-Content-Type-Options", "nosniff");
+  // An SVG opened on its own runs no script and loads nothing.
+  res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  const icon = isMint(mint) ? await icons.get(mint) : null;
+  if (!icon) {
+    res.set("Cache-Control", "public, max-age=600");
+    return res.status(404).end();
+  }
+  res.set("Content-Type", icon.type);
+  res.set("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+  res.send(icon.body);
+});
+
 app.get("/api/markets", async (req, res) => {
   const all = req.query.all === "1";
   try {
@@ -2904,7 +2945,7 @@ async function marketsView() {
         symbol: m.symbol, name: m.name, color: m.color, mono: m.mono, price,
         // Off the lists (see `hiddenMarket`); served only with ?all=1.
         hidden: await hiddenMarket(m),
-        icon: real ? tokenIcons.get(real) ?? null : null,
+        icon: iconPath(real),
         // Null for an observed market: nobody wrote a definition for it, and
         // the pool it watches is the address that identifies it.
         mint: m.def?.mint ?? null,
@@ -4087,7 +4128,7 @@ app.get("/api/testnet-pools", async (_req, res) => {
   const invented = await inventedPools();
   res.json(seeded.filter((s) => !invented.has(s.pair)).map((s) => ({
     symbol: s.symbol, name: s.name, pool: s.pair, listed: listed.has(s.pair), real: real.get(s.pair) ?? null,
-    icon: tokenIcons.get(real.get(s.pair) ?? "") ?? null,
+    icon: iconPath(real.get(s.pair)),
   })));
 });
 
@@ -4151,7 +4192,7 @@ app.post("/api/devnet-copy", async (req, res) => {
 
     // Ticker, decimals and price, as Jupiter knows the token.
     const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${real}`,
-      { signal: AbortSignal.timeout(10_000) });
+      { headers: { "user-agent": BROWSER_UA }, signal: AbortSignal.timeout(10_000) });
     if (!r.ok) throw new Error(`token lookup failed (${r.status})`);
     const t = ((await r.json()) as any[]).find((x) => x.id === real);
     if (!t || !(t.usdPrice > 0) || !Number.isInteger(t.decimals)) throw new Error("no price for that token on mainnet");
@@ -4212,7 +4253,7 @@ app.get("/api/pool/:address", async (req, res) => {
     res.json({
       ...p,
       // A devnet copy shows the real token's logo.
-      ...(real ? { icon: tokenIcons.get(real) ?? null } : {}),
+      ...(real ? { icon: iconPath(real) } : {}),
       // What it will be listed as, derived exactly as the listing derives it.
       ...(await listingName(p.base, p.address, p.unitExp)),
       unitLabel: unitLabel(p.unitExp),

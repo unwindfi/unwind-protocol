@@ -218,6 +218,23 @@ export const API = ((import.meta.env.VITE_API_URL as string | undefined)
 export const apiUrl = (path: string) => API + path;
 
 /*
+ * A token's logo, as a page should load it.
+ *
+ * Never the URL from the token's metadata: that is usually an IPFS gateway
+ * the browser refuses to show cross-origin. The venue's server fetches it
+ * once and serves it from its own origin with the right headers, by mint
+ * (GET /api/icon/:mint). A path the server already handed out is used as
+ * is. Null when the token has no logo, so nothing is requested for it.
+ */
+const MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+export function logoSrc(icon: string | null | undefined, mint?: string | null): string | null {
+  if (!icon) return null;
+  if (icon.startsWith("/api/")) return apiUrl(icon);
+  if (mint && MINT.test(mint)) return apiUrl(`/api/icon/${mint}`);
+  return null;
+}
+
+/*
  * The last answer to each read, kept in the browser.
  *
  * A page draws from it the instant it opens and replaces it when the fresh

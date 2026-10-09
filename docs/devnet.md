@@ -262,6 +262,14 @@ Per IP address, per minute:
 Past either, the API answers `429` with `Retry-After` until the minute is
 up. The faucet and devnet mirrors keep their own daily limits instead.
 
+Token logos come from the API too. `GET /api/icon/<mint>` takes a mainnet
+mint and returns the logo Jupiter lists for it, fetched once by the server.
+Most logos live on IPFS gateways that browsers refuse to show on another
+site, so the server tries the logo's own URL, then the same file on public
+gateways, and keeps the first real image it gets for 7 days. A token with no
+logo answers `404`, and the server does not look again for an hour. The site
+shows the token's initial until a logo loads, and keeps it if none does.
+
 ## What differs from mainnet
 
 1. **Equity prices** come from a relay that posts Jupiter quotes in Pyth's
