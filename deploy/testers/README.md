@@ -65,6 +65,40 @@ main that includes `testers/`.
 - Pause: `systemctl stop unwind-testers` (the dashboard stays up)
 - More or fewer browsers: change `CONCURRENCY` in the env file, restart.
 
+## Dashboard
+
+https://api.unwindfi.xyz/testers/ (basic auth) opens on a status bar: a
+health grade with its reason, whether the fleet is up, the build, and a
+24h / 48h / 7d range switch. Below it, six tiles with sparklines, six
+charts drawn as inline SVG (sessions, transaction outcomes, journey success
+by journey, step and order durations, new issues by severity, Chrome
+memory), a live activity feed, the latest survey captures, and the issues
+table with its Fixed / Ignore / Reopen actions. The page refreshes every
+30 seconds and makes no request outside the dashboard.
+
+The grade, from the last hour:
+
+- Down: nothing started, ended or sent a transaction in `FLEET_DOWN_MIN`
+  minutes (15 by default), or at least half of 4 or more sessions failed.
+- Degraded: session failures above 10% (4 or more sessions), transaction
+  failures above 10% (5 or more settled), journey failures above 15% (10 or
+  more runs), or a new high-severity issue.
+- Healthy: none of those.
+
+Every route below sits behind the same basic auth and only reads, except
+the status change.
+
+| Route | What it returns |
+| --- | --- |
+| `GET /api/status` | The grade and its reasons, fleet up or down, minutes since the last activity, active workers, build, last-hour and 24h success rates for sessions, journeys and transactions, open issues by severity, the 5 most failing journeys and steps in 24h |
+| `GET /api/timeseries?hours=48` | Hourly buckets for the last N hours (at most 168): sessions ok, failed, cut short and running; journeys ok and failed by name; settled transactions by kind (confirmed, failed, timeout); new issues by severity; median and p90 journey, per-step and confirmed-order durations; average Chrome memory; survey captures and changed pages |
+| `GET /api/activity?limit=50` | The latest finished journeys, settled transactions and new issues as one feed, newest first (at most 200) |
+| `GET /api/survey` | The latest capture of each surveyed page, with a `changed` flag when its last capture moved |
+| `GET /survey/<file>.jpg` | A survey capture |
+| `GET /api/health`, `/api/summary`, `/api/issues`, `/api/issue/<sig>` | The 24h tables, new issues and the issues table, as before |
+| `POST /api/issues/<sig>/status` | `{ "status": "open" \| "fixed" \| "ignored" }` |
+| `GET /shots/<file>.jpg` | An issue screenshot |
+
 ## Survey
 
 Every `SURVEY_EVERY_MIN` minutes (60 by default, 0 turns it off) the fleet

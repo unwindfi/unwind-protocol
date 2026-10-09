@@ -78,6 +78,7 @@ export function open(): Database.Database {
       PRIMARY KEY (route, theme, device)
     );
     CREATE INDEX IF NOT EXISTS survey_changed ON survey(changed_at);
+    CREATE INDEX IF NOT EXISTS issues_first_seen ON issues(first_seen);
   `);
   return db;
 }

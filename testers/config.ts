@@ -61,6 +61,9 @@ export const config = {
   /// The bearer token for the read-only review feed (/api/review). Unset or
   /// shorter than 32 characters, the feed refuses every request.
   reviewToken: process.env.REVIEW_TOKEN ?? "",
+  /// The dashboard calls the fleet down when nothing started, ended or sent
+  /// a transaction in this many minutes.
+  fleetDownMin: Math.max(1, num(process.env.FLEET_DOWN_MIN, 15)),
   /// The path Caddy serves the dashboard under, for absolute shot links.
   reviewPrefix: (process.env.REVIEW_PREFIX ?? "/testers").replace(/\/$/, ""),
   /// Stop after this many ms (0: forever). Used for local verification runs.

@@ -3,33 +3,127 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>unwind testers</title>
 <style>
-  @font-face { font-family: Inter; font-weight: 400; src: url(fonts/inter-latin-400-normal.woff2) format("woff2"); font-display: swap; }
-  @font-face { font-family: Inter; font-weight: 500; src: url(fonts/inter-latin-500-normal.woff2) format("woff2"); font-display: swap; }
-  @font-face { font-family: Inter; font-weight: 600; src: url(fonts/inter-latin-600-normal.woff2) format("woff2"); font-display: swap; }
   :root {
-    --bg: #0e1012; --panel: #15171a; --panel2: #1b1e22; --line: #25292e;
-    --fg: #e9eaec; --muted: #8d939a; --dim: #5d636a;
-    --high: #f0616d; --medium: #e3b04b; --low: #7f8790; --up: #3fbf7f; --bar: #8f7cf7;
+    --bg: #0b0a11; --panel: #12101f; --panel2: #1a1729; --line: #262139; --grid: #1f1b30;
+    --fg: #ecebf3; --muted: #9a95b0; --dim: #67627d;
+    --accent: #7a5cff; --lilac: #c6b8ff;
+    --ok: #3fbf7f; --warn: #e3b04b; --bad: #f0616d; --low: #77728d;
+    --high: var(--bad); --medium: var(--warn);
+    --hatch: repeating-linear-gradient(135deg, var(--bad) 0 2px, rgba(11,10,17,.55) 2px 3.5px);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--fg); }
-  body { font: 13.5px/1.5 Inter, system-ui, sans-serif; font-feature-settings: "tnum" 1, "cv11" 1; }
+  body { font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+         font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
   a { color: inherit; }
-  .wrap { max-width: 1320px; margin: 0 auto; padding: 20px 16px 48px; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
-  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
-  h2 { font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 13.5px; font-weight: 500; margin: 0; }
   .muted { color: var(--muted); } .dim { color: var(--dim); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; min-width: 0; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line);
+  .panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .panel-head .note { color: var(--dim); font-size: 12px; margin-left: auto; }
+
+  /* status bar */
+  .status { display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; margin-bottom: 14px; }
+  .status .grow { flex: 1 1 auto; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 9px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+          border: 1px solid var(--line); background: var(--panel); }
+  .pill .dot, .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; display: inline-block; }
+  .pill.Healthy { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); } .pill.Healthy .dot { background: var(--ok); }
+  .pill.Degraded { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); } .pill.Degraded .dot { background: var(--warn); }
+  .pill.Down { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); } .pill.Down .dot { background: var(--bad); }
+  .reason { color: var(--fg); }
+  .reason .more { color: var(--muted); }
+  .meta { display: flex; gap: 6px 16px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
+  .meta b { font-weight: 500; color: var(--fg); }
+
+  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+  button { cursor: pointer; } button:hover { border-color: #3a3452; }
+  button:focus-visible, select:focus-visible, input:focus-visible, svg:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 4px 10px; font-size: 12.5px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--panel2); color: var(--fg); }
+
+  /* KPI tiles */
+  .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--line);
            border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
-  .tile { background: var(--panel); padding: 12px 14px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile { background: var(--panel); padding: 12px 14px 10px; min-width: 0; }
   .tile .k { color: var(--muted); font-size: 12px; }
-  .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; letter-spacing: -.01em; }
-  .grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
-  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  .tile .v { font-size: 21px; font-weight: 600; margin-top: 2px; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .v small { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  .tile .s { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile svg { display: block; width: 100%; height: 28px; margin-top: 8px; }
+  .sevs { display: flex; gap: 8px; font-size: 19px; }
+  .sevs span { display: inline-flex; align-items: baseline; gap: 4px; }
+  .sevs i { font-style: normal; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+
+  /* charts */
+  .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 0; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .charts, .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  .charts .panel { margin-bottom: 0; }
+  .charts { margin-bottom: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin: -2px 0 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .legend .ln { width: 14px; height: 0; border-top: 2px solid; display: inline-block; }
+  .legend .ln.dash { border-top-style: dashed; }
+  .plot { position: relative; min-height: 200px; }
+  .plot svg { display: block; overflow: visible; touch-action: pan-y; }
+  .plot.loading { opacity: .55; }
+  @media (prefers-reduced-motion: no-preference) { .plot { transition: opacity .2s; } }
+  .axis-t { fill: var(--dim); font-size: 10.5px; }
+  .axis-l { fill: var(--muted); font-size: 11px; }
+  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+  .plot .empty { display: flex; align-items: center; justify-content: center; min-height: 200px; border: 1px dashed var(--line); border-radius: 8px; padding: 0 16px; }
+
+  #tip { position: fixed; z-index: 10; pointer-events: none; background: #1d1930; border: 1px solid #332c4d; border-radius: 8px;
+         padding: 8px 10px; font-size: 12px; min-width: 150px; max-width: 320px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: none; }
+  #tip .h { color: var(--muted); margin-bottom: 4px; }
+  #tip .r { display: grid; grid-template-columns: 14px auto 1fr; align-items: center; gap: 6px; line-height: 1.6; }
+  #tip .r .key { width: 12px; height: 0; border-top: 2px solid; }
+  #tip .r .key.dash { border-top-style: dashed; }
+  #tip .r b { font-weight: 600; }
+  #tip .r span:last-child { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #tip .sep { border-top: 1px solid #332c4d; margin: 5px 0; }
+
+  /* activity feed */
+  .feed { max-height: 440px; overflow-y: auto; margin: 0 -16px -16px; padding: 0 16px; }
+  .item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item .who { font-weight: 500; }
+  .item .who .dim { font-weight: 400; }
+  .item .what { color: var(--muted); }
+  .item .when { color: var(--dim); font-size: 12px; text-align: right; white-space: nowrap; }
+  .item .side { display: flex; align-items: center; gap: 8px; justify-content: flex-end; white-space: nowrap; }
+  .item .msg1 { grid-column: 1 / -1; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip { display: inline-block; font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+  .chip.good { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .chip.fail { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); }
+  .chip.amber { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .kind { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-right: 6px; }
+
+  /* survey strip */
+  .strip { display: grid; grid-auto-flow: column; grid-auto-columns: 172px; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; text-decoration: none; scroll-snap-align: start; display: block; }
+  .card:hover { border-color: #3a3452; }
+  .card .img { position: relative; height: 112px; background: var(--panel2); }
+  .card img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+  .card .badge { position: absolute; top: 6px; left: 6px; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--accent); color: #fff; }
+  .card .badge.err { background: var(--bad); }
+  .card .c { padding: 7px 9px 8px; font-size: 12px; }
+  .card .c .r { font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .c .m { color: var(--muted); }
+
+  /* tables */
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-weight: 400; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -41,39 +135,100 @@
   .msg .t { color: var(--muted); font-size: 12px; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .thumb { width: 96px; height: 60px; object-fit: cover; object-position: top; border-radius: 6px; border: 1px solid var(--line); display: block; }
-  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
-  button { cursor: pointer; } button:hover { border-color: #3a3f45; }
   .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
-  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); }
-  .seg button[aria-pressed="true"] { background: var(--panel2); color: var(--fg); }
   details > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); background: var(--bg);
         border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; margin: 8px 0 0; }
   .scroll { overflow-x: auto; }
-  .chart { display: flex; align-items: flex-end; gap: 3px; height: 96px; padding-top: 8px; }
-  .chart div { flex: 1; background: var(--bar); border-radius: 3px 3px 0 0; min-height: 1px; position: relative; }
-  .chart div.fail { background: linear-gradient(to top, var(--high) var(--f), var(--bar) var(--f)); }
-  .axis { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 4px; }
-  .ok { color: var(--up); } .bad { color: var(--high); }
-  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+  h3 { font-size: 12px; font-weight: 400; color: var(--muted); margin: 14px 0 4px; }
+  h3:first-child { margin-top: 0; }
+  .rate { display: inline-block; width: 56px; height: 6px; background: var(--panel2); border-radius: 3px; vertical-align: middle; margin-left: 8px; overflow: hidden; }
+  .rate i { display: block; height: 100%; background: var(--bad); }
+  .err-line { color: var(--bad); margin-bottom: 10px; display: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
+  <div class="status" role="region" aria-label="Fleet status">
     <h1>unwind testers</h1>
-    <span class="muted" id="sub">Loading</span>
-  </header>
+    <span class="pill" id="pill" role="status"><span class="dot"></span><span id="grade">Loading</span></span>
+    <span class="reason" id="reason"></span>
+    <span class="grow"></span>
+    <div class="seg" role="group" aria-label="Range" id="range">
+      <button data-h="24" aria-pressed="true">24h</button>
+      <button data-h="48" aria-pressed="false">48h</button>
+      <button data-h="168" aria-pressed="false">7d</button>
+    </div>
+  </div>
+  <div class="meta" id="meta" style="margin:-6px 0 14px"></div>
+  <div class="err-line" id="err" role="alert"></div>
 
   <div class="tiles" id="tiles"></div>
 
-  <div class="panel">
-    <h2>New in the last 24 hours</h2>
-    <div id="summary" class="scroll"></div>
+  <div class="charts">
+    <section class="panel">
+      <div class="panel-head"><h2>Sessions per hour</h2><span class="note" id="n-sessions"></span></div>
+      <div class="legend" id="lg-sessions"></div>
+      <div class="plot" id="c-sessions"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Transaction outcomes per hour</h2>
+        <select id="txkind" aria-label="Transaction kind" style="margin-left:auto;padding:3px 8px;font-size:12.5px"><option value="">All kinds</option></select></div>
+      <div class="legend" id="lg-txs"></div>
+      <div class="plot" id="c-txs"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Journey success rate</h2><span class="note">worst first</span></div>
+      <div class="legend" id="lg-journeys"></div>
+      <div class="plot" id="c-journeys"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Durations</h2>
+        <div class="seg" role="group" aria-label="Duration measure" id="dur" style="margin-left:auto">
+          <button data-d="step" aria-pressed="true">Per step</button>
+          <button data-d="journey" aria-pressed="false">Per journey</button>
+          <button data-d="order" aria-pressed="false">Order tx</button>
+        </div></div>
+      <div class="legend" id="lg-dur"></div>
+      <div class="plot" id="c-dur"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>New issues per hour</h2><span class="note">by first sighting</span></div>
+      <div class="legend" id="lg-issues"></div>
+      <div class="plot" id="c-issues"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Fleet resources</h2><span class="note" id="n-mem"></span></div>
+      <div class="legend" id="lg-mem"></div>
+      <div class="plot" id="c-mem"></div>
+    </section>
   </div>
 
-  <div class="panel">
+  <div class="grid2">
+    <section class="panel">
+      <div class="panel-head"><h2>Live activity</h2><span class="note">journeys, transactions and new issues, newest first</span></div>
+      <div class="feed" id="feed" aria-live="off"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Failing most, last 24 hours</h2></div>
+      <h3>Journeys</h3>
+      <div class="scroll"><table><tbody id="fail-j"></tbody></table></div>
+      <h3>Steps</h3>
+      <div class="scroll"><table><tbody id="fail-s"></tbody></table></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Survey</h2><span class="note" id="n-survey"></span></div>
+    <div class="strip" id="survey"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>New in the last 24 hours</h2></div>
+    <div id="summary" class="scroll"></div>
+  </section>
+
+  <section class="panel">
     <div class="bar">
       <h2 style="margin:0;margin-right:auto">Issues</h2>
       <div class="seg" role="group" aria-label="Status" id="status">
@@ -90,26 +245,24 @@
       <thead><tr><th>Issue</th><th>Route</th><th>Seen on</th><th class="num">Count</th><th class="num">24h</th><th>First / last</th><th>Screenshot</th><th></th></tr></thead>
       <tbody id="issues"></tbody>
     </table></div>
-  </div>
+  </section>
 
   <div class="grid2">
-    <div class="panel">
-      <h2>Sessions per hour, last 24 hours</h2>
-      <div class="chart" id="chart" aria-label="Sessions per hour"></div>
-      <div class="axis"><span id="axis0"></span><span>failed share in red</span><span>now</span></div>
-      <h2 style="margin-top:18px">Journeys, last 24 hours</h2>
+    <section class="panel">
+      <h2 style="margin-bottom:10px">Journeys, last 24 hours</h2>
       <div class="scroll"><table><thead><tr><th>Journey</th><th class="num">Runs</th><th class="num">Passed</th><th class="num">Failed</th><th class="num">Average</th></tr></thead><tbody id="journeys"></tbody></table></div>
-      <h2 style="margin-top:18px">Most frequent failures</h2>
+      <h2 style="margin:18px 0 10px">Most frequent failures</h2>
       <div class="scroll"><table><tbody id="failures"></tbody></table></div>
-    </div>
-    <div class="panel">
-      <h2>Transactions, last 24 hours</h2>
+    </section>
+    <section class="panel">
+      <h2 style="margin-bottom:10px">Transactions, last 24 hours</h2>
       <div class="scroll"><table><thead><tr><th>Kind</th><th>Status</th><th class="num">Count</th></tr></thead><tbody id="txs"></tbody></table></div>
-      <h2 style="margin-top:18px">Personas</h2>
+      <h2 style="margin:18px 0 10px">Personas</h2>
       <div class="scroll" style="max-height:520px;overflow:auto"><table><thead><tr><th>Persona</th><th>Role</th><th>Device</th><th>Last run</th><th class="num">24h</th></tr></thead><tbody id="personas"></tbody></table></div>
-    </div>
+    </section>
   </div>
 </div>
+<div id="tip" role="tooltip"></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -122,9 +275,459 @@ const ago = (t) => {
   return Math.round(s / 86400) + "d ago";
 };
 const pct = (x) => x == null ? "–" : (x * 100).toFixed(0) + "%";
-let status = "open", issues = [];
+const fmtN = (n) => n == null ? "–" : Number(n).toLocaleString("en-US");
+const secs = (ms) => ms == null ? "–" : ms < 1000 ? Math.round(ms) + "ms" : ms < 60000 ? (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s" : (ms / 60000).toFixed(1) + "m";
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const C = { ok: css("--ok"), bad: css("--bad"), warn: css("--warn"), low: css("--low"), accent: css("--accent"), lilac: css("--lilac"), grid: css("--grid"), line: css("--line"), dim: css("--dim") };
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
-async function get(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
+let status = "open", issues = [];
+let hours = [24, 48, 168].includes(Number(store.get("testers.range"))) ? Number(store.get("testers.range")) : 24;
+let durMode = store.get("testers.dur") || "step";
+let TS = null, ST = null, SURVEY = null;
+
+async function get(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(u.split("?")[0] + " " + r.status); return r.json(); }
+
+// ------------------------------------------------------------ tooltip
+
+const tipEl = $("tip");
+/// rows: [{ color, dash, value, label }] or { sep: true }. Built with textContent: names come from data.
+function showTip(x, y, title, rows) {
+  tipEl.replaceChildren();
+  const h = document.createElement("div"); h.className = "h"; h.textContent = title; tipEl.append(h);
+  for (const r of rows) {
+    if (r.sep) { const s = document.createElement("div"); s.className = "sep"; tipEl.append(s); continue; }
+    const row = document.createElement("div"); row.className = "r";
+    const k = document.createElement("span"); k.className = "key" + (r.dash ? " dash" : ""); k.style.borderTopColor = r.color || "transparent";
+    const b = document.createElement("b"); b.textContent = r.value;
+    const l = document.createElement("span"); l.textContent = r.label;
+    row.append(k, b, l); tipEl.append(row);
+  }
+  tipEl.style.display = "block";
+  const w = tipEl.offsetWidth, hh = tipEl.offsetHeight;
+  let left = x + 14, top = y + 14;
+  if (left + w > innerWidth - 8) left = x - w - 14;
+  if (top + hh > innerHeight - 8) top = y - hh - 14;
+  tipEl.style.left = Math.max(8, left) + "px"; tipEl.style.top = Math.max(8, top) + "px";
+}
+const hideTip = () => { tipEl.style.display = "none"; };
+
+// ------------------------------------------------------------ chart kit (inline SVG, no libraries)
+
+const M = { l: 50, r: 12, t: 12, b: 38 };
+const H = 210;
+
+function niceTicks(max, n = 4) {
+  if (!(max > 0)) max = 1;
+  const raw = max / n, p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw - 1e-9);
+  const top = Math.ceil(max / step - 1e-9) * step, out = [];
+  for (let v = 0; v <= top + 1e-9; v += step) out.push(+v.toFixed(6));
+  return out;
+}
+
+const hourLabel = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", hour12: false }).padStart(2, "0") + ":00";
+const dayLabel = (t) => new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const bucketTitle = (t) => `${dayLabel(t)}, ${hourLabel(t)} to ${hourLabel(t + 3600000)}`;
+
+/// Hour ticks that land on round local hours, at most about eight of them.
+function xTicks(buckets, width) {
+  const n = buckets.length, max = Math.max(3, Math.floor(width / 70));
+  const k = [1, 2, 3, 4, 6, 12, 24].find((s) => n / s <= max) || 24;
+  const out = [];
+  buckets.forEach((b, i) => {
+    const h = new Date(b.at).getHours();
+    if (k === 24 ? h === 0 : h % k === 0) out.push({ i, label: h === 0 ? dayLabel(b.at) : hourLabel(b.at) });
+  });
+  return out;
+}
+
+function frame(el, { buckets, max, yFmt, yLabel, xLabel = "hour, local time" }) {
+  const W = Math.max(260, el.clientWidth || 600);
+  const iw = W - M.l - M.r, ih = H - M.t - M.b, n = buckets.length, bw = iw / n;
+  const ticks = niceTicks(max), top = ticks[ticks.length - 1];
+  const y = (v) => M.t + ih - (v / top) * ih;
+  let s = "";
+  for (const t of ticks) {
+    s += `<line x1="${M.l}" x2="${W - M.r}" y1="${y(t)}" y2="${y(t)}" stroke="${t === 0 ? C.line : C.grid}" stroke-width="1"/>`;
+    s += `<text class="axis-t" x="${M.l - 6}" y="${y(t) + 3.5}" text-anchor="end">${esc(yFmt(t))}</text>`;
+  }
+  for (const t of xTicks(buckets, iw)) {
+    const x = M.l + t.i * bw;
+    s += `<line x1="${x}" x2="${x}" y1="${M.t + ih}" y2="${M.t + ih + 4}" stroke="${C.line}"/>`;
+    s += `<text class="axis-t" x="${x}" y="${M.t + ih + 16}" text-anchor="middle">${esc(t.label)}</text>`;
+  }
+  s += `<text class="axis-l" x="${M.l + iw / 2}" y="${H - 4}" text-anchor="middle">${esc(xLabel)}</text>`;
+  s += `<text class="axis-l" transform="translate(12 ${M.t + ih / 2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
+  return { W, iw, ih, n, bw, y, top, s };
+}
+
+function hatchDef(id, color) {
+  return `<pattern id="${id}" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
+    <rect width="4" height="4" fill="${color}"/><line x1="0" y1="0" x2="0" y2="4" stroke="rgba(11,10,17,.6)" stroke-width="1.6"/></pattern>`;
+}
+
+function legend(id, items) {
+  $(id).innerHTML = items.map((it) => {
+    const sw = it.line
+      ? `<i class="ln${it.dash ? " dash" : ""}" style="border-top-color:${it.color}"></i>`
+      : `<i class="sw" style="background:${it.hatch ? `repeating-linear-gradient(135deg, ${it.color} 0 2px, rgba(11,10,17,.6) 2px 3.5px)` : it.color}"></i>`;
+    return `<span>${sw}${esc(it.label)}</span>`;
+  }).join("");
+}
+
+function empty(el, text) { el.innerHTML = `<div class="empty">${esc(text)}</div>`; el.onpointermove = null; }
+
+/// Pointer and arrow-key hover over hour columns. `at(i)` returns { title, rows } for the tooltip.
+function columns(el, f, { at, mode }) {
+  const svg = el.querySelector("svg"), hl = svg.querySelector(".hl");
+  let cur = -1;
+  const place = (i, cx, cy) => {
+    if (i < 0 || i >= f.n) return;
+    cur = i;
+    if (mode === "line") { const x = M.l + (i + 0.5) * f.bw; hl.setAttribute("x1", x); hl.setAttribute("x2", x); }
+    else { hl.setAttribute("x", M.l + i * f.bw); hl.setAttribute("width", f.bw); }
+    hl.style.display = "";
+    svg.querySelectorAll(".pt").forEach((p) => p.remove());
+    const d = at(i);
+    for (const p of d.points || []) {
+      if (p.v == null) continue;
+      svg.insertAdjacentHTML("beforeend", `<circle class="pt" cx="${M.l + (i + 0.5) * f.bw}" cy="${f.y(p.v)}" r="4" fill="${p.color}" stroke="${css("--panel")}" stroke-width="2"/>`);
+    }
+    if (cx == null) { const r = svg.getBoundingClientRect(); cx = r.left + M.l + (i + 0.5) * f.bw; cy = r.top + M.t + 10; }
+    showTip(cx, cy, d.title, d.rows);
+  };
+  const off = () => { hl.style.display = "none"; svg.querySelectorAll(".pt").forEach((p) => p.remove()); hideTip(); };
+  svg.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(), px = e.clientX - r.left;
+    if (px < M.l || px > f.W - M.r) return off();
+    place(Math.min(f.n - 1, Math.floor((px - M.l) / f.bw)), e.clientX, e.clientY);
+  });
+  svg.addEventListener("pointerleave", off);
+  svg.addEventListener("blur", off);
+  svg.addEventListener("focus", () => place(cur < 0 ? f.n - 1 : cur));
+  svg.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") { place(Math.max(0, cur - 1)); e.preventDefault(); }
+    if (e.key === "ArrowRight") { place(Math.min(f.n - 1, cur + 1)); e.preventDefault(); }
+    if (e.key === "Escape") off();
+  });
+}
+
+/// Stacked bars per hour. series: [{ key, label, color, hatch, get(b) }].
+function stacked(el, { buckets, series, yLabel, emptyText, extra, label }) {
+  const totals = buckets.map((b) => series.reduce((s, x) => s + (x.get(b) || 0), 0));
+  if (!totals.some((t) => t > 0)) return empty(el, emptyText);
+  const f = frame(el, { buckets, max: Math.max(...totals), yFmt: (v) => fmtN(v), yLabel });
+  const pid = el.id;
+  let defs = series.filter((x) => x.hatch).map((x) => hatchDef(`${pid}-${x.key}`, x.color)).join("");
+  const gap = f.bw > 6 ? Math.min(3, f.bw * 0.22) : f.bw > 2.5 ? 1 : 0;
+  let bars = "";
+  buckets.forEach((b, i) => {
+    let base = 0;
+    const x = M.l + i * f.bw + gap / 2, w = Math.max(0.8, f.bw - gap);
+    for (const sr of series) {
+      const v = sr.get(b) || 0; if (!v) continue;
+      const y0 = f.y(base), y1 = f.y(base + v);
+      // A 1px surface gap between stacked segments when they are tall enough to spare it.
+      const h = Math.max(1, y0 - y1 - (base > 0 && y0 - y1 > 3 ? 1 : 0));
+      bars += `<rect x="${x}" y="${y1}" width="${w}" height="${h}" fill="${sr.hatch ? `url(#${pid}-${sr.key})` : sr.color}"/>`;
+      base += v;
+    }
+  });
+  el.innerHTML = `<svg width="${f.W}" height="${H}" viewBox="0 0 ${f.W} ${H}" tabindex="0" role="img" aria-label="${esc(label)}">
+    <defs>${defs}</defs>${f.s}<rect class="hl" y="${M.t}" height="${f.ih}" fill="#ffffff" fill-opacity=".06" style="display:none"/>${bars}</svg>`;
+  columns(el, f, { at: (i) => {
+    const b = buckets[i];
+    const rows = series.map((sr) => ({ color: sr.color, value: fmtN(sr.get(b) || 0), label: sr.label }));
+    return { title: bucketTitle(b.at), rows: rows.concat(extra ? extra(b) : []) };
+  } });
+}
+
+/// Lines per hour with a crosshair. series: [{ label, color, dash, get(b) -> number|null }].
+function lines(el, { buckets, series, yLabel, yFmt, tipFmt = yFmt, emptyText, label, area }) {
+  const vals = buckets.flatMap((b) => series.map((s) => s.get(b))).filter((v) => v != null);
+  if (!vals.length) return empty(el, emptyText);
+  const f = frame(el, { buckets, max: Math.max(...vals), yFmt, yLabel });
+  const X = (i) => M.l + (i + 0.5) * f.bw;
+  let paths = "";
+  for (const s of series) {
+    let d = "", run = [], solo = "";
+    const flush = () => {
+      if (run.length === 1) solo += `<circle cx="${X(run[0][0])}" cy="${f.y(run[0][1])}" r="2.5" fill="${s.color}"/>`;
+      else if (run.length > 1) {
+        const seg = run.map(([i, v], k) => `${k ? "L" : "M"}${X(i).toFixed(1)} ${f.y(v).toFixed(1)}`).join("");
+        d += seg;
+        if (area) paths += `<path d="${seg}L${X(run[run.length - 1][0]).toFixed(1)} ${f.y(0)}L${X(run[0][0]).toFixed(1)} ${f.y(0)}Z" fill="${s.color}" fill-opacity=".12"/>`;
+      }
+      run = [];
+    };
+    buckets.forEach((b, i) => { const v = s.get(b); if (v == null) flush(); else run.push([i, v]); });
+    flush();
+    paths += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ' stroke-dasharray="5 4"' : ""}/>${solo}`;
+  }
+  el.innerHTML = `<svg width="${f.W}" height="${H}" viewBox="0 0 ${f.W} ${H}" tabindex="0" role="img" aria-label="${esc(label)}">
+    ${f.s}${paths}<line class="hl" y1="${M.t}" y2="${M.t + f.ih}" stroke="${css("--muted")}" stroke-opacity=".5" style="display:none"/></svg>`;
+  columns(el, f, { mode: "line", at: (i) => {
+    const b = buckets[i];
+    return {
+      title: bucketTitle(b.at),
+      rows: series.map((s) => ({ color: s.color, dash: s.dash, value: s.get(b) == null ? "no data" : tipFmt(s.get(b)), label: s.label })).concat(series.extra ? series.extra(b) : []),
+      points: series.map((s) => ({ v: s.get(b), color: s.color })),
+    };
+  } });
+}
+
+/// Horizontal bars of success rate, one row per journey, worst first.
+function hbars(el, rows, { emptyText, label }) {
+  if (!rows.length) return empty(el, emptyText);
+  const W = Math.max(260, el.clientWidth || 600), rh = 26, top = 6, lw = Math.min(110, W * 0.26), rw = Math.min(150, W * 0.34);
+  const pw = W - lw - rw - 8, h = top + rows.length * rh + 34, x0 = lw;
+  const pid = el.id;
+  let s = `<defs>${hatchDef(pid + "-f", C.bad)}</defs>`;
+  for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+    const x = x0 + t * pw;
+    s += `<line x1="${x}" x2="${x}" y1="${top}" y2="${top + rows.length * rh}" stroke="${t === 0 ? C.line : C.grid}"/>`;
+    s += `<text class="axis-t" x="${x}" y="${top + rows.length * rh + 14}" text-anchor="middle">${t * 100}%</text>`;
+  }
+  s += `<text class="axis-l" x="${x0 + pw / 2}" y="${h - 4}" text-anchor="middle">share of runs that passed</text>`;
+  rows.forEach((r, i) => {
+    const y = top + i * rh + 5, bh = rh - 10, okW = pw * r.rate;
+    s += `<text x="${lw - 8}" y="${y + bh / 2 + 4}" text-anchor="end" fill="${css("--fg")}" font-size="12">${esc(r.name)}</text>`;
+    s += `<rect x="${x0}" y="${y}" width="${Math.max(0, okW - (r.failed && okW > 2 ? 1 : 0))}" height="${bh}" fill="${C.ok}"/>`;
+    if (r.failed) s += `<rect x="${x0 + okW + (okW > 2 ? 1 : 0)}" y="${y}" width="${Math.max(1, pw - okW - (okW > 2 ? 1 : 0))}" height="${bh}" fill="url(#${pid}-f)"/>`;
+    s += `<text x="${x0 + pw + 8}" y="${y + bh / 2 + 4}" fill="${css("--muted")}" font-size="12"><tspan fill="${css("--fg")}" font-weight="600">${pct(r.rate)}</tspan> ${fmtN(r.failed)} of ${fmtN(r.n)} failed</text>`;
+    s += `<rect class="hit" data-i="${i}" x="0" y="${top + i * rh}" width="${W}" height="${rh}" fill="#fff" fill-opacity="0"/>`;
+  });
+  el.innerHTML = `<svg width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" tabindex="0" role="img" aria-label="${esc(label)}">${s}</svg>`;
+  const svg = el.querySelector("svg");
+  let cur = -1;
+  const show = (i, x, y) => {
+    cur = i; const r = rows[i];
+    svg.querySelectorAll(".hit").forEach((h) => h.setAttribute("fill-opacity", h.dataset.i == i ? ".05" : "0"));
+    if (x == null) { const b = svg.getBoundingClientRect(); x = b.left + lw; y = b.top + top + i * rh + rh; }
+    showTip(x, y, r.name, [
+      { color: C.ok, value: pct(r.rate), label: "passed" },
+      { color: C.ok, value: fmtN(r.ok), label: "runs passed" },
+      { color: C.bad, value: fmtN(r.failed), label: "runs failed" },
+      { value: secs(r.ms), label: "average duration, last 24h" },
+    ]);
+  };
+  const off = () => { svg.querySelectorAll(".hit").forEach((h) => h.setAttribute("fill-opacity", "0")); hideTip(); };
+  svg.addEventListener("pointermove", (e) => { const t = e.target.closest(".hit"); if (t) show(+t.dataset.i, e.clientX, e.clientY); else off(); });
+  svg.addEventListener("pointerleave", off);
+  svg.addEventListener("blur", off);
+  svg.addEventListener("focus", () => show(cur < 0 ? 0 : cur));
+  svg.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { show(Math.min(rows.length - 1, cur + 1)); e.preventDefault(); }
+    if (e.key === "ArrowUp") { show(Math.max(0, cur - 1)); e.preventDefault(); }
+    if (e.key === "Escape") off();
+  });
+}
+
+/// A sparkline for a tile: no axes, gaps where there is no data.
+function spark(series, label) {
+  const all = series.flatMap((s) => s.values).filter((v) => v != null);
+  if (!all.length) return `<svg viewBox="0 0 100 28" aria-hidden="true"><line x1="0" x2="100" y1="26" y2="26" stroke="${C.line}"/></svg>`;
+  const max = Math.max(...all, 1e-9), min = Math.min(0, ...all), n = series[0].values.length;
+  const X = (i) => (n === 1 ? 50 : (i / (n - 1)) * 100), Y = (v) => 26 - ((v - min) / (max - min || 1)) * 24;
+  const paths = series.map((s) => {
+    let d = "", pen = false;
+    s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${X(i).toFixed(2)} ${Y(v).toFixed(2)}`; pen = true; });
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`;
+  }).join("");
+  return `<svg viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="${esc(label)}"><line x1="0" x2="100" y1="26" y2="26" stroke="${C.line}" vector-effect="non-scaling-stroke"/>${paths}</svg>`;
+}
+
+// ------------------------------------------------------------ status bar and tiles
+
+const rangeName = () => (hours === 168 ? "7d" : hours + "h");
+
+function renderStatus() {
+  const s = ST; if (!s) return;
+  $("pill").className = "pill " + s.grade;
+  $("grade").textContent = s.grade;
+  const more = s.reasons.length > 1 ? ` <span class="more">and ${s.reasons.length - 1} more</span>` : "";
+  $("reason").innerHTML = esc(s.reason) + more;
+  $("reason").title = s.reasons.join("\n");
+  const f = s.fleet;
+  const fleet = `<span><span class="dot" style="background:${f.up ? C.ok : C.bad};margin-right:6px"></span><b>Fleet ${f.up ? "up" : "down"}</b>, last activity ${f.minutesSince == null ? "never" : Math.round(f.minutesSince) + " min ago"}</span>`;
+  $("meta").innerHTML = [
+    fleet,
+    `<span><b>${f.activeWorkers}</b> of ${f.concurrency} workers active</span>`,
+    `<span>build <b>${esc(s.build ?? "unknown")}</b></span>`,
+    `<span>last hour: sessions <b>${pct(s.hour.sessions.rate)}</b>, journeys <b>${pct(s.hour.journeys.rate)}</b>, txs <b>${pct(s.hour.txs.rate)}</b></span>`,
+    `<span id="countdown"></span>`,
+  ].join("");
+  tick();
+
+  $("fail-j").innerHTML = s.failingJourneys.length ? s.failingJourneys.map((j) => `<tr><td>${esc(j.name)}</td>
+      <td class="num"><span class="bad">${fmtN(j.failed)}</span> <span class="muted">of ${fmtN(j.n)}</span></td>
+      <td class="num">${pct(j.rate)}<span class="rate" aria-hidden="true"><i style="width:${(j.rate * 100).toFixed(1)}%"></i></span></td></tr>`).join("")
+    : '<tr><td class="empty">No journey failed in 24 hours.</td></tr>';
+  $("fail-s").innerHTML = s.failingSteps.length ? s.failingSteps.map((x) => `<tr><td><span class="muted">${esc(x.name)}</span> ${esc(x.step || "(no step)")}
+      <div class="dim" style="font-size:12px;overflow-wrap:anywhere">${esc(String(x.example || "").slice(0, 160))}</div></td><td class="num bad">${fmtN(x.n)}</td></tr>`).join("")
+    : '<tr><td class="empty">No step failed in 24 hours.</td></tr>';
+}
+
+function renderTiles() {
+  const B = TS.buckets, s = ST;
+  const sum = (f) => B.reduce((a, b) => a + f(b), 0);
+  const jOf = (b) => Object.values(b.journeys).reduce((a, j) => ({ ok: a.ok + j.ok, failed: a.failed + j.failed }), { ok: 0, failed: 0 });
+  const tOf = (b) => Object.values(b.txs).reduce((a, t) => ({ ok: a.ok + t.confirmed, failed: a.failed + t.failed + t.timeout }), { ok: 0, failed: 0 });
+  const sOk = sum((b) => b.sessions.ok), sFail = sum((b) => b.sessions.failed), sRun = sum((b) => b.sessions.running), sCut = sum((b) => b.sessions.cut);
+  const jOk = sum((b) => jOf(b).ok), jFail = sum((b) => jOf(b).failed);
+  const tOk = sum((b) => tOf(b).ok), tFail = sum((b) => tOf(b).failed);
+  const changed = sum((b) => b.survey.changed);
+  const pages = SURVEY ? SURVEY.pages.length : 0;
+  const R = rangeName();
+  const tile = (k, v, sub, sp) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div>${sp}</div>`;
+  $("tiles").innerHTML = [
+    tile(`Sessions, ${R}`, `${fmtN(sOk + sFail + sRun + sCut)} <small>${pct(sOk + sFail ? sOk / (sOk + sFail) : null)} ok</small>`,
+      `${fmtN(sFail)} failed${sCut ? `, ${sCut} cut short` : ""}${sRun ? `, ${sRun} running` : ""}`,
+      spark([{ values: B.map((b) => b.sessions.ok + b.sessions.failed + b.sessions.running + b.sessions.cut), color: C.accent }], "Sessions per hour")),
+    tile(`Journeys passed, ${R}`, `${pct(jOk + jFail ? jOk / (jOk + jFail) : null)} <small>of ${fmtN(jOk + jFail)}</small>`,
+      `last hour ${pct(s.hour.journeys.rate)}`,
+      spark([{ values: B.map((b) => { const j = jOf(b); return j.ok + j.failed ? j.ok / (j.ok + j.failed) : null; }), color: C.ok }], "Journey success rate per hour")),
+    tile(`Transactions, ${R}`, `<span class="ok">${fmtN(tOk)}</span> <small>/</small> <span class="${tFail ? "bad" : ""}">${fmtN(tFail)}</span>`,
+      `confirmed / failed, ${pct(tOk + tFail ? tOk / (tOk + tFail) : null)} ok`,
+      spark([{ values: B.map((b) => tOf(b).ok), color: C.ok }, { values: B.map((b) => tOf(b).failed), color: C.bad }], "Confirmed and failed transactions per hour")),
+    tile("Open issues", `<span class="sevs"><span class="bad">${fmtN(s.open.high)}<i>high</i></span><span class="warn">${fmtN(s.open.medium)}<i>med</i></span><span>${fmtN(s.open.low)}<i>low</i></span></span>`,
+      `${fmtN(sum((b) => b.issues.high + b.issues.medium + b.issues.low))} new in ${R}`,
+      spark([{ values: B.map((b) => b.issues.high + b.issues.medium + b.issues.low), color: C.warn }], "New issues per hour")),
+    tile(`Median order time, ${R}`, `${secs(TS.orderMs.p50)}`,
+      TS.orderMs.n ? `p90 ${secs(TS.orderMs.p90)}, ${fmtN(TS.orderMs.n)} orders` : "no confirmed orders",
+      spark([{ values: B.map((b) => b.orderMs.p50), color: C.lilac }], "Median order time per hour")),
+    tile("Pages surveyed", `${fmtN(pages)} <small>${fmtN(changed)} changed</small>`,
+      SURVEY && SURVEY.lastRun ? `last run ${ago(SURVEY.lastRun)}` : "no survey yet",
+      spark([{ values: B.map((b) => b.survey.changed), color: C.accent }], "Changed pages per hour")),
+  ].join("");
+}
+
+// ------------------------------------------------------------ the six charts
+
+function renderCharts() {
+  const B = TS.buckets, R = rangeName();
+  const failedSessions = B.reduce((a, b) => a + b.sessions.failed, 0), allSessions = B.reduce((a, b) => a + b.sessions.ok + b.sessions.failed, 0);
+  $("n-sessions").textContent = allSessions ? `${pct(failedSessions / allSessions)} failed over ${R}` : "";
+
+  // 1. sessions
+  const ses = [
+    { key: "ok", label: "ok", color: C.ok, get: (b) => b.sessions.ok },
+    { key: "failed", label: "failed", color: C.bad, hatch: true, get: (b) => b.sessions.failed },
+    { key: "cut", label: "cut short", color: C.low, get: (b) => b.sessions.cut },
+    { key: "running", label: "running", color: C.lilac, get: (b) => b.sessions.running },
+  ];
+  legend("lg-sessions", ses);
+  stacked($("c-sessions"), { buckets: B, series: ses, yLabel: "sessions", emptyText: `No sessions in the last ${R}.`, label: "Sessions per hour, ok and failed" });
+
+  // 2. transactions
+  const kind = $("txkind").value;
+  const keep = $("txkind").value;
+  $("txkind").innerHTML = '<option value="">All kinds</option>' + TS.kinds.map((k) => `<option ${k === keep ? "selected" : ""}>${esc(k)}</option>`).join("");
+  const pick = (b) => kind ? [b.txs[kind] || { confirmed: 0, failed: 0, timeout: 0 }] : Object.values(b.txs);
+  const tsum = (b, k) => pick(b).reduce((a, t) => a + t[k], 0);
+  const txs = [
+    { key: "confirmed", label: "confirmed", color: C.ok, get: (b) => tsum(b, "confirmed") },
+    { key: "failed", label: "failed", color: C.bad, hatch: true, get: (b) => tsum(b, "failed") },
+    { key: "timeout", label: "timed out", color: C.warn, hatch: true, get: (b) => tsum(b, "timeout") },
+  ];
+  legend("lg-txs", txs);
+  stacked($("c-txs"), {
+    buckets: B, series: txs, yLabel: kind ? `${kind} txs` : "transactions", label: "Transaction outcomes per hour",
+    emptyText: kind ? `No settled ${kind} transactions in the last ${R}.` : `No settled transactions in the last ${R}.`,
+    // With every kind shown, the tooltip breaks the hour down by kind, failures first.
+    extra: kind ? null : (b) => {
+      const rows = Object.entries(b.txs).map(([k, t]) => ({ k, ...t, bad: t.failed + t.timeout }))
+        .filter((t) => t.confirmed + t.bad).sort((a, z) => z.bad - a.bad || (z.confirmed - a.confirmed)).slice(0, 8)
+        .map((t) => ({ color: t.bad ? C.bad : C.ok, value: `${t.confirmed}/${t.bad}`, label: `${t.k}, ok/failed` }));
+      return rows.length ? [{ sep: true }, ...rows] : [];
+    },
+  });
+
+  // 3. journeys
+  const agg = new Map();
+  for (const b of B) for (const [name, j] of Object.entries(b.journeys)) {
+    const a = agg.get(name) || { name, ok: 0, failed: 0 };
+    a.ok += j.ok; a.failed += j.failed; agg.set(name, a);
+  }
+  const jrows = [...agg.values()].map((a) => ({ ...a, n: a.ok + a.failed, rate: a.ok / Math.max(1, a.ok + a.failed), ms: null }))
+    .filter((a) => a.n).sort((a, z) => a.rate - z.rate || z.n - a.n);
+  // Per-journey medians come from the 24h health feed, which has them by name.
+  for (const r of jrows) { const h = HEALTH && HEALTH.journeys.find((j) => j.name === r.name); r.ms = h ? h.ms : null; }
+  legend("lg-journeys", [{ label: "passed", color: C.ok }, { label: "failed", color: C.bad, hatch: true }]);
+  hbars($("c-journeys"), jrows, { emptyText: `No journeys in the last ${R}.`, label: "Journey success rate per journey, worst first" });
+
+  // 4. durations
+  const pick2 = { step: "stepMs", journey: "journeyMs", order: "orderMs" }[durMode];
+  const what = { step: "per step", journey: "per journey", order: "order tx, confirmed" }[durMode];
+  const dur = [
+    { label: `median ${what}`, color: C.accent, line: true, get: (b) => b[pick2].p50 },
+    { label: `p90 ${what}`, color: C.lilac, line: true, dash: true, get: (b) => b[pick2].p90 },
+  ];
+  if (durMode !== "step") dur.extra = (b) => [{ sep: true }, { value: fmtN(b[pick2].n), label: durMode === "order" ? "orders" : "journeys" }];
+  legend("lg-dur", dur);
+  lines($("c-dur"), { buckets: B, series: dur, yLabel: "seconds", yFmt: (v) => durMode === "step" || v < 10000 ? (v / 1000).toFixed(v && v < 1000 ? 1 : 0) + "s" : Math.round(v / 1000) + "s",
+    tipFmt: secs,
+    emptyText: `No ${durMode === "order" ? "confirmed orders" : "journeys"} in the last ${R}.`, label: `Duration ${what}, median and p90 per hour` });
+
+  // 5. issues
+  const sev = [
+    { key: "high", label: "high", color: C.bad, get: (b) => b.issues.high },
+    { key: "medium", label: "medium", color: C.warn, get: (b) => b.issues.medium },
+    { key: "low", label: "low", color: C.low, get: (b) => b.issues.low },
+  ];
+  legend("lg-issues", sev);
+  stacked($("c-issues"), { buckets: B, series: sev, yLabel: "new issues", emptyText: `No new issues in the last ${R}.`, label: "New issues per hour by severity" });
+
+  // 6. memory
+  const mems = B.map((b) => b.chromeMb).filter((v) => v != null);
+  $("n-mem").textContent = mems.length ? `peak hour ${fmtN(Math.max(...mems))} MB` : "";
+  const mem = [{ label: "Chrome memory, average per session", color: C.accent, line: true, get: (b) => b.chromeMb }];
+  mem.extra = (b) => [{ value: fmtN(b.sessions.ok + b.sessions.failed), label: "sessions measured" }];
+  legend("lg-mem", mem);
+  lines($("c-mem"), { buckets: B, series: mem, area: true, yLabel: "MB", yFmt: (v) => fmtN(Math.round(v)), tipFmt: (v) => fmtN(v) + " MB",
+    emptyText: `No Chrome memory readings in the last ${R}.`, label: "Average Chrome memory per hour" });
+}
+
+// ------------------------------------------------------------ feed and survey
+
+function chipFor(it) {
+  if (it.type === "issue") return `<span class="chip ${it.result === "high" ? "fail" : it.result === "medium" ? "amber" : ""}">${esc(it.result)}</span>`;
+  const cls = it.ok ? "good" : /failed|timeout/.test(it.result) ? "fail" : "";
+  return `<span class="chip ${cls}">${esc(it.result)}</span>`;
+}
+
+function renderFeed(a) {
+  const el = $("feed"), keepTop = el.scrollTop;
+  el.innerHTML = a.items.length ? a.items.map((it) => `<div class="item">
+      <div><span class="kind">${it.type === "tx" ? "tx" : it.type}</span><span class="who">${esc(it.persona ?? "fleet")}${it.personaName ? ` <span class="dim">${esc(it.personaName)}</span>` : ""}</span>
+        <span class="what"> ${esc(it.action)}</span></div>
+      <div class="side">${it.ms != null && it.ms >= 0 ? `<span class="muted">${secs(it.ms)}</span>` : ""}${chipFor(it)}<span class="when">${ago(it.t)}</span></div>
+      ${it.message && (!it.ok || it.type === "issue") ? `<div class="msg1" title="${esc(it.message)}">${esc(it.message)}</div>` : ""}
+    </div>`).join("") : '<div class="empty">No activity in the last 7 days.</div>';
+  el.scrollTop = keepTop;
+}
+
+let surveyKey = "";
+function renderSurvey(s) {
+  const key = s.pages.map((p) => p.route + p.theme + p.device + p.captured_at).join("|");
+  const changed = s.pages.filter((p) => p.changed).length;
+  $("n-survey").textContent = s.pages.length ? `${s.pages.length} captures, ${changed} changed on their latest capture${s.lastRun ? `, last run ${ago(s.lastRun)}` : ""}` : "";
+  if (key === surveyKey) return;
+  surveyKey = key;
+  // Changed and failing captures first, then newest.
+  const pages = [...s.pages].sort((a, z) => (!!z.error - !!a.error) || (z.changed - a.changed) || z.captured_at - a.captured_at);
+  $("survey").innerHTML = pages.length ? pages.map((p) => {
+    const src = p.shot_path && /^survey\/[A-Za-z0-9][A-Za-z0-9_-]*\.jpg$/.test(p.shot_path) ? `${p.shot_path}?v=${p.captured_at}` : null;
+    const badge = p.error ? '<span class="badge err">Failed</span>' : p.changed ? '<span class="badge">Changed</span>' : "";
+    const inner = `<div class="img">${src ? `<img loading="lazy" src="${esc(src)}" alt="${esc(p.route)}, ${esc(p.theme)}, ${esc(p.device)}">` : ""}${badge}</div>
+      <div class="c"><div class="r" title="${esc(p.route)}">${esc(p.route)}</div><div class="m">${esc(p.theme)}, ${esc(p.device)}</div>
+      <div class="dim" title="${esc(p.error || "")}">${ago(p.captured_at)}${!p.changed && p.changed_at ? `, changed ${ago(p.changed_at)}` : ""}</div></div>`;
+    return src ? `<a class="card" href="${esc(src)}" target="_blank" rel="noreferrer">${inner}</a>` : `<div class="card">${inner}</div>`;
+  }).join("") : '<div class="empty">No survey captures yet.</div>';
+}
+
+// ------------------------------------------------------------ the existing tables
 
 async function setStatus(sig, s) {
   await fetch("api/issues/" + sig + "/status", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: s }) });
@@ -161,32 +764,13 @@ async function loadIssues() {
   renderIssues();
 }
 
-async function loadHealth() {
-  const h = await get("api/health");
-  const open = Object.fromEntries(h.open.map((o) => [o.severity, o.n]));
-  const runs = h.journeys.reduce((s, j) => s + j.n, 0), ok = h.journeys.reduce((s, j) => s + (j.ok || 0), 0);
-  $("sub").textContent = `build ${h.build ?? "unknown"} · last session ended ${ago(h.lastSession)} · refreshes every 30s`;
-  const tile = (k, v, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
-  $("tiles").innerHTML = [
-    tile("Open, high", open.high ?? 0, open.high ? "bad" : ""),
-    tile("Open, medium", open.medium ?? 0),
-    tile("Open, low", open.low ?? 0),
-    tile("Sessions, last hour", h.lastHour),
-    tile("Journeys passed, 24h", runs ? `${pct(ok / runs)} of ${runs}` : "–"),
-    tile("Transactions confirmed, 24h", h.txSettled ? `${pct(h.txRate)} of ${h.txSettled}` : h.dryRuns ? `${h.dryRuns} dry runs` : "–"),
-    tile("Chrome memory, 6h", h.mem.avg ? `${Math.round(h.mem.avg)} MB avg` : "–"),
-  ].join("");
-  const max = Math.max(1, ...h.perHour.map((p) => p.n));
-  $("chart").innerHTML = h.perHour.map((p) => {
-    const f = p.n ? (1 - p.ok / p.n) * 100 : 0;
-    return `<div class="${f ? "fail" : ""}" style="height:${(p.n / max) * 100}%;--f:${f}%" title="${new Date(p.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: ${p.n} sessions, ${p.n - p.ok} with a failure"></div>`;
-  }).join("");
-  $("axis0").textContent = "24h ago";
+let HEALTH = null;
+function renderHealth(h) {
   $("journeys").innerHTML = h.journeys.length ? h.journeys.map((j) => `<tr><td>${esc(j.name)}</td><td class="num">${j.n}</td><td class="num ok">${j.ok}</td><td class="num ${j.n - j.ok ? "bad" : ""}">${j.n - j.ok}</td><td class="num">${(j.ms / 1000).toFixed(0)}s</td></tr>`).join("")
     : '<tr><td colspan="5" class="empty">No journeys yet.</td></tr>';
   $("failures").innerHTML = h.failures.length ? h.failures.map((f) => `<tr><td class="num">${f.n}</td><td>${esc(f.name)}</td><td class="msg muted">${esc(f.error)}</td></tr>`).join("")
     : '<tr><td class="empty">No failures in 24 hours.</td></tr>';
-  $("txs").innerHTML = h.txs.length ? h.txs.sort((a, b) => a.kind.localeCompare(b.kind)).map((t) => `<tr><td>${esc(t.kind)}</td><td class="${t.status === "confirmed" ? "ok" : /failed|timeout/.test(t.status) ? "bad" : "muted"}">${esc(t.status)}</td><td class="num">${t.n}</td></tr>`).join("")
+  $("txs").innerHTML = h.txs.length ? h.txs.sort((a, b) => a.kind.localeCompare(b.kind) || a.status.localeCompare(b.status)).map((t) => `<tr><td>${esc(t.kind)}</td><td class="${t.status === "confirmed" ? "ok" : /failed|timeout/.test(t.status) ? "bad" : "muted"}">${esc(t.status)}</td><td class="num">${t.n}</td></tr>`).join("")
     : '<tr><td colspan="3" class="empty">No transactions yet.</td></tr>';
   $("personas").innerHTML = h.personas.map((p) => `<tr><td>${esc(p.id)} <span class="muted">${esc(p.name)}</span></td><td>${esc(p.role)}</td><td class="muted">${esc(p.device)}, ${esc(p.theme)}</td><td class="${p.ok === false ? "bad" : p.ok ? "" : "dim"}">${ago(p.last)}${p.ok === false ? ", failed" : ""}</td><td class="num">${p.sessions}</td></tr>`).join("");
 }
@@ -197,6 +781,71 @@ async function loadSummary() {
     s.top.map((i) => `<tr><td class="msg"><span class="sev ${esc(i.severity)}"></span><span class="muted">${esc(i.type)}</span> ${esc(i.message)}</td><td>${esc(i.route)}</td><td class="num">${i.count}</td><td class="muted">${ago(i.first_seen)}</td></tr>`).join("")
   }</tbody></table><p class="muted" style="margin:8px 0 0">${s.total} new in 24 hours.</p>` : '<div class="empty">Nothing new in 24 hours.</div>';
 }
+
+// ------------------------------------------------------------ loading and refresh
+
+function renderAll() {
+  if (!TS || !ST) return;
+  renderTiles();
+  renderCharts();
+}
+
+async function loadCharts() {
+  document.querySelectorAll(".plot").forEach((p) => p.classList.add("loading"));
+  const [ts, st, act, sv, h] = await Promise.all([
+    get("api/timeseries?hours=" + hours), get("api/status"), get("api/activity?limit=60"), get("api/survey"), get("api/health"),
+  ]);
+  TS = ts; ST = st; SURVEY = sv; HEALTH = h;
+  renderStatus(); renderAll(); renderFeed(act); renderSurvey(sv); renderHealth(h);
+  document.querySelectorAll(".plot").forEach((p) => p.classList.remove("loading"));
+}
+
+const EVERY = 30;
+let nextAt = Date.now() + EVERY * 1000, busy = false;
+function tick() {
+  const c = $("countdown"); if (!c) return;
+  c.textContent = busy ? "refreshing" : `refresh in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`;
+}
+
+async function all(full = true) {
+  busy = true; tick();
+  try {
+    await Promise.all([loadCharts(), loadSummary(), full ? loadIssues() : null]);
+    $("err").style.display = "none";
+  } catch (e) {
+    $("err").textContent = "Could not load: " + e.message;
+    $("err").style.display = "block";
+    document.querySelectorAll(".plot").forEach((p) => p.classList.remove("loading"));
+  }
+  busy = false; nextAt = Date.now() + EVERY * 1000; tick();
+}
+
+setInterval(() => {
+  if (!busy && Date.now() >= nextAt) {
+    // An open issue's details would be wiped by a redraw of the table; refresh the rest.
+    if (document.hidden) { nextAt = Date.now() + 5000; return; }
+    all(!document.querySelector("details[open]"));
+  }
+  tick();
+}, 1000);
+
+for (const b of $("range").querySelectorAll("button")) b.setAttribute("aria-pressed", String(Number(b.dataset.h) === hours));
+$("range").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  hours = Number(b.dataset.h); store.set("testers.range", String(hours));
+  for (const x of $("range").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+  all(false);
+});
+for (const b of $("dur").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.d === durMode));
+$("dur").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  durMode = b.dataset.d; store.set("testers.dur", durMode);
+  for (const x of $("dur").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+  renderAll();
+});
+$("txkind").addEventListener("change", renderAll);
+let resizeT = 0;
+addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(renderAll, 150); });
 
 $("status").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -219,12 +868,7 @@ $("issues").addEventListener("toggle", async (e) => {
     <pre>${i.events.map((ev) => `${new Date(ev.t).toISOString().replace("T", " ").slice(0, 19)}  ${esc(ev.persona)}  ${esc(ev.device)}/${esc(ev.theme)}  ${esc(ev.step)}`).join("\n")}</pre>`;
 }, true);
 
-async function all() {
-  try { await Promise.all([loadIssues(), loadHealth(), loadSummary()]); }
-  catch (e) { $("sub").textContent = "Could not load: " + e.message; }
-}
 all();
-setInterval(() => { if (!document.querySelector("details[open]")) all(); else loadHealth(); }, 30000);
 </script>
 </body>
 </html>
