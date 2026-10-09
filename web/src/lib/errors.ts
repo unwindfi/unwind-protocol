@@ -81,21 +81,34 @@ const byName = new Map(PROGRAM_ERRORS.map(([n, , c]) => [n, c]));
 const byMsg = PROGRAM_ERRORS.map(([, m, c]) => [m.toLowerCase(), c] as const);
 
 export const REJECTED = "Rejected in wallet";
-const NO_SOL = "Not enough SOL for fees";
+const NO_SOL = "Not enough SOL";
 const EXPIRED = "Took too long, try again";
 const GENERIC = "Not accepted. Check your balance and try again.";
 
-/// The last SOL price this page read, for saying a shortfall in dollars.
+/// The last SOL price this page read, for putting a dollar figure beside a
+/// shortfall in SOL.
 let solUsd = 0;
 export const noteSolPrice = (usd: number) => { if (usd > 0) solUsd = usd; };
+
+/// "Not enough SOL: about 9.96 SOL more ($1,106.59)". The shortfall is SOL,
+/// and may be most of what is being sent (backing in SOL), so it says neither
+/// "fees" nor a bare dollar figure.
+export function solShortfall(sol: number): string {
+  const amount = sol.toFixed(sol < 0.1 ? 3 : 2);
+  const usd = sol * solUsd;
+  const worth = usd >= 0.01
+    ? ` (${usd.toLocaleString("en-US", { style: "currency", currency: "USD" })})` : "";
+  return `${NO_SOL}: about ${amount} SOL more${worth}`;
+}
 
 /// A program error's copy by its custom code, or null when it is not one.
 function byCode(code: number): string | null {
   if (code >= FIRST_CODE && code < FIRST_CODE + PROGRAM_ERRORS.length) {
     return PROGRAM_ERRORS[code - FIRST_CODE][2];
   }
-  // The token program's own: 0x1 is insufficient funds.
+  // The token program's own: 0x1 is insufficient funds, 0x11 a frozen account.
   if (code === 1) return "Not enough funds in the wallet";
+  if (code === 0x11) return "That token account is frozen";
   // Anchor's framework errors (account and constraint checks, 100 to 5999).
   if (code >= 100 && code < FIRST_CODE) return "Not accepted by the program, try again";
   return null;
@@ -107,21 +120,25 @@ const OURS = new Set([...PROGRAM_ERRORS.map(([, , c]) => c), REJECTED, EXPIRED, 
 function translate(raw: string): string {
   const s = raw.trim();
   if (!s) return GENERIC;
+  // Not enough SOL: the server's own line carries how much more is needed.
+  // Read before the pass-through below, which its first words would match.
+  const short = s.match(/about ([\d.]+) SOL more needed/i);
+  if (short) return solShortfall(Number(short[1]));
   if (OURS.has(s) || s.startsWith(NO_SOL)) return s;
   if (s === REJECTED || /user rejected|rejected the request|denied|cancell?ed by user/i.test(s)) return REJECTED;
 
-  // Not enough SOL: the server's own line carries how much more is needed.
-  const short = s.match(/about ([\d.]+) SOL more needed/i);
-  if (short) {
-    const usd = Number(short[1]) * solUsd;
-    return usd >= 0.01 ? `${NO_SOL}, about $${usd.toFixed(2)} more` : NO_SOL;
-  }
-  if (/insufficient lamports|insufficient funds for (fee|rent)|no record of a prior credit|Not enough SOL/i.test(s)) {
+  if (/insufficient lamports|insufficient funds for (fee|rent)|InsufficientFundsFor(Fee|Rent)|no record of a prior credit|Not enough SOL/i.test(s)) {
     return NO_SOL;
   }
-  if (/blockhash not found|block ?height exceeded|has expired|TransactionExpired|timed? ?out/i.test(s)) {
+  if (/blockhash not found|BlockhashNotFound|block ?height exceeded|has expired|TransactionExpired|timed? ?out/i.test(s)) {
     return EXPIRED;
   }
+  if (/already been processed|AlreadyProcessed/i.test(s)) return "Already sent. Refresh to see it";
+  if (/^InsufficientFunds$|insufficient funds/i.test(s)) return "Not enough funds in the wallet";
+  if (/exceeded CUs meter|ComputationalBudgetExceeded|Computational budget exceeded|ran out of compute/i.test(s)) {
+    return "Ran out of compute, try again";
+  }
+  if (/AccountInUse|account in use|WouldExceed\w*Limit/i.test(s)) return "The network is busy, try again";
 
   const hex = s.match(/custom program error: (0x[0-9a-f]+)/i);
   const dec = s.match(/"Custom":\s*(\d+)|Error Number: (\d+)/);

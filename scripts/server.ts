@@ -1900,20 +1900,30 @@ function explain(e: any): string {
   // in the logs. Running short of SOL for rent was the usual one: a listing
   // needs a few accounts' worth, and the page said nothing a lister could act on.
   const logs = [...(e?.logs ?? e?.transactionLogs ?? []), s].join("\n");
+  // The shortfall of one transfer: when the wallet is backing in SOL, that
+  // is mostly the amount itself, not rent or fees.
   const lamports = logs.match(/insufficient lamports (\d+), need (\d+)/);
   if (lamports) {
     const short = (Number(lamports[2]) - Number(lamports[1])) / 1e9;
-    return `Not enough SOL for rent and fees: about ${Math.max(short, 0.001).toFixed(3)} SOL more needed.`;
+    return `Not enough SOL: about ${Math.max(short, 0.001).toFixed(3)} SOL more needed.`;
   }
   if (/insufficient funds|InsufficientFunds|0x1\b/.test(logs) && /Transfer|token/i.test(logs)) {
     return "Not enough funds in the wallet for this.";
   }
+  if (/exceeded CUs meter|ComputationalBudgetExceeded|Computational budget exceeded/i.test(logs)) {
+    return "Ran out of compute. Try again in a moment.";
+  }
   const m = s.match(/Error Message: ([^.]+)\./) || s.match(/Error Code: (\w+)/)
     || logs.match(/Error Message: ([^.]+)\./);
+  if (m) return m[1];
+  // A failed simulation's first line is only "Simulation failed."; the
+  // reason (an expired blockhash, rent, a program's code) is on the next.
+  const why = e?.transactionMessage ?? s.match(/\nMessage: (.+?)\.?\s*(\n|$)/)?.[1];
+  if (why) return String(why).replace(/^Transaction simulation failed:\s*/, "");
   // A plain `throw new Error("...")` stringifies with its class in front, and
   // the page prints whatever comes back verbatim. The prefix is noise to a
   // reader who was told to paste a pool address.
-  return (m ? m[1] : s.split("\n")[0]).replace(/^Error:\s*/, "");
+  return s.split("\n")[0].replace(/^Error:\s*/, "");
 }
 
 /// Liquidation keeper. A venue with no keeper is not a venue: without this,
@@ -5305,8 +5315,13 @@ app.post("/api/tx/send", async (req, res) => {
     const failed = landed?.value?.err;
     if (failed) {
       const custom = failed?.InstructionError?.[1]?.Custom;
+      // Not a program's code: the runtime's own reason, by its name
+      // ("InsufficientFundsForRent", or an instruction's "InsufficientFunds").
+      const named = typeof failed === "string" ? failed
+        : typeof failed?.InstructionError?.[1] === "string" ? failed.InstructionError[1]
+        : Object.keys(failed ?? {})[0];
       return res.status(400).json({ ok: false, sig, error: custom != null
-        ? `custom program error: 0x${Number(custom).toString(16)}` : JSON.stringify(failed) });
+        ? `custom program error: 0x${Number(custom).toString(16)}` : named ?? JSON.stringify(failed) });
     }
     // Whatever it changed, the sender's page should not be shown the balance
     // from before it. Only the sender's: clearing every wallet's view on every

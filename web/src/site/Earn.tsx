@@ -72,6 +72,9 @@ export function Tile({ k, v, sub, tone = "" }: { k: string; v: ReactNode; sub?: 
   );
 }
 const NO_BACKINGS: Backing[] = [];
+/// SOL a backing in SOL leaves in the wallet: the wrapped-SOL account's rent
+/// (about 0.002) and the fees, with room to spare.
+const SOL_RESERVE = 0.01;
 
 /*
  * beUI's sliding tabs, dressed as /list's pills: no track behind them, and
@@ -232,13 +235,16 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
     ? (side === "in" ? pool?.addFeePct ?? 0 : pool?.removeFeePct ?? 0) : 0;
   const paying = v.kind === "market" && side === "in" ? payWith : "USDC";
   // Nothing is held back for open positions: all of a stake can come out.
-  // Pool shares already in escrow are not counted twice.
-  const ceiling = side === "in" ? (account?.usdc ?? 0)
+  // Pool shares already in escrow are not counted twice. SOL keeps back what
+  // the wrapped-SOL account's rent and the fees take.
+  const solFree = account?.sol != null ? Math.max(account.sol - SOL_RESERVE, 0) : null;
+  const ceiling = side === "in" ? (paying === "SOL" ? solFree ?? 0 : account?.usdc ?? 0)
     : v.kind === "pool" ? account?.lp.value ?? 0 : v.yours;
   const pending = v.kind === "pool" ? account?.lp.pending ?? null : null;
-  // Only USDC has a balance this page knows; a SOL or USDT amount is checked
-  // by the wallet instead.
-  const over = paying === "USDC" && usd > ceiling + 1e-9;
+  // USDC and SOL have balances this page knows; a USDT amount is checked by
+  // the wallet instead.
+  const known = paying === "USDC" || (paying === "SOL" && solFree != null);
+  const over = known && usd > ceiling + 1e-9;
   const usdOf = (n: number) => n * (paying === "USDC" ? 1 : prices?.[paying] ?? 0);
   const verb = side === "in" ? (v.kind === "pool" ? "Deposit" : "Back")
     : v.kind === "pool" ? "Request withdrawal" : "Withdraw";
@@ -411,13 +417,15 @@ export function VaultDialog({ v, account, start, onClose, onDone }: {
               <label htmlFor="vault-amount" className="text-[13px] text-foreground">Amount</label>
               {/* Only once the balance has been read: before that it is
                   not $0, it is unknown. */}
-              {owner && paying === "USDC" && (account || (side === "out" && v.kind === "market")) && (
+              {owner && known && (account || (side === "out" && v.kind === "market")) && (
                 <button type="button"
                   // Down to the cent, never up: rounded up, MAX asked for a
                   // fraction of a cent more than there was and was refused.
                   onClick={() => { setAmount((Math.floor(ceiling * 100) / 100).toFixed(2)); setAll(side === "out"); }}
                   className="n text-[12px] text-dim transition-colors hover:text-foreground">
-                  {side === "in" ? "Wallet" : "Yours"} {money(Math.floor(ceiling * 100) / 100)}
+                  {side === "in" ? "Wallet" : "Yours"} {paying === "SOL"
+                    ? `${(Math.floor(ceiling * 100) / 100).toFixed(2)} SOL`
+                    : money(Math.floor(ceiling * 100) / 100)}
                   <span className="ml-1.5 font-medium text-foreground">MAX</span>
                 </button>
               )}
