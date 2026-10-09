@@ -25,6 +25,7 @@ A market takes its mark from one of two sources, fixed at listing:
 | Keeper pass | every 25 seconds, median of the last 5 reads |
 | Quiet keeper mark pushed | about every 50 seconds |
 | Keeper circuit breaker | moves over 10% held one pass, then walked 10% a pass |
+| Pushed mark against the pool | refused over 10% from the pool's price in the same transaction |
 | Confidence from depth | 50 bps at $10,000 of depth, scaled by `10,000 / depth` |
 
 ## Prices only move forward
@@ -160,12 +161,18 @@ The venue's mark keeper prices observed markets:
 On devnet, a test copy of a real token is marked at the real token's price
 from Jupiter, and its devnet pool is read only for depth.
 
-`push_mark` takes the price as given; the program bounds it only by staleness
-and the confidence its depth allows. What this trusts is the keeper key. The
-pool authority names it with `set_mark_keeper`; setting the empty key stops
-every push. A keeper that stops leaves its marks to go stale, and a stale mark
-halts its market. The pool's spot is recorded beside every pushed mark, so any
-gap is on chain.
+`push_mark` reads the pool's own price in the same transaction and refuses any
+mark more than 10% from it. Inside that band the price is taken as given,
+bounded otherwise by staleness and the confidence its depth allows. So the
+keeper picks the mark and the pool decides the range it may be picked from: a
+lost keeper key cannot price a market at a number the asset does not trade at,
+only somewhere within 10% of where it does, and moving that range means moving
+the pool, which is what the depth cap on the budget already prices.
+
+The pool authority names the keeper with `set_mark_keeper`; setting the empty
+key stops every push. A keeper that stops, or one whose prices the band
+refuses, leaves its marks to go stale, and a stale mark halts its market. The
+pool's spot is recorded beside every pushed mark, so any gap is on chain.
 
 ### Without a keeper
 

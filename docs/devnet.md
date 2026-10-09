@@ -90,7 +90,9 @@ not carry over.
    positions on the way are liquidated while they still have margin.
 4. **Pools kept near the real price.** A server process swaps in every copy
    and mirror pool every 2 minutes. The pools still supply the depth that
-   sets leverage and budgets.
+   sets leverage and budgets, and the price a pushed mark is checked against:
+   a mark more than 10% from the pool's own price is refused, so a copy whose
+   pool has drifted that far pauses until the next swap brings it back.
 5. **Charts** start with the real token's history (Jupiter's chart data) and
    continue with the venue's own prints.
 

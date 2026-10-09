@@ -124,4 +124,6 @@ pub enum PerpError {
     NotMarketDeployer,
     #[msg("This pool earns no points: it was not created by the program's upgrade authority")]
     PoolEarnsNoPoints,
+    #[msg("That mark is too far from the pool's own price in this transaction")]
+    KeeperMarkOffSpot,
 }

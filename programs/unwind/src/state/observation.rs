@@ -37,6 +37,23 @@ pub const MIN_OBSERVATION_WINDOW_SEC: i64 = 900;
 /// pool with no history at all.
 pub const SEED_MAX_GAP_BPS: u128 = 300;
 
+/// Widest a pushed mark may sit from the pool's own price read in the same
+/// transaction.
+///
+/// The keeper names the price, so without a bound the mark is whatever its key
+/// says and a lost key prices every observed market at will. The pool is
+/// already read here for depth, which costs nothing more to check the price
+/// against: past this the push is refused and the mark goes stale, which
+/// pauses the market rather than pricing it on a number nobody can see.
+///
+/// Wide on purpose. The keeper smooths off chain and its reading is a second
+/// or two old by the time the transaction lands, so an honest push sits well
+/// inside this; the same ten percent the keeper already holds a move at. What
+/// it takes away is the arbitrary mark: to move one now, the pool itself has
+/// to be moved, and what that costs is what `budget_depth_usd` already caps a
+/// market's losses by.
+pub const KEEPER_MAX_SPOT_GAP_BPS: u128 = 1_000;
+
 /// Notional the depth figure is quoted against: the cost to move the pool by
 /// `DEPTH_REF_BPS` is measured for this much size.
 pub const DEPTH_REF_USD: u128 = 10_000_000_000; // $10,000
@@ -177,10 +194,20 @@ impl Observation {
     /// meets the bar `is_seasoned` sets, the same way `seed_from_history`
     /// does, so a market the keeper prices is tradeable from its first price
     /// rather than after fifteen minutes of readings. What that trades away
-    /// is trustlessness: the mark is whatever the keeper key says, bounded
-    /// only by staleness and the confidence its pool's depth allows.
+    /// is trust in the keeper's judgment: within
+    /// `KEEPER_MAX_SPOT_GAP_BPS` of the pool, the mark is whatever its key
+    /// says, bounded otherwise by staleness and the confidence its pool's
+    /// depth allows.
+    ///
+    /// `spot` is the pool's own price, read on chain in the same transaction.
+    /// A price further from it than `KEEPER_MAX_SPOT_GAP_BPS` is refused: the
+    /// keeper chooses the mark, the pool decides whether that mark is one the
+    /// asset actually trades at. A spot of zero is a reader that returned
+    /// nothing to check against, so there is no price to take.
     pub fn set_by_keeper(&mut self, price: u64, spot: u64, now: i64) -> Result<()> {
-        require!(price > 0, PerpError::InvalidOraclePrice);
+        require!(price > 0 && spot > 0, PerpError::InvalidOraclePrice);
+        let gap_bps = (price.abs_diff(spot) as u128) * BPS / (spot as u128);
+        require!(gap_bps <= KEEPER_MAX_SPOT_GAP_BPS, PerpError::KeeperMarkOffSpot);
         if self.is_seasoned() {
             self.observations = self.observations.saturating_add(1);
         } else {
@@ -406,6 +433,49 @@ pub(crate) mod tests {
         assert!(o.set_by_keeper(0, 1, 0).is_err());
         assert!(!o.keeper_priced);
         assert!(!o.is_seasoned());
+    }
+
+    #[test]
+    fn a_keeper_push_against_no_spot_is_refused() {
+        // A reader that returned nothing leaves the price unchecked, which is
+        // the one case the band cannot judge.
+        let mut o = obs();
+        assert!(o.set_by_keeper(1_000_000, 0, 0).is_err());
+        assert!(!o.keeper_priced);
+    }
+
+    #[test]
+    fn a_keeper_push_far_from_spot_is_refused() {
+        // What a lost keeper key costs: the mark it can name is held to what
+        // the pool says in the same transaction, either way.
+        let mut o = obs();
+        assert!(o.set_by_keeper(2_000_000, 1_000_000, 0).is_err(), "double the pool");
+        assert!(o.set_by_keeper(500_000, 1_000_000, 0).is_err(), "half the pool");
+        assert!(!o.keeper_priced, "a refused push leaves the market unopened");
+        assert_eq!(o.ewma_price, 0);
+    }
+
+    #[test]
+    fn a_keeper_push_at_the_edge_of_the_band_is_taken() {
+        let mut o = obs();
+        o.set_by_keeper(1_100_000, 1_000_000, 0).unwrap();
+        assert_eq!(o.ewma_price, 1_100_000, "ten percent over is inside the band");
+        o.set_by_keeper(900_000, 1_000_000, 1).unwrap();
+        assert_eq!(o.ewma_price, 900_000, "ten percent under is too");
+        // The gap rounds down, so the first price refused is the one a whole
+        // basis point past the band rather than a single unit past it.
+        assert!(o.set_by_keeper(1_100_100, 1_000_000, 2).is_err(), "past the band is not");
+        assert!(o.set_by_keeper(899_900, 1_000_000, 2).is_err(), "either way");
+    }
+
+    #[test]
+    fn a_real_move_is_still_followed() {
+        // The band is against the pool, not against the mark before it, so a
+        // move the pool actually made is taken whole however large it is.
+        let mut o = obs();
+        o.set_by_keeper(1_000_000, 1_000_000, 0).unwrap();
+        o.set_by_keeper(700_000, 700_000, 25).unwrap();
+        assert_eq!(o.ewma_price, 700_000, "a 30% fall the pool made is not clamped");
     }
 
     #[test]

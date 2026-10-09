@@ -428,7 +428,9 @@ pub struct PushMark<'info> {
 /// the price. The first push makes the market
 /// tradeable (see `Observation::set_by_keeper`). Depth is still read from the
 /// pool here, in the same transaction, so leverage tiers and the depth cap on
-/// a market's budget do not depend on the keeper.
+/// a market's budget do not depend on the keeper. So is spot, which the
+/// pushed price is held within `KEEPER_MAX_SPOT_GAP_BPS` of: the keeper picks
+/// the mark, the pool decides the range it may be picked from.
 pub fn push_mark(ctx: Context<PushMark>, price: u64) -> Result<()> {
     let o = &mut ctx.accounts.observation;
     let (spot, depth) = match SourceKind::from_u8(o.source_kind)? {

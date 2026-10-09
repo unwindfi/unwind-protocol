@@ -30,7 +30,13 @@ export async function forward(req: Request): Promise<Response | null> {
   // so the browser cannot choose it. The server believes the address only
   // next to the shared secret: anyone can call the box directly and claim
   // any address in a header of their own.
-  const ip = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0];
+  //
+  // x-forwarded-for is the fallback, and its last entry rather than its
+  // first: a caller may send a chain of their own and Vercel appends to it,
+  // so the front of the list is whatever they wrote there. The same end the
+  // server's own clientIp takes.
+  const xff = req.headers.get("x-forwarded-for")?.split(",").pop();
+  const ip = req.headers.get("x-real-ip") ?? xff;
   if (ip && FORWARD_SECRET) {
     headers.set("x-forward-secret", FORWARD_SECRET);
     headers.set("x-client-ip", ip.trim());

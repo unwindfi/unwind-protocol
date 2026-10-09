@@ -688,8 +688,14 @@ impl Env {
 
     /// Writes market `m`'s Pyth account at `price`, published now, and
     /// records it for every generation of the same feed. For an observed
-    /// market this only records the target (and moves a folded market's fake
-    /// pool there); the runner pushes or folds it.
+    /// market this records the target and moves its fake pool there; the
+    /// runner pushes or folds it.
+    ///
+    /// The pool moves for a keeper market as well as a folded one, because a
+    /// pushed mark is checked against the pool in the same transaction. A
+    /// keeper that priced a market somewhere its pool never went is a case
+    /// the program now refuses, so driving it would only ever test the
+    /// refusal.
     pub fn post_price(&mut self, m: usize, price: u64) {
         let fx = self.markets[m].clone();
         if fx.source == Source::Pyth {
@@ -699,10 +705,8 @@ impl Env {
             }
         } else {
             self.markets[m].price = price;
-            if fx.source == Source::Folded {
-                let liq = self.clmm_liquidity(&fx.amm);
-                self.write_clmm(fx.amm, price, liq);
-            }
+            let liq = self.clmm_liquidity(&fx.amm);
+            self.write_clmm(fx.amm, price, liq);
         }
     }
 

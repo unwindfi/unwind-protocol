@@ -50,7 +50,7 @@ A bug can lose funds that no rule here protects.
 | Source | What protects it | What does not |
 | --- | --- | --- |
 | Pyth feed | Only moves forward: a price older than the newest the market used is refused, two prices under one publish time are refused, a publish time more than 5 seconds ahead of the chain is refused. Stale or too-uncertain prices pause orders. | A wrong feed is a wrong mark. |
-| Spot pool, keeper mark | The program reads the pool's depth itself, so leverage and budget caps never depend on the keeper. The risk price caps how fast a pushed mark reaches liquidations. The keeper holds any move over 10% for one push, then steps 10% a push. | The mark is whatever the keeper key pushes. The program checks it is fresh and above zero, nothing more. A thin pool can be pushed, and the keeper follows it. |
+| Spot pool, keeper mark | The program reads the pool's depth and its price itself, so leverage and budget caps never depend on the keeper, and a pushed mark more than 10% from the pool's own price in the same transaction is refused. The risk price caps how fast a pushed mark reaches liquidations. The keeper holds any move over 10% for one push, then steps 10% a push. | Inside that 10%, the mark is whatever the keeper key pushes. A thin pool can be pushed, and the keeper follows it. |
 
 See [Price sources](price-sources.md).
 

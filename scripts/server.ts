@@ -2842,12 +2842,26 @@ app.use((_req, res, next) => {
 // A page served from localhost is anyone's local copy of the site, so it is
 // let in only where CORS_LOCALHOST=1. Local dev never needs it: Vite
 // proxies /api on the page's own origin.
-const ALLOWED_ORIGIN = process.env.CORS_LOCALHOST === "1"
-  ? /^https:\/\/((www\.)?unwindfi\.xyz|starboy[a-z0-9-]*\.vercel\.app)$|^http:\/\/localhost(:\d+)?$/
-  : /^https:\/\/((www\.)?unwindfi\.xyz|starboy[a-z0-9-]*\.vercel\.app)$/;
+//
+// The site's own domains are the whole list. Preview deployments go in
+// CORS_ORIGINS, one exact origin per entry, because a pattern wide enough to
+// cover whichever name Vercel assigns is wide enough for somebody else to
+// register a name that matches it and read this API from their own page.
+const SITE_ORIGINS = ["https://unwindfi.xyz", "https://www.unwindfi.xyz"];
+const ALLOWED_ORIGINS = new Set([
+  ...SITE_ORIGINS,
+  ...(process.env.CORS_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean),
+]);
+const LOCALHOST_ORIGIN = /^http:\/\/localhost(:\d+)?$/;
+const allowedOrigin = (origin: string) =>
+  ALLOWED_ORIGINS.has(origin)
+  || (process.env.CORS_LOCALHOST === "1" && LOCALHOST_ORIGIN.test(origin));
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGIN.test(origin)) {
+  if (origin && allowedOrigin(origin)) {
     res.set("Access-Control-Allow-Origin", origin);
     res.set("Vary", "Origin");
     res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -5386,7 +5400,8 @@ app.post("/api/tx/send", async (req, res) => {
     // Whatever it changed, the sender's page should not be shown the balance
     // from before it. Only the sender's: clearing every wallet's view on every
     // send left nothing cached under load, and every poll went to the chain.
-    const sender = VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58();
+    const keys = VersionedTransaction.deserialize(raw).message.staticAccountKeys;
+    const sender = keys[0].toBase58();
     accountMemo.delete(sender);
     backingsMemo.drop(sender);
     // A new, cancelled or changed order is in the next trigger check, and an
@@ -5399,20 +5414,25 @@ app.post("/api/tx/send", async (req, res) => {
     // Whatever landed may be an order now waiting in its batch: start the
     // auction's next pass now rather than at its next tick.
     kickAuction();
+    // The tape and the market's volume come from what the sender says they
+    // just did, so the transaction has to name the market they say they did
+    // it on. Without that check any transaction that lands -- a transfer to
+    // oneself will do -- could print a trade of any size on any symbol, and
+    // the volume every page reads is whatever the last caller claimed.
     if (req.body.record?.symbol) {
       const r = req.body.record;
-      if (rt[r.symbol]) {
-        recordTrade({ symbol: r.symbol, side: r.side, size: Number(r.size),
-                      price: px(rt[r.symbol]), kind: r.kind });
+      const m = rt[r.symbol];
+      const size = Number(r.size);
+      if (m && Number.isFinite(size) && size > 0 && keys.some((k) => k.equals(m.address))) {
+        recordTrade({ symbol: r.symbol, side: r.side, size, price: px(m), kind: r.kind });
       }
     }
     // The lister's own send: find the new market and give it its first price
     // straight away, not at the next pass, since the page promises it
     // tradeable within seconds of listing. Nobody else's send does this.
-    const payer = VersionedTransaction.deserialize(raw).message.staticAccountKeys[0].toBase58();
-    const built = listingsBuilt.get(payer);
+    const built = listingsBuilt.get(sender);
     if (built && Date.now() - built < 5 * 60_000) {
-      listingsBuilt.delete(payer);
+      listingsBuilt.delete(sender);
       discoverSoon();
     }
     res.json({ ok: true, sig });
@@ -5582,8 +5602,15 @@ const FAUCET_FILE = path.join(ROOT, `.${CLUSTER}-faucet.json`);
 /// that drained it would stop every batch from clearing.
 const AUTHORITY_SOL_FLOOR = Number(process.env.AUTHORITY_SOL_FLOOR ?? 1);
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET ?? "";
+// A faucet nobody has to be human to call is one script away from the day's
+// whole supply, and CORS does not stop the call: a page anywhere can post to
+// it from its visitors' addresses and read nothing back, which is all this
+// needs. So the public server refuses to start without the check rather than
+// starting with it skipped. Local runs mint against a validator nobody else
+// can reach.
 if (!TURNSTILE_SECRET && !IS_LOCAL) {
-  console.warn("TURNSTILE_SECRET is unset: faucet claims are not checked for a human");
+  console.error("TURNSTILE_SECRET is unset: refusing to serve a faucet with no human check");
+  process.exit(1);
 }
 /// Cloudflare's answer on a Turnstile token. Each token is good once.
 async function humanCheck(token: unknown, ip: string): Promise<boolean> {
