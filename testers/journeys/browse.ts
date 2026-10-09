@@ -5,8 +5,8 @@
 import { type Journey } from "./common";
 import { StepError } from "../session";
 
-const GROUPS = ["All markets", "Movers", "Equities", "Memecoins", "Crypto", "Opened by anyone"];
-const SORTS = ["Price", "Open interest", "24h change", "24h volume", "Per batch"];
+const GROUPS = ["All markets", "Movers", "Equities", "Memecoins", "Crypto", "Watchlist"];
+const SORTS = ["Open interest", "Volume", "24h change", "Name"];
 
 export const browse: Journey = {
   name: "browse",
@@ -15,6 +15,16 @@ export const browse: Journey = {
   async run(ctx) {
     const page = ctx.page;
     const search = () => page.getByPlaceholder("Search ticker or name");
+    // Back to every market, the way someone who filtered does before they
+    // search: the group and the price source both narrow the list.
+    const everything = async () => {
+      await ctx.click(page.getByRole("button", { name: "All markets", exact: true }), "All markets", { expectChange: false }).catch(() => {});
+      const menu = page.getByRole("button", { name: /^Price source:/ });
+      const now = await menu.first().getAttribute("aria-label", { timeout: 2_000 }).catch(() => null);
+      if (!now || now === "Price source: All sources") return;
+      await ctx.click(menu, "the price source menu");
+      await ctx.click(page.getByRole("button", { name: "Show all sources", exact: true }), "all sources");
+    };
     const start = ctx.rng.pick(["/", "/", "/markets"]);
     await ctx.step(`open ${start}`, () => ctx.goto(start, search));
     await ctx.step("check the list", async () => {
@@ -29,10 +39,9 @@ export const browse: Journey = {
       await ctx.step(`group ${g}`, async () => {
         const b = page.getByRole("button", { name: g, exact: true });
         if (!(await b.first().isVisible().catch(() => false))) return;
-        // The group already open has nothing to change into, so it is
-        // allowed to stay still.
-        const open = (await b.first().getAttribute("aria-pressed")) === "true";
-        await ctx.click(b, `the ${g} group`, { expectChange: !open });
+        // The group already showing has nothing to change into.
+        const on = (await b.first().getAttribute("aria-pressed")) === "true";
+        await ctx.click(b, `the ${g} group`, { expectChange: !on });
         if ((await b.first().getAttribute("aria-pressed")) !== "true") {
           await ctx.rec.issue("control-mismatch", "medium", `The ${g} group did not show as selected after a click`, { key: `group ${g}` });
         }
@@ -55,15 +64,29 @@ export const browse: Journey = {
     }
     if (ctx.rng.chance(0.4)) {
       await ctx.step("price source", async () => {
-        await ctx.click(page.getByRole("button", { name: /^Price source:/ }), "the price source menu");
-        const opt = page.getByRole("button", { name: /^Show (oracle|pool|all sources)$/ });
-        await ctx.click(opt.first(), "a price source");
+        // A pill named "Price source: <current>" that slides its other
+        // choices out beside it, each named "Show <source>".
+        const menu = page.getByRole("button", { name: /^Price source:/ });
+        const was = await menu.first().getAttribute("aria-label");
+        await ctx.click(menu, "the price source menu");
+        if ((await menu.first().getAttribute("aria-expanded")) !== "true") {
+          await ctx.rec.issue("control-mismatch", "medium", "The price source menu did not open on a click", { key: "source menu" });
+          return;
+        }
+        const opts = menu.first().locator("xpath=..").getByRole("button", { name: /^Show / });
+        await opts.first().waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
+        const n = await opts.count();
+        if (!n) throw new StepError("the price source menu opened with no choices");
+        await ctx.click(opts.nth(ctx.rng.int(0, n - 1)), "a price source");
+        if ((await menu.first().getAttribute("aria-label")) === was) {
+          await ctx.rec.issue("control-mismatch", "medium", `Picking a price source left the menu on "${was}"`, { key: "source pick" });
+        }
       });
     }
 
     if (m) {
       await ctx.step("search the list", async () => {
-        await ctx.click(page.getByRole("button", { name: "All markets", exact: true }), "All markets", { expectChange: false }).catch(() => {});
+        await everything();
         await ctx.type(search(), m.symbol.slice(0, ctx.rng.int(2, m.symbol.length)));
         await ctx.think(800);
         const row = page.locator(`a[href="/trade/${encodeURIComponent(m.symbol)}"]`);
@@ -123,7 +146,7 @@ export const browse: Journey = {
           await page.keyboard.press("Enter");
         } else {
           await search().fill("");
-          await ctx.click(page.getByRole("button", { name: "All markets", exact: true }), "All markets", { expectChange: false }).catch(() => {});
+          await everything();
           await ctx.click(page.locator(`a[href="/trade/${encodeURIComponent(m.symbol)}"]`), `the ${m.symbol} row`);
         }
         await page.waitForURL((u) => u.pathname.startsWith("/trade/"), { timeout: 15_000 })

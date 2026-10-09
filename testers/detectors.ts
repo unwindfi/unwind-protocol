@@ -51,8 +51,10 @@ const sigOf = (...parts: string[]) => crypto.createHash("sha1").update(parts.joi
 const EXPECTED: { test: (u: URL, status: number, method: string, failure?: string) => boolean; why: string }[] = [
   { test: (u) => u.pathname.startsWith("/_vercel/"), why: "Vercel analytics only exists on Vercel; the dev server answers 404" },
   { test: (_u, _s, _m, f) => f === "net::ERR_ABORTED", why: "a poll in flight when the page changed is cancelled by the browser" },
-  { test: (_u, _s, _m, f) => !!f && /blocked by tester/i.test(f), why: "the harness blocked it on purpose (faucet, broadcast in dry runs)" },
-  { test: (u, _s, _m, f) => u.pathname === "/api/faucet" && !!f, why: "testers never use the faucet; the harness aborts it" },
+  // Chrome names an abort from route.abort("blockedbyclient") this way; an
+  // ad blocker's is plain ERR_BLOCKED_BY_CLIENT, so only the harness's own match.
+  { test: (_u, _s, _m, f) => !!f && f.includes("ERR_BLOCKED_BY_CLIENT.Inspector"), why: "the harness blocked it on purpose (faucet, devnet-copy outside a real listing, broadcast in dry runs)" },
+  { test: (u, s) => /\/NOTA(MARKET|VAULT)\b/.test(u.pathname + u.search) && s === 404, why: "the tour opens a market and a vault that do not exist on purpose" },
   { test: (u) => u.host === "challenges.cloudflare.com", why: "Turnstile is a human check; testers never load or answer it" },
   { test: (u, s) => u.pathname.startsWith("/api/tx/") && s === 400, why: "a refused build is shown to the user as a toast, which is checked there" },
   { test: (u, s) => u.pathname.startsWith("/api/referral-code/") && s === 404, why: "a free code answers 404" },
@@ -248,9 +250,12 @@ export interface PageFinding { type: string; severity: Severity; message: string
  * findings; the caller records them. `phone` turns on the fixed-overlap
  * check, which only matters where the screen is small.
  */
-export const PAGE_CHECKS = (opts: { phone: boolean }) => {
+export const PAGE_CHECKS = (opts: { phone: boolean; width?: number }) => {
   const out: { type: string; severity: string; message: string; key: string; detail?: string }[] = [];
-  const vw = window.innerWidth;
+  // The screen's width, not innerWidth: a phone browser widens its layout
+  // viewport to fit a page that overflows, which hides the overflow from
+  // any measure taken against it.
+  const vw = Math.min(window.innerWidth, opts.width ?? window.innerWidth);
   const vh = window.innerHeight;
   const visible = (el: Element) => {
     const s = getComputedStyle(el);
@@ -259,11 +264,12 @@ export const PAGE_CHECKS = (opts: { phone: boolean }) => {
     const r = el.getBoundingClientRect();
     return r.width > 1 && r.height > 1;
   };
-  const describe = (el: Element) => {
+  /// `withText` off for signatures: the text can be an address or a balance.
+  const describe = (el: Element, withText = true) => {
     const tag = el.tagName.toLowerCase();
     const role = el.getAttribute("role");
     const label = el.getAttribute("aria-label");
-    const text = ((el as HTMLElement).innerText ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+    const text = withText ? ((el as HTMLElement).innerText ?? "").trim().replace(/\s+/g, " ").slice(0, 40) : "";
     const near = el.closest("section, aside, header, nav, main, footer, [role=dialog]");
     const where = near ? (near.getAttribute("aria-label") || near.tagName.toLowerCase()) : "";
     return `${where ? where + " > " : ""}${tag}${role ? `[role=${role}]` : ""}${label ? `[aria-label="${label}"]` : ""}${text ? ` "${text}"` : ""}`;
@@ -288,8 +294,8 @@ export const PAGE_CHECKS = (opts: { phone: boolean }) => {
     const top = culprits.filter((el) => !culprits.some((c) => c !== el && c.contains(el))).slice(0, 3);
     out.push({
       type: "horizontal-overflow", severity: "high",
-      message: `Page is ${docW}px wide in a ${vw}px viewport${top.length ? `: ${top.map(describe).join("; ")}` : ""}`,
-      key: `overflow ${top.map(describe).join(";").replace(/\d+/g, "n")}`,
+      message: `Page is ${docW}px wide in a ${vw}px viewport${top.length ? `: ${top.map((el) => describe(el)).join("; ")}` : ""}`,
+      key: `overflow ${top.map((el) => describe(el, false)).join(";")}`,
     });
   }
 

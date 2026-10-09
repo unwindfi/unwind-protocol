@@ -30,6 +30,21 @@ export interface AccountView {
 /// there, or the page never reached the state the step waits for.
 export class StepError extends Error {}
 
+/*
+ * A click Playwright gave up on because something else sat over the target
+ * (an overlay, an inert form, a page wider than the screen). Says what was
+ * on top, so the dashboard names it instead of "Timeout 8000ms exceeded".
+ */
+function covered(e: unknown, label: string): unknown {
+  const msg = String((e as Error)?.message ?? e);
+  const over = /- (<[^\n]*?>)(?:…<\/\w+>)?(?: from <[^\n]*?>…<\/\w+> subtree)? intercepts pointer events/.exec(msg);
+  if (!over) return e;
+  const tag = over[1].replace(/\s+class="[^"]*"/g, "").slice(0, 120);
+  const err = new StepError(`${label} is covered by ${tag}`);
+  err.stack = msg;
+  return err;
+}
+
 export class Ctx {
   page!: Page;
   context!: BrowserContext;
@@ -206,6 +221,7 @@ export class Ctx {
       if (this.persona.device.touch && this.rng.chance(0.5)) await target.tap({ force: o.force, timeout });
       else await target.click({ force: o.force, timeout });
     } catch (e) {
+      const err = covered(e, label);
       // What was under the pointer instead, so a phone click that lands on a
       // neighbour can be told from a page that moved or zoomed.
       const where = await target.boundingBox().catch(() => null);
@@ -216,11 +232,11 @@ export class Ctx {
           + `; viewport scale ${v?.scale ?? 1}, offset ${v?.offsetLeft ?? 0},${v?.offsetTop ?? 0}; scrollY ${Math.round(scrollY)}`;
       }, { x: where.x + where.width / 2, y: where.y + where.height / 2 }).catch(() => null);
       // On the second line: the first is the issue's key and stays stable.
-      if (seen && e instanceof Error) {
-        const [head, ...rest] = e.message.split("\n");
-        e.message = [head, seen, ...rest].join("\n");
+      if (seen && err instanceof Error) {
+        const [head, ...rest] = err.message.split("\n");
+        err.message = [head, seen, ...rest].join("\n");
       }
-      throw e;
+      throw err;
     }
     if (o.expectChange === false) return;
     const until = Date.now() + config.deadClickMs;
@@ -241,14 +257,14 @@ export class Ctx {
   /// Types the way a person does: clear, then a key at a time.
   async type(loc: Locator, text: string) {
     const t = loc.first();
-    await t.click({ timeout: 8_000 });
+    await t.click({ timeout: 8_000 }).catch((e) => { throw covered(e, String(loc)); });
     await t.fill("");
     await t.pressSequentially(text, { delay: 30 + this.rng.int(0, 60) });
   }
 
   /// The layout and accessibility checks on whatever is on screen now.
   async checkPage() {
-    const found = await this.page.evaluate(PAGE_CHECKS, { phone: this.phone }).catch(() => []);
+    const found = await this.page.evaluate(PAGE_CHECKS, { phone: this.phone, width: this.persona.device.width }).catch(() => []);
     for (const f of found as { type: string; severity: "high" | "medium" | "low"; message: string; key: string; detail?: string }[]) {
       // The header and footer are on every page: one issue, not one per route.
       const chrome = /(^|[ "])(header|footer) > /.test(f.message);

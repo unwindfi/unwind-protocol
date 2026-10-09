@@ -101,8 +101,11 @@ export async function setLeverage(ctx: Ctx, scope: Locator, target: number, max:
   if (Number.isFinite(now) && Math.abs(now - L) > 0.051) {
     await ctx.rec.issue("control-mismatch", "medium", `Leverage slider at ${now} after keying to ${L.toFixed(1)}`, { key: "leverage keys" });
   }
+  // Compared as numbers: the chip writes a whole leverage as "4x", and a
+  // target built by float steps can be 3.9999 rather than 4.
   const label = await chip.first().innerText().catch(() => "");
-  if (label && !label.startsWith(L % 1 === 0 ? `${L.toFixed(0)}x` : `${L.toFixed(1)}x`)) {
+  const shown = Number(/(\d+(?:\.\d+)?)x/.exec(label)?.[1] ?? NaN);
+  if (label && !(Math.abs(shown - L) < 0.051)) {
     await ctx.rec.issue("control-mismatch", "medium", `Leverage chip says "${label}" for ${L.toFixed(1)}x`, { key: "leverage chip" });
   }
   await ctx.click(chip, "the leverage chip (close)");

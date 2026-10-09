@@ -38,6 +38,7 @@ export const list: Journey = {
     const backTab = ctx.persona.role === "backer" || ctx.rng.chance(0.25);
     if (backTab) return backIt(ctx);
 
+    let picked = false;
     await ctx.step("search a token", async () => {
       const field = page.getByRole("combobox");
       if (!deep) await ctx.type(field, q);
@@ -53,20 +54,32 @@ export const list: Journey = {
       const n = await lists.count();
       if (!n) return;
       await ctx.click(lists.nth(ctx.rng.int(0, Math.min(n, 4) - 1)), "a token to list");
+      picked = true;
     });
+    // Nothing picked (no results, or only markets already listed): the
+    // rest of the form stays locked until there is a token.
+    if (!picked) return;
 
+    let previewed = false;
     await ctx.step("read the preview", async () => {
-      // The status card's answer only. "Pick a token" also names the phone's
-      // bottom bar while nothing is read, so it passed before the preview had.
+      // "Pick a token" and "Reading the pool" come first; these are where
+      // the card settles once the pool has been read.
       const ok = page.getByText(/^(Live at listing|Opening auction in|Too thin|Pool not read)/);
-      await ctx.ready(ok, "the listing preview").catch(() => undefined);
+      if (!(await ok.first().waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false))) {
+        await ctx.rec.issue("list-preview", "medium", "Listing preview still reading the pool 30s after picking a token", { key: "preview never settled" });
+        return;
+      }
       const status = await ok.first().innerText().catch(() => "");
       if (status === "Pool not read") {
         const why = await ok.first().locator("xpath=following-sibling::*[1]").innerText().catch(() => "");
         await ctx.rec.issue("list-preview", "medium", `Listing preview could not read the pool: ${why}`, { key: `pool not read ${why}` });
+        return;
       }
+      previewed = true;
       await ctx.checkPage();
     });
+    // The Backing fieldset is inert until there is a preview.
+    if (!previewed) return;
 
     await ctx.step("limits and backing", async () => {
       for (const s of await page.getByRole("slider").all()) {
