@@ -122,13 +122,13 @@ function CloseButton({
 
   const fill = market ? poolFill(market) : null;
   const partly = fill != null && size > fill;
-  // What the close books: the PnL marked at the price it is expected to fill
-  // at, on the share being closed.
-  const pnlAll = row.entry > 0
-    ? row.size * ((row.exit - row.entry) / row.entry) * (row.isLong ? 1 : -1) - row.funding
-    : row.pnl;
-  const pnl = pnlAll * share;
-  const pnlPct = row.collateral > 0 ? (pnlAll / row.collateral) * 100 : 0;
+  // What the close books, on the share being closed: the PnL at the price it
+  // is expected to fill at (the same figure as the PnL column), then the
+  // funding owed, on its own line like the Funding column. Netting funding
+  // into "PnL" here showed a second, smaller PnL beside the table's.
+  const pnl = row.pnl * share;
+  const pnlPct = row.pnlPct;
+  const funding = row.funding * share;
   const feeBps = market?.closeFeeBps ?? market?.openFeeBps;
   const fee = feeBps != null ? size * (feeBps / 1e4) : null;
   const payout = market?.payoutPct;
@@ -223,6 +223,9 @@ function CloseButton({
             <div className="border-t border-line bg-panel2 px-4 pb-4 pt-1 sm:px-5">
               <DRow k="Est. fill">{pnum(row.exit)}</DRow>
               <DRow k="Est. PnL"><span className={tone(pnl)}>{money(pnl)} ({pct(pnlPct)})</span></DRow>
+              {Math.abs(funding) >= 0.005 && (
+                <DRow k="Funding"><span className={tone(-funding)}>{money(-funding)}</span></DRow>
+              )}
               {fee != null && <DRow k="Fee">{money(fee)}</DRow>}
               {payout != null && payout < 100 && <DRow k="Profit paid">{payout.toFixed(0)}%</DRow>}
               {partly && (
