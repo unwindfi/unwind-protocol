@@ -58,15 +58,17 @@ export const rewards: Journey = {
         // The hint keeps its last state until the server has checked the
         // whole code, so wait for the check's own answer.
         const hint = page.getByText(/^(Available\.|Taken\.)$/);
-        await ctx.ready(hint, "the code check").catch(() => undefined);
-        const said = await hint.first().innerText().catch(() => "");
+        // Bounded: a form that went away (the wallet turned out to have a
+        // code) left this waiting 30s, then 12s twice more below.
+        await hint.first().waitFor({ state: "visible", timeout: 8_000 }).catch(() => undefined);
+        const said = await hint.first().innerText({ timeout: 1_000 }).catch(() => "");
         if (said === "Taken.") {
           // Taken by someone else: this persona's own code would show as its link.
           await ctx.rec.issue("referral-code", "low", `Code ${mine} is taken by another wallet`, { key: "code taken", shot: false });
           return;
         }
         const claim = page.getByRole("button", { name: "Claim", exact: true });
-        if (await claim.first().isEnabled().catch(() => false)) await ctx.tx("referral-code", () => ctx.click(claim, "Claim"));
+        if (await claim.first().isEnabled({ timeout: 1_000 }).catch(() => false)) await ctx.tx("referral-code", () => ctx.click(claim, "Claim"));
         return;
       }
       if (await copy.first().isVisible().catch(() => false)) await ctx.click(copy, "Copy link");

@@ -93,7 +93,9 @@ async function backAMarket(ctx: Ctx) {
     await ctx.checkPage();
     const verb = out ? "Withdraw" : "Back";
     const submit = dialog.getByRole("button", { name: verb, exact: true });
-    if (await submit.first().isEnabled().catch(() => false)) {
+    // Bounded: over the balance the button is named for that instead, and
+    // an unbounded check waited the full 12s default for a button not there.
+    if (await submit.first().isEnabled({ timeout: 1_000 }).catch(() => false)) {
       await ctx.tx(out ? "unback-market" : "back-market", () => ctx.click(submit, verb));
     }
     await close(ctx);
@@ -104,7 +106,12 @@ async function close(ctx: Ctx) {
   const x = ctx.page.getByRole("dialog").getByRole("button", { name: "Close" });
   if (await x.first().isVisible().catch(() => false)) {
     if (ctx.rng.chance(0.5)) await ctx.page.keyboard.press("Escape");
-    else await ctx.click(x.first(), "Close");
+    else await ctx.click(x.first(), "Close", { timeout: 2_000 }).catch(async () => {
+      // A Close that cannot be pressed is the issue; leave by Escape so the
+      // rest of the session is not spent on it.
+      await ctx.rec.issue("click-blocked", "medium", "The dialog's Close button could not be pressed", { key: "dialog close blocked" });
+      await ctx.page.keyboard.press("Escape");
+    });
   }
   // Closing animates out; only a dialog still there after that is stuck.
   if (!(await ctx.page.getByRole("dialog").first().waitFor({ state: "hidden", timeout: 3_000 }).then(() => true, () => false))) {

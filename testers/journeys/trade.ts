@@ -9,6 +9,7 @@ import {
   type Journey,
 } from "./common";
 import type { Ctx, Market } from "../session";
+import * as store from "../store";
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -78,10 +79,10 @@ export async function placeMarketOrder(ctx: Ctx, m: Market, side: "long" | "shor
     }
   });
 
-  await ctx.step("place the order", async () => {
+  const r = await ctx.step("place the order", async () => {
     const submit = submitButton(t).first();
     const label = await submit.innerText().catch(() => "");
-    if (label === "Connect wallet") return;
+    if (label === "Connect wallet") return null;
     if (!(await submit.isEnabled().catch(() => false))) {
       // The ticket says why; check its arithmetic against the account.
       const note = await ticketNote(t);
@@ -93,24 +94,36 @@ export async function placeMarketOrder(ctx: Ctx, m: Market, side: "long" | "shor
       if (!note && free > usd) {
         await ctx.rec.issue("disabled-no-reason", "medium", `"${label}" is disabled with ${free} USDC free and no reason shown`, { key: "submit disabled" });
       }
-      return;
+      return null;
     }
-    const r = await ctx.tx("order", () => ctx.click(submit, `"${label}"`));
-    if (r === "confirmed") {
-      await ctx.step("watch it clear", async () => {
-        await watchBatch(ctx);
-        // The position, as the API and the page both see it.
-        await page.waitForTimeout(6_000);
-        const pos = (await ctx.account())?.positions[m.symbol];
-        if (!pos) return;
-        if (!ctx.phone) {
-          await ctx.click(page.getByRole("tab", { name: /^Positions/ }), "the Positions tab", { expectChange: false });
-          const row = page.getByRole("row").filter({ hasText: m.symbol }).first();
-          if (!(await row.waitFor({ state: "visible", timeout: 8_000 }).then(() => true, () => false))) {
-            await ctx.rec.issue("position-missing", "high", `${m.symbol} position exists on chain but not in the Positions table`, { key: "position row" });
-          }
-        }
-      });
+    return ctx.tx("order", () => ctx.click(submit, `"${label}"`));
+  });
+  if (r !== "confirmed") return;
+
+  // Its own step, not part of placing it: the batch clearing and settling is
+  // the venue's time, and it is measured here rather than slept through.
+  await ctx.step("watch it clear", async () => {
+    const sent = ctx.lastSend?.at ?? Date.now();
+    await watchBatch(ctx);
+    // The position as the API sees it, once settled. Timed from the send's
+    // answer, so the dashboard has order-to-position, the wait a trader has.
+    let pos = null;
+    while (Date.now() - sent < 30_000) {
+      pos = (await ctx.account())?.positions[m.symbol] ?? null;
+      if (pos) break;
+      await page.waitForTimeout(500);
+    }
+    store.recordTx({ persona: ctx.persona.id, kind: "order", status: pos ? "position" : "no-position", ms: Date.now() - sent });
+    if (!pos) return;
+    if (!ctx.phone) {
+      const shown = Date.now();
+      await ctx.click(page.getByRole("tab", { name: /^Positions/ }), "the Positions tab", { expectChange: false });
+      const row = page.getByRole("row").filter({ hasText: m.symbol }).first();
+      if (!(await row.waitFor({ state: "visible", timeout: 8_000 }).then(() => true, () => false))) {
+        await ctx.rec.issue("position-missing", "high", `${m.symbol} position exists on chain but not in the Positions table`, { key: "position row" });
+      } else if (Date.now() - shown > 3_000) {
+        await ctx.rec.issue("slow-step", "low", `Positions table showed ${m.symbol} ${((Date.now() - shown) / 1000).toFixed(1)}s after the API had it`, { key: "position row late" });
+      }
     }
   });
 }

@@ -56,7 +56,9 @@ export const list: Journey = {
     });
 
     await ctx.step("read the preview", async () => {
-      const ok = page.getByText(/^(Live at listing|Opening auction in|Too thin|Pool not read|Pick a token)/);
+      // The status card's answer only. "Pick a token" also names the phone's
+      // bottom bar while nothing is read, so it passed before the preview had.
+      const ok = page.getByText(/^(Live at listing|Opening auction in|Too thin|Pool not read)/);
       await ctx.ready(ok, "the listing preview").catch(() => undefined);
       const status = await ok.first().innerText().catch(() => "");
       if (status === "Pool not read") {
@@ -73,7 +75,9 @@ export const list: Journey = {
         await s.press(ctx.rng.pick(["ArrowLeft", "ArrowRight", "End", "Home"]));
       }
       const backing = page.getByRole("textbox", { name: /^Backing in / });
-      if (await backing.first().isVisible().catch(() => false)) await ctx.type(backing, String(ctx.rng.pick([100, 150, 250])));
+      // Locked (inert) until a preview is read: typing into it timed out.
+      const open = await backing.first().evaluate((el) => !el.closest("[inert]"), undefined, { timeout: 1_000 }).catch(() => false);
+      if (open && await backing.first().isVisible().catch(() => false)) await ctx.type(backing, String(ctx.rng.pick([100, 150, 250])));
       const ack = page.getByRole("checkbox", { name: "My backing takes this market's losses first" });
       if (await ack.first().isVisible().catch(() => false)) await ctx.click(ack, "the acknowledgement");
       await ctx.checkPage();

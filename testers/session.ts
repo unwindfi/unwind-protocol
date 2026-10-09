@@ -100,6 +100,8 @@ export class Ctx {
   /// Set by the lister's real listing, the one flow that may ask the server
   /// to copy a mainnet pool to devnet.
   allowMirror = false;
+  /// When the last transaction's send answered, for timing what follows it.
+  lastSend: { at: number; ok: boolean } | null = null;
 
   async close() {
     try { await this.context?.close(); } catch { /* already gone */ }
@@ -111,18 +113,46 @@ export class Ctx {
   /// step that takes too long is itself an issue.
   async step<T>(name: string, fn: () => Promise<T>): Promise<T> {
     if (Date.now() > this.deadline) throw new StepError(`out of time before "${name}"`);
+    const outer = this.rec.step;
     this.rec.step = name;
     this.steps++;
     const t = Date.now();
+    const frame = { aside: 0 };
+    this.frames.push(frame);
+    let ok = false;
     try {
-      return await fn();
+      const v = await fn();
+      ok = true;
+      return v;
     } finally {
-      const ms = Date.now() - t;
+      this.frames.pop();
+      const total = Date.now() - t;
+      // The site's time only: a step nested inside is timed on its own, and
+      // the fleet's own pacing (waiting for a transaction slot) is not the
+      // site being slow. Counted in both, "place the order" read 22s when
+      // the site's part was about 3s.
+      const ms = total - frame.aside;
+      const parent = this.frames[this.frames.length - 1];
+      if (parent) parent.aside += total;
+      if (ok) this.rec.step = name;
       if (ms > config.slowStepMs && !/wait|watch|think/i.test(name)) {
         await this.rec.issue("slow-step", "low", `Step "${name}" took ${(ms / 1000).toFixed(1)}s`, { key: `slow ${name}` });
       }
+      // Back to the outer step once this one is done, so what follows is
+      // filed under it; a failure keeps naming the step it happened in.
+      if (ok && outer) this.rec.step = outer;
       await this.rec.checkStuck();
     }
+  }
+
+  /// Open steps, innermost last, with the time inside each that was not the
+  /// site's (nested steps, the fleet's transaction gate).
+  private frames: { aside: number }[] = [];
+  /// Takes `ms` off the innermost step's time (outer steps already set the
+  /// inner step's whole time aside): the fleet waited, not the site.
+  private setAsideInnermost(ms: number) {
+    const f = this.frames[this.frames.length - 1];
+    if (f) f.aside += ms;
   }
 
   /// A pause the length this person takes to read a screen.
@@ -157,7 +187,7 @@ export class Ctx {
    * A click that is expected to do something. If nothing in the DOM, the
    * network or the address changes within DEAD_CLICK_MS, the click was dead.
    */
-  async click(loc: Locator, label: string, o: { force?: boolean; expectChange?: boolean } = {}) {
+  async click(loc: Locator, label: string, o: { force?: boolean; expectChange?: boolean; timeout?: number } = {}) {
     const target = loc.first();
     try {
       await target.waitFor({ state: "visible", timeout: 10_000 });
@@ -171,8 +201,27 @@ export class Ctx {
     ]);
     const n0 = this.rec.requests;
     const u0 = this.page.url();
-    if (this.persona.device.touch && this.rng.chance(0.5)) await target.tap({ force: o.force, timeout: 8_000 });
-    else await target.click({ force: o.force, timeout: 8_000 });
+    const timeout = o.timeout ?? 8_000;
+    try {
+      if (this.persona.device.touch && this.rng.chance(0.5)) await target.tap({ force: o.force, timeout });
+      else await target.click({ force: o.force, timeout });
+    } catch (e) {
+      // What was under the pointer instead, so a phone click that lands on a
+      // neighbour can be told from a page that moved or zoomed.
+      const where = await target.boundingBox().catch(() => null);
+      const seen = where && await this.page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y);
+        const v = window.visualViewport;
+        return `under the pointer: ${el ? `${el.tagName.toLowerCase()} "${(el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 40)}"` : "nothing"}`
+          + `; viewport scale ${v?.scale ?? 1}, offset ${v?.offsetLeft ?? 0},${v?.offsetTop ?? 0}; scrollY ${Math.round(scrollY)}`;
+      }, { x: where.x + where.width / 2, y: where.y + where.height / 2 }).catch(() => null);
+      // On the second line: the first is the issue's key and stays stable.
+      if (seen && e instanceof Error) {
+        const [head, ...rest] = e.message.split("\n");
+        e.message = [head, seen, ...rest].join("\n");
+      }
+      throw e;
+    }
     if (o.expectChange === false) return;
     const until = Date.now() + config.deadClickMs;
     while (Date.now() < until) {
@@ -320,11 +369,16 @@ export class Ctx {
    *   confirmed / failed / timeout   the server's answer to the send
    */
   async tx(kind: string, press: () => Promise<void>): Promise<"skipped" | "no-sign" | "dry" | "confirmed" | "failed" | "timeout"> {
+    const gate = Date.now();
     const ticket = await txgate.acquire(this.persona.id, kind);
+    // Only the innermost step is charged once; outer ones already count the
+    // inner step's whole time as aside.
+    this.setAsideInnermost(Date.now() - gate);
     if (!ticket) return "skipped";
     this.wallet.allow(ticket);
     const sends = this.rec.sends.length;
     const signed = this.wallet.log.signed.length;
+    const pressed = Date.now();
     await press();
     await this.wallet.waitForSign(30_000);
     if (this.wallet.log.signed.length === signed) {
@@ -345,7 +399,12 @@ export class Ctx {
       await this.rec.issue("tx-unconfirmed", "high", `${kind}: no answer from the send after ${config.txTimeoutMs / 1000}s`, { key: `unconfirmed ${kind}` });
       return "timeout";
     }
-    store.recordTx({ persona: this.persona.id, kind, status: r.ok ? "confirmed" : "failed", ms: r.ms, message: r.error, sig: r.sig });
+    // Press to the send's answer, and where it went: up to the wallet's
+    // prompt is the build, after it the send and the server's confirmation.
+    const signAt = this.wallet.log.signed[signed]?.at ?? pressed;
+    this.lastSend = { at: r.at, ok: r.ok };
+    store.recordTx({ persona: this.persona.id, kind, status: r.ok ? "confirmed" : "failed", ms: r.at - pressed,
+      message: [`build ${signAt - pressed}ms, send ${r.at - signAt}ms`, r.error].filter(Boolean).join("; "), sig: r.sig });
     if (!r.ok) {
       // The failure is the toast detector's to record, in the page's words;
       // a failure the page never mentions is its own problem.

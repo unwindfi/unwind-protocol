@@ -105,6 +105,10 @@ const MARK_PARALLEL = Number(process.env.MARK_PARALLEL ?? 8);
 /// holding orders, and when this server builds an order for someone.
 let auctionHotUntil = 0;
 const heatAuction = (ms = 30_000) => { auctionHotUntil = Math.max(auctionHotUntil, Date.now() + ms); };
+/// Set when a trader's transaction lands: the auction's next pass starts at
+/// once instead of at its next tick, since an order may now be waiting.
+let auctionKicked = false;
+const kickAuction = () => { heatAuction(); auctionKicked = true; };
 /// How often the seeded testnet pools are moved to follow their real tokens.
 /// A few calls each per pass; two minutes keeps that well inside an RPC plan.
 const FLOW_MS = Number(process.env.FLOW_MS ?? 120_000);
@@ -3705,7 +3709,10 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     // Read whole rather than through `closableUsd`, which reports a position
     // promised entirely to closing quotes as no position. The maker then
     // quoted an open on the other side and the program refused the pair.
-    const info = await conn.getAccountInfo(positionPda(m.address, maker.publicKey));
+    // The maker's position and the market together: a quote is on the way
+    // from a taker's order landing to its clear, so one read, not two in turn.
+    const [info, ma]: [AccountInfo<Buffer> | null, any] = await Promise.all([
+      conn.getAccountInfo(positionPda(m.address, maker.publicKey)), marketAccount(m)]);
     const p: any = info && program.coder.accounts.decode("position", info.data);
     const open = p && num(p.sizeUsd) > 0
       ? { isLong: p.isLong as boolean, usd: (num(p.sizeUsd) - num(p.closingUsd)) / 1e6 + releasing }
@@ -3731,7 +3738,6 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
     // An open past the side's open-interest cap is refused, and with it the
     // whole quote, so an open is sized to the room left: the cap less the
     // side's open interest and every open already resting on that side.
-    const ma: any = await marketAccount(m);
     const room = (isLong: boolean) => {
       const base = num(isLong ? ma.maxOiLongUsd : ma.maxOiShortUsd) / 1e6;
       const cap = Number(ma.session) === Session.Closed ? base * Number(ma.closedSessionOiMultBps) / 10_000 : base;
@@ -3953,18 +3959,25 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
           .rpc();
       }
 
-      const sealed: any = await program.account.batch.fetch(batch);
+      // The sealed batch and the market's fee in one read: every call here
+      // sits between a trader's order landing and their position showing.
+      const { infos: [batchInfo, marketInfo] } = await getMany([batch, m.address]);
+      if (!batchInfo || !marketInfo) throw new Error(`batch or market account missing for ${m.symbol}`);
+      const sealed: any = program.coder.accounts.decode("batch", batchInfo.data);
+      const ma: any = program.coder.accounts.decode("market", marketInfo.data);
+      marketReads.set(m.address.toBase58(), { at: Date.now(), body: Promise.resolve(ma) });
       if (sig) {
         const houseUsd = (sealed.orders as any[])
           .filter((o) => o.active && o.isMaker && isHouse(o.owner))
           .reduce((t, o) => t + Number(o.filledUsd) / 1e6, 0);
-        // Best effort: the clear has already landed, and failing to read its
-        // logs back must not stop the settlements that follow it.
-        await recordClear(m.symbol, sig, houseUsd).catch((e: any) =>
+        // Best effort and not waited on: the clear has already landed, and
+        // reading its logs back (a getTransaction) held every settlement up
+        // behind a figure only the stats use.
+        void recordClear(m.symbol, sig, houseUsd).catch((e: any) =>
           console.warn(`clear log ${m.symbol}: ${e?.message ?? e}`));
       }
       if (Number(sealed.clearedTs) === 0) return;
-      const openFeeBps = num((await marketAccount(m)).openFeeBps);
+      const openFeeBps = num(ma.openFeeBps);
 
       // Settled several to a transaction: a full batch one by one was 64
       // round trips to an RPC that throttles.
@@ -3986,6 +3999,9 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
       }
       const settled = (o: any) => {
         settledOwners.add(new PublicKey(o.owner).toBase58());
+        // Now, not when the whole market's work ends: a busy batch settles
+        // in several groups, and this owner's group has already landed.
+        accountMemo.delete(new PublicKey(o.owner).toBase58());
         if (!(Number(o.filledUsd) > 0)) return null;
         {
           // A fill opened or resized a position the liquidation check holds.
@@ -4067,13 +4083,21 @@ app.post("/api/withdraw", demoOnly, async (req, res) => {
   // a long wait ends early the moment an order arrives.
   {
     const pass = async () => {
+      // A kick that arrives while this pass runs is for the next one.
+      auctionKicked = false;
       await rpcWho.run("auction", auction).catch((e: any) => console.warn(`auction: ${e?.message ?? e}`));
       // Each market's work clears the cached views of the wallets it settled
       // when it finishes (see `auction`), not when the pass does.
-      const until = Date.now() + (Date.now() < auctionHotUntil ? AUCTION_MS : AUCTION_IDLE_MS);
-      const wait = () => (Date.now() >= until || Date.now() < auctionHotUntil - 29_000)
+      const hot = Date.now() < auctionHotUntil;
+      const until = Date.now() + (hot ? AUCTION_MS : AUCTION_IDLE_MS);
+      // Checked every 100ms, so a landed order is seen within a tenth of a
+      // second rather than at the next whole tick (the tick alone was up to
+      // a second of every trade's wait). An idle loop also wakes when an
+      // order is being built.
+      const wait = () => (Date.now() >= until || auctionKicked
+        || (!hot && Date.now() < auctionHotUntil - 29_000))
         ? void pass() : void setTimeout(wait, 100);
-      setTimeout(wait, Math.min(AUCTION_MS, until - Date.now()));
+      setTimeout(wait, 100);
     };
     setTimeout(pass, AUCTION_MS);
   }
@@ -4144,13 +4168,12 @@ async function buildTx(
 /// Token accounts are created by the same transaction that needs them, so a
 /// fresh wallet's first trade does not fail on a missing ATA.
 async function ataIxs(owner: PublicKey, mints: PublicKey[]) {
-  const ixs: TransactionInstruction[] = [];
-  for (const mint of mints) {
-    const addr = ata(owner, mint);
-    if (await conn.getAccountInfo(addr)) continue;
-    ixs.push(createAssociatedTokenAccountInstruction(owner, addr, owner, mint));
-  }
-  return ixs;
+  // Every mint's account in one read: a deposit checks two, and each read in
+  // turn was a round trip before the wallet could even be asked.
+  const addrs = mints.map((mint) => ata(owner, mint));
+  const { infos } = await getMany(addrs);
+  return mints.flatMap((mint, i) => infos[i]
+    ? [] : [createAssociatedTokenAccountInstruction(owner, addrs[i], owner, mint)]);
 }
 
 /// What a pool looks like to the program that would be listed against it.
@@ -4695,9 +4718,11 @@ const shortKey = (k: string) => `${k.slice(0, 4)}…${k.slice(-4)}`;
 app.get("/api/rewards", async (req, res) => {
   try {
     const owner = ownerOf(req);
-    await seasonReady();
+    // The wallet's own record and the two shared reads together: one after
+    // another they were three round trips before the page had a figure.
+    const [t, byAddress, traders]: [any, Map<string, any>, any[]] = await Promise.all([
+      program.account.trader.fetchNullable(traderPda(owner)), marketsByAddress(), allTraders(), seasonReady()]) as any;
     const now = Math.floor(Date.now() / 1000);
-    const t: any = await program.account.trader.fetchNullable(traderPda(owner));
 
     // The markets this wallet opened, with what each has earned it.
     const listed: {
@@ -4706,7 +4731,6 @@ app.get("/api/rewards", async (req, res) => {
     }[] = [];
     // Every market from the batched read, not a request each: nineteen in a
     // row kept the page's points blank for seconds after the leaderboard.
-    const byAddress = await marketsByAddress();
     for (const m of Object.values(rt)) {
       const acc: any = byAddress.get(m.address.toBase58());
       if (!acc || !acc.deployer.equals(owner)) continue;
@@ -4726,7 +4750,7 @@ app.get("/api/rewards", async (req, res) => {
     const listingVolume = listed.reduce((a, m) => a + m.volume, 0);
 
     // Everyone who named this wallet, and what each has earned it so far.
-    const referees = (await allTraders())
+    const referees = traders
       .filter((r) => r.referrer.equals(owner))
       .map((r) => ({
         wallet: r.owner.toBase58(),
@@ -4754,7 +4778,10 @@ app.get("/api/rewards", async (req, res) => {
 
     let referrerCode: string | null = null;
     if (!t.referrer.equals(PublicKey.default)) {
-      const r: any = await program.account.trader.fetchNullable(traderPda(t.referrer));
+      // A code is set once and kept, so the shared list answers for any
+      // referrer it already holds; only one newer than it is read.
+      const r: any = traders.find((x) => x.owner.equals(t.referrer) && x.code[0])
+        ?? await program.account.trader.fetchNullable(traderPda(t.referrer));
       referrerCode = r && r.code[0] ? codeText(r.code) : null;
     }
     // This season's, not the all-time totals the program keeps.
@@ -4993,14 +5020,13 @@ app.post("/api/tx/deposit", async (req, res) => {
     const owner = ownerOf(req);
     const amount = Number(req.body.amount);
     if (!(amount > 0)) return res.status(400).json({ error: "amount must be positive" });
-    const accounts = await allMarketAccounts();
+    // The token accounts are read alongside the markets, not after them.
+    const [accounts, atas] = await Promise.all([allMarketAccounts(), ataIxs(owner, [usdcMint, lpMint])]);
     const ix = await program.methods
       .addLiquidity(USD(amount), new BN(0))
       .accounts(liquidityAccounts(owner))
       .remainingAccounts(accounts).instruction();
-    res.json(await buildTx(owner,
-      [LIQUIDITY_CU, ...(await ataIxs(owner, [usdcMint, lpMint])), ix],
-      await tablesFor(accounts)));
+    res.json(await buildTx(owner, [LIQUIDITY_CU, ...atas, ix], await tablesFor(accounts)));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
@@ -5277,8 +5303,10 @@ app.post("/api/tx/order", async (req, res) => {
       .accounts(orderAccounts(m, owner)).instruction();
     // A wallet that arrived on a referral link names its referrer with its
     // first order, so the discount applies to that order too.
-    const ref = await referrerIx(owner, req.body.ref).catch(() => []);
-    res.json(await buildTx(owner, [...(await ataIxs(owner, [usdcMint])), ...ref, ix]));
+    // Read together: each is a round trip before the wallet is asked.
+    const [ref, atas] = await Promise.all([
+      referrerIx(owner, req.body.ref).catch(() => []), ataIxs(owner, [usdcMint])]);
+    res.json(await buildTx(owner, [...atas, ...ref, ix]));
   } catch (e: any) { res.status(400).json({ error: explain(e) }); }
 });
 
@@ -5368,6 +5396,9 @@ app.post("/api/tx/send", async (req, res) => {
     positionsChanged(sender);
     // A backing in kind moves a book.
     booksRead = null;
+    // Whatever landed may be an order now waiting in its batch: start the
+    // auction's next pass now rather than at its next tick.
+    kickAuction();
     if (req.body.record?.symbol) {
       const r = req.body.record;
       if (rt[r.symbol]) {

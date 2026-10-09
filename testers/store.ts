@@ -153,8 +153,8 @@ export function recordTx(t: { persona: string; kind: string; status: string; ms?
 export function lastTxAt(persona?: string): number {
   const d = open();
   const r = (persona
-    ? d.prepare("SELECT MAX(t) AS t FROM txs WHERE persona = ? AND status != 'skipped'").get(persona)
-    : d.prepare("SELECT MAX(t) AS t FROM txs WHERE status != 'skipped'").get()) as { t: number | null };
+    ? d.prepare("SELECT MAX(t) AS t FROM txs WHERE persona = ? AND status = 'requested'").get(persona)
+    : d.prepare("SELECT MAX(t) AS t FROM txs WHERE status = 'requested'").get()) as { t: number | null };
   return r?.t ?? 0;
 }
 export function countTx(kind: string, sinceMs: number): number {

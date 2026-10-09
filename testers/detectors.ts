@@ -75,7 +75,7 @@ export class Recorder {
   /// Messages from the session's toasts, newest last.
   toasts: ToastEvent[] = [];
   /// Outcomes of /api/tx/send, newest last.
-  sends: { ok: boolean; error?: string; sig?: string; ms: number }[] = [];
+  sends: { ok: boolean; error?: string; sig?: string; at: number }[] = [];
 
   /// The route each request was made from: by the time it fails the page
   /// may have moved on.
@@ -172,10 +172,12 @@ export class Recorder {
   }
 
   private async onSend(r: Response) {
-    const ms = Math.round(r.request().timing().responseEnd);
+    // Stamped on arrival. The request's own timing() was read before the
+    // body finished and came back -1 for every transaction.
+    const at = Date.now();
     let j: any = {};
     try { j = await r.json(); } catch { j = { ok: false, error: `non-JSON answer (${r.status()})` }; }
-    this.sends.push({ ok: !!j.ok, error: j.error, sig: j.sig, ms });
+    this.sends.push({ ok: !!j.ok, error: j.error, sig: j.sig, at });
   }
 
   /// Toasts, as the page reports them (see TOAST_WATCH).

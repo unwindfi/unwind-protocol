@@ -114,8 +114,9 @@ export default function RewardsPage() {
   const [tick, setTick] = useState(0);
   const rPoll = usePollState<Rewards | null>(() => getRewards(owner), 15_000, [owner], undefined, tick);
   const r = rPoll.data;
-  const all = usePoll<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner], undefined, tick);
-  const week = usePoll<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner], undefined, tick);
+  const allPoll = usePollState<Leaderboard | null>(() => getLeaderboard("all", owner), 30_000, [owner], undefined, tick);
+  const weekPoll = usePollState<Leaderboard | null>(() => getLeaderboard("week", owner), 30_000, [owner], undefined, tick);
+  const all = allPoll.data;
   const creators = usePoll<Creators | null>(() => getCreators(owner), 60_000, [owner], undefined, tick);
   const refresh = () => setTick((t) => t + 1);
 
@@ -198,6 +199,18 @@ export default function RewardsPage() {
                   </button>
                 ) : link ? (
                   <YourLink link={link} copied={copied} onCopy={copy} />
+                ) : !r && (!rPoll.loaded || rPoll.error) ? (
+                  // Until this wallet's read lands it is not known whether it
+                  // has a code. Offering the claim form meanwhile showed a
+                  // wallet with one a form that then vanished mid-typing.
+                  <div>
+                    <div className={CAPS}>Referral code</div>
+                    <div className="mt-2 flex h-[48px] items-center rounded-[12px] border border-line
+                                    bg-panel2/80 px-4 text-[13.5px] text-muted-foreground backdrop-blur">
+                      {rPoll.error ? <Unavailable onRetry={rPoll.retry} /> : "Reading your code"}
+                    </div>
+                    <p className="mt-2.5 text-[12.5px] text-muted-foreground">&nbsp;</p>
+                  </div>
                 ) : (
                   <ClaimCode busy={busy === "code"}
                     onClaim={(code) => run("code", "referral-code", { code },
@@ -290,7 +303,7 @@ export default function RewardsPage() {
 
         {tab === "leaderboard" && (
           <>
-            <Board all={all} week={week} owner={owner} self={self} who={who} />
+            <Board all={allPoll} week={weekPoll} owner={owner} self={self} who={who} />
             {creators && <CreatorBoard c={creators} owner={owner} self={self} who={who} />}
           </>
         )}
@@ -381,12 +394,14 @@ const Head = ({ children, cols }: { children: ReactNode; cols: string }) => (
 const BOARD = "grid grid-cols-[40px_minmax(0,1fr)_minmax(0,.8fr)] items-center gap-x-4 " +
   "md:grid-cols-[48px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,.8fr)]";
 
+type BoardPoll = { data: Leaderboard | null; error: boolean; loaded: boolean; retry: () => void };
 function Board({ all, week, owner, self, who }: {
-  all: Leaderboard | null; week: Leaderboard | null; owner?: string; self: boolean;
+  all: BoardPoll; week: BoardPoll; owner?: string; self: boolean;
   who: (a: string, c?: string | null) => string;
 }) {
   const [period, setPeriod] = useState<"all" | "week">("all");
-  const b = period === "all" ? all : week;
+  const poll = period === "all" ? all : week;
+  const b = poll.data;
   const score = (row: LeaderRow) => period === "week" ? row.week : row.points;
   const rows = b?.top ?? [];
   const pinned = b?.me && !rows.some((t) => t.wallet === b.me!.wallet) ? b.me : null;
@@ -424,7 +439,10 @@ function Board({ all, week, owner, self, who }: {
       </Head>
       {pinned && <Line row={pinned} />}
       {rows.map((row) => <Line key={row.wallet} row={row} />)}
-      {!b && <Empty>Connect to devnet to load it.</Empty>}
+      {/* Loading, failed and no server are three answers: a failed read
+          said "Connect to devnet" to a wallet already on it. */}
+      {!b && <Empty>{poll.error ? <Unavailable onRetry={poll.retry} />
+        : !poll.loaded ? "Loading" : "Connect to devnet to load it."}</Empty>}
       {b && rows.length === 0 && <Empty>No points yet.</Empty>}
       {b && b.wallets > 0 && (
         <p className="border-t border-line px-5 py-4 text-[12.5px] text-muted-foreground sm:px-7">

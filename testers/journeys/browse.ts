@@ -56,7 +56,7 @@ export const browse: Journey = {
     if (ctx.rng.chance(0.4)) {
       await ctx.step("price source", async () => {
         await ctx.click(page.getByRole("button", { name: /^Price source:/ }), "the price source menu");
-        const opt = page.getByRole("button", { name: /^Show (oracle feeds|opened on a pool|all sources)$/ });
+        const opt = page.getByRole("button", { name: /^Show (oracle|pool|all sources)$/ });
         await ctx.click(opt.first(), "a price source");
       });
     }

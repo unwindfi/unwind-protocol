@@ -562,6 +562,10 @@ export function usePollState<T>(
 ) {
   const [data, setData] = useState<T | null>(() => seed?.() ?? null);
   const [error, setError] = useState(false);
+  /// Whether these inputs have had an answer (or a failure) yet: a read can
+  /// answer null for good (no server), which `data` alone cannot tell from
+  /// one still on its way.
+  const [loaded, setLoaded] = useState(false);
   /// Whether `data` was read for these inputs on this page, as against the
   /// seed, which can be a copy from an earlier visit. A check that refuses
   /// something should only trust a live answer.
@@ -581,20 +585,20 @@ export function usePollState<T>(
     const changed = deps.length !== lastDeps.current.length
       || deps.some((d, i) => !Object.is(d, lastDeps.current[i]));
     lastDeps.current = deps;
-    if (!first.current && changed) { setData(seed?.() ?? null); setLive(false); }
+    if (!first.current && changed) { setData(seed?.() ?? null); setLoaded(false); setLive(false); }
     first.current = false;
     const run = async () => {
       try {
         const v = await fn();
-        if (alive) { setData(v); setError(false); setLive(true); }
-      } catch { if (alive) setError(true); /* and keep the previous value */ }
+        if (alive) { setData(v); setError(false); setLoaded(true); setLive(true); }
+      } catch { if (alive) { setError(true); setLoaded(true); } /* and keep the previous value */ }
       if (alive) timer = window.setTimeout(run, ms);
     };
     run();
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, refresh, again]);
-  return { data, error, live, retry: () => setAgain((n) => n + 1) };
+  return { data, error, loaded, live, retry: () => setAgain((n) => n + 1) };
 }
 
 /// One wallet's fills, newest first. Only what the server has settled since
