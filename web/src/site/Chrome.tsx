@@ -283,7 +283,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
                      dark:opacity-55" />
         <div className="grid gap-8 md:grid-cols-[1.2fr_2fr]">
           <div>
-            <a href="/markets" className="flex items-center gap-2.5">
+            <a href="/markets" aria-label="unwind markets" className="flex items-center gap-2.5">
               <GlassMark className="h-7 w-7" />
               <Wordmark height={21} />
             </a>

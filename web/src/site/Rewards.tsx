@@ -10,7 +10,7 @@
  * as things the program refuses to do. An earlier version used step cards,
  * stat tiles, a FAQ and paired slogans, and read as a template.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import "@/site/serif.css";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
@@ -578,6 +578,7 @@ function YourLink({ link, copied, onCopy }: { link: string; copied: boolean; onC
 
 /// Takes a code, checking as you type whether it is free.
 function ClaimCode({ busy, onClaim }: { busy: boolean; onClaim: (code: string) => void }) {
+  const id = useId();
   const [code, setCode] = useState("");
   const [state, setState] = useState<"idle" | "free" | "taken" | "invalid">("idle");
   useEffect(() => {
@@ -600,10 +601,10 @@ function ClaimCode({ busy, onClaim }: { busy: boolean; onClaim: (code: string) =
 
   return (
     <div>
-      <div className={CAPS}>Referral code</div>
+      <label htmlFor={`${id}-code`} className={`${CAPS} block`}>Referral code</label>
       <form className="mt-2 flex items-center gap-2"
         onSubmit={(e) => { e.preventDefault(); if (state === "free") onClaim(code); }}>
-        <input value={code} maxLength={16} spellCheck={false} autoCapitalize="none"
+        <input id={`${id}-code`} aria-describedby={`${id}-hint`} value={code} maxLength={16} spellCheck={false} autoCapitalize="none"
           onChange={(e) => setCode(e.target.value.toLowerCase())}
           placeholder="yourname"
           className="n h-[48px] min-w-0 flex-1 rounded-[12px] border border-line bg-panel2/80 px-4
@@ -612,7 +613,7 @@ function ClaimCode({ busy, onClaim }: { busy: boolean; onClaim: (code: string) =
           {busy ? "Claiming" : "Claim"}
         </button>
       </form>
-      <p className={`mt-2.5 text-[12.5px] ${state === "taken" || state === "invalid"
+      <p id={`${id}-hint`} aria-live="polite" className={`mt-2.5 text-[12.5px] ${state === "taken" || state === "invalid"
         ? "text-down" : "text-muted-foreground"}`}>{hint}</p>
     </div>
   );

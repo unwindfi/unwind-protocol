@@ -787,7 +787,7 @@ export default function Earn() {
           {shown.map((v) => (
             <div key={v.id} className={`${COLS} border-t border-line px-5 py-3.5 transition-colors hover:bg-panel2 sm:px-9`}>
               <span className="flex min-w-0 items-center gap-3">
-                <a href={vaultHref(v.id)} className="flex-none"><VaultIcon v={v} /></a>
+                <a href={vaultHref(v.id)} aria-label={v.title} className="flex-none"><VaultIcon v={v} /></a>
                 <span className="min-w-0">
                   <a href={vaultHref(v.id)} className="block min-w-0">
                     <span title={v.title} className="block truncate text-[14px] font-medium">{v.title}</span>
