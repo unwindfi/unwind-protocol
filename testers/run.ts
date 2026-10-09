@@ -7,7 +7,9 @@
  * relaunched every RECYCLE_EVERY sessions so a slow leak cannot grow. When
  * the site or the API stops answering, the fleet records one outage and
  * waits, longer each time, instead of filing the same failure from every
- * session. SIGTERM finishes the current journeys' steps and exits.
+ * session. Once an hour the survey (survey.ts) borrows a worker's turn for a
+ * chunk of route captures. SIGTERM finishes the current journeys' steps and
+ * exits.
  *
  *   npx ts-node --transpile-only -P testers/tsconfig.json testers/run.ts
  */
@@ -20,6 +22,7 @@ import { plan } from "./journeys";
 import { Ctx, StepError } from "./session";
 import * as store from "./store";
 import { normalize } from "./detectors";
+import * as survey from "./survey";
 
 let stopping = false;
 const started = Date.now();
@@ -183,6 +186,7 @@ async function worker(n: number) {
   await new Promise((r) => setTimeout(r, n * 7_000));
   let browser: Browser | null = null;
   let count = 0;
+  let surveyedLast = false;
   while (!stopping) {
     if (config.runForMs && Date.now() - started > config.runForMs) break;
     if (!(await checkHealth())) {
@@ -190,7 +194,15 @@ async function worker(n: number) {
       continue;
     }
     if (!browser || !browser.isConnected()) browser = await launch();
-    await session(browser, n, nextPersona());
+    // A survey chunk takes this worker's turn when one is due, but never two
+    // turns running, so a single worker still alternates with journeys.
+    if (!surveyedLast && await survey.due()) {
+      log(`[w${n}] ${await survey.chunk(browser, () => stopping)}`);
+      surveyedLast = true;
+    } else {
+      await session(browser, n, nextPersona());
+      surveyedLast = false;
+    }
     count++;
     if (count % config.recycleEvery === 0) {
       await browser.close().catch(() => undefined);

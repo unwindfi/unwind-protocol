@@ -5,7 +5,8 @@
  * Listens on 127.0.0.1:3100 (TESTERS_HOST, TESTERS_PORT) behind HTTP basic
  * auth (TESTERS_USER, TESTERS_PASS); it refuses to start without both. The
  * box's Caddy puts it under a path; every URL in the page is relative, so it
- * works under any prefix.
+ * works under any prefix. The review feed (/api/review) is the one
+ * exception to the password: it answers to a bearer token (REVIEW_TOKEN).
  *
  *   npx ts-node --transpile-only -P testers/tsconfig.json testers/dashboard.ts
  */
@@ -22,6 +23,10 @@ if (!config.dashUser || !config.dashPass) {
   process.exit(1);
 }
 
+if (config.reviewToken.length < 32) {
+  console.warn("REVIEW_TOKEN is unset or shorter than 32 characters: /api/review refuses every request.");
+}
+
 const db = store.open();
 const app = express();
 app.disable("x-powered-by");
@@ -30,6 +35,78 @@ const same = (a: string, b: string) => {
   const x = Buffer.from(a), y = Buffer.from(b);
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
+
+/*
+ * The review feed: read-only, for a scheduled reviewer that has HTTPS and a
+ * bearer token (REVIEW_TOKEN) but never the dashboard password. Mounted
+ * before basic auth, so /api/review and /api/review/shot/* answer to the
+ * token alone; every other path still needs the password.
+ */
+const REVIEW_PAGES = 40, REVIEW_ISSUES = 60;
+const digest = (s: string) => crypto.createHash("sha256").update(s).digest();
+const review = express.Router();
+review.use((req, res, next) => {
+  const h = req.headers.authorization ?? "";
+  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+  // Hashed first, so the compare is constant time whatever the lengths.
+  const ok = config.reviewToken.length >= 32 && token.length > 0
+    && crypto.timingSafeEqual(digest(token), digest(config.reviewToken));
+  if (!ok) return res.set("WWW-Authenticate", 'Bearer realm="unwind testers review"').status(401).json({ error: "unauthorized" });
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
+/// Absolute links when the request came through Caddy, else from the root.
+const base = (req: express.Request) => {
+  const host = req.get("x-forwarded-host");
+  if (!host) return "";
+  const proto = req.get("x-forwarded-proto") ?? "https";
+  return `${proto}://${host.split(",")[0].trim()}${config.reviewPrefix}`;
+};
+
+review.get("/", (req, res) => {
+  const now = Date.now();
+  const raw = Number(req.query.since);
+  const since = Number.isFinite(raw) && raw >= 0 ? raw : now - 2 * HOUR;
+  const b = base(req);
+  const shot = (p: string | null, v?: number) => (p ? `${b}/api/review/shot/${p}${v ? `?v=${v}` : ""}` : null);
+
+  const issues = db.prepare(`SELECT * FROM issues WHERE status = 'open' AND (first_seen > ? OR last_seen > ?)
+      ORDER BY last_seen DESC LIMIT ?`).all(since, since, REVIEW_ISSUES + 1) as store.IssueRow[];
+  const pages = db.prepare(`SELECT * FROM survey WHERE changed_at > ? ORDER BY changed_at DESC LIMIT ?`)
+    .all(since, REVIEW_PAGES + 1) as store.SurveyRow[];
+  const txFailures = db.prepare(`SELECT kind, status, message, COUNT(*) AS count, MAX(t) AS last FROM txs
+      WHERE t > ? AND status IN ('failed', 'timeout') GROUP BY kind, status, message ORDER BY count DESC LIMIT 50`).all(since);
+
+  res.json({
+    now, since, build: store.getMeta("build") ?? null,
+    truncated: issues.length > REVIEW_ISSUES || pages.length > REVIEW_PAGES,
+    issues: issues.slice(0, REVIEW_ISSUES).map((r) => ({
+      sig: r.sig, type: r.type, severity: r.severity, route: r.route, message: r.message,
+      detail: r.detail ? r.detail.slice(0, 600) : null, count: r.count, personas: parse(r.personas).length,
+      first_seen: r.first_seen, last_seen: r.last_seen, last_build: r.last_build,
+      shot: r.screenshot ? shot(`shots/${r.screenshot}`) : null,
+    })),
+    pages: pages.slice(0, REVIEW_PAGES).map((p) => ({
+      route: p.route, theme: p.theme, device: p.device, changed_at: p.changed_at, captured_at: p.captured_at,
+      build: p.build, error: p.error, snapshot: p.snapshot, console: parse(p.console), shot: shot(p.shot_path, p.captured_at),
+    })),
+    txFailures,
+  });
+});
+
+/// Only files the fleet wrote: a plain name under survey/ or shots/.
+review.get("/shot/:dir/:file", (req, res) => {
+  const { dir, file } = req.params as { dir: string; file: string };
+  const root = dir === "survey" ? paths.survey : dir === "shots" ? paths.shots : null;
+  if (!root || !/^[A-Za-z0-9][A-Za-z0-9_-]*\.jpg$/.test(file)) return res.status(404).end();
+  const full = path.resolve(root, file);
+  if (path.dirname(full) !== path.resolve(root)) return res.status(404).end();
+  res.sendFile(full, { dotfiles: "deny" }, (e) => { if (e && !res.headersSent) res.status(404).end(); });
+});
+review.use((_req, res) => { res.status(404).json({ error: "not found" }); });
+app.use("/api/review", review);
+
 app.use((req, res, next) => {
   const h = req.headers.authorization ?? "";
   const [user, pass] = Buffer.from(h.replace(/^Basic /, ""), "base64").toString().split(/:(.*)/s);

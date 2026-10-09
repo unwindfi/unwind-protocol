@@ -38,6 +38,7 @@ let db: Database.Database | null = null;
 export function open(): Database.Database {
   if (db) return db;
   fs.mkdirSync(paths.shots, { recursive: true });
+  fs.mkdirSync(paths.survey, { recursive: true });
   db = new Database(paths.db);
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
@@ -70,6 +71,13 @@ export function open(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS txs_t ON txs(t);
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS survey (
+      route TEXT, theme TEXT, device TEXT, hash TEXT, snapshot TEXT, console TEXT,
+      shot_path TEXT, captured_at INTEGER, changed_at INTEGER, build TEXT,
+      snap_sig TEXT, error TEXT,
+      PRIMARY KEY (route, theme, device)
+    );
+    CREATE INDEX IF NOT EXISTS survey_changed ON survey(changed_at);
   `);
   return db;
 }
@@ -163,6 +171,48 @@ export function countTx(kind: string, sinceMs: number): number {
   return r.n;
 }
 
+// ------------------------------------------------------------ the survey
+
+export interface SurveyRow {
+  route: string; theme: string; device: string; hash: string | null; snapshot: string | null;
+  console: string; shot_path: string | null; captured_at: number; changed_at: number;
+  build: string | null; snap_sig: string | null; error: string | null;
+}
+
+/// How many bits two 64-bit hex fingerprints differ by.
+export function hashDistance(a: string, b: string): number {
+  let x = BigInt("0x" + a) ^ BigInt("0x" + b), n = 0;
+  while (x) { n += Number(x & 1n); x >>= 1n; }
+  return n;
+}
+
+/*
+ * Keeps the latest capture of one (route, theme, device). `changed_at` moves
+ * only when the picture moved past the threshold, the page's text changed
+ * beyond its figures, or the capture started or stopped failing. Returns
+ * whether it moved.
+ */
+export function recordSurvey(c: Omit<SurveyRow, "changed_at" | "build">, hashBits: number): boolean {
+  const d = open();
+  const prev = d.prepare("SELECT * FROM survey WHERE route = ? AND theme = ? AND device = ?")
+    .get(c.route, c.theme, c.device) as SurveyRow | undefined;
+  const changed = !prev
+    || (prev.error ?? "") !== (c.error ?? "")
+    || (prev.snap_sig ?? "") !== (c.snap_sig ?? "")
+    || !!prev.hash !== !!c.hash
+    || (!!prev.hash && !!c.hash && hashDistance(prev.hash, c.hash) > hashBits);
+  const t = c.captured_at;
+  d.prepare(`INSERT INTO survey (route, theme, device, hash, snapshot, console, shot_path, captured_at, changed_at, build, snap_sig, error)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(route, theme, device) DO UPDATE SET
+        hash = excluded.hash, snapshot = excluded.snapshot, console = excluded.console,
+        shot_path = COALESCE(excluded.shot_path, shot_path), captured_at = excluded.captured_at,
+        changed_at = excluded.changed_at, build = excluded.build, snap_sig = excluded.snap_sig, error = excluded.error`)
+    .run(c.route, c.theme, c.device, c.hash, c.snapshot, c.console, c.shot_path, t,
+      changed ? t : prev!.changed_at, getMeta("build") ?? null, c.snap_sig, c.error);
+  return changed;
+}
+
 /// Old rows go, so the file stays small on a box that runs for months.
 export function prune(days = 21) {
   const cut = now() - days * 86_400_000;
@@ -176,6 +226,12 @@ export function prune(days = 21) {
   for (const s of stale) {
     try { fs.unlinkSync(path.join(paths.shots, s.screenshot)); } catch { /* already gone */ }
     d.prepare("UPDATE issues SET screenshot = NULL WHERE sig = ?").run(s.sig);
+  }
+  // Survey rows for a route no longer surveyed (a market that went away).
+  const gone = d.prepare("SELECT route, theme, device, shot_path FROM survey WHERE captured_at < ?").all(now() - 3 * 86_400_000) as SurveyRow[];
+  for (const g of gone) {
+    if (g.shot_path) { try { fs.unlinkSync(path.join(config.dataDir, g.shot_path)); } catch { /* already gone */ } }
+    d.prepare("DELETE FROM survey WHERE route = ? AND theme = ? AND device = ?").run(g.route, g.theme, g.device);
   }
 }
 

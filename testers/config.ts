@@ -46,11 +46,23 @@ export const config = {
   /// Screenshots: at most one per this many ms, and this many an hour.
   shotGapMs: num(process.env.SHOT_GAP_MS, 15_000),
   shotsPerHour: num(process.env.SHOTS_PER_HOUR, 60),
+  /// The survey: every main route in both themes on a desktop and a phone,
+  /// once per this many minutes (0: never), at most `surveyChunk` captures
+  /// per worker turn so journeys keep their slots. A capture counts as
+  /// changed when its fingerprint moves more than `surveyHashBits` of 64.
+  surveyEveryMin: num(process.env.SURVEY_EVERY_MIN, 60),
+  surveyChunk: Math.max(1, num(process.env.SURVEY_CHUNK, 10)),
+  surveyHashBits: num(process.env.SURVEY_HASH_BITS, 4),
   /// Dashboard.
   dashHost: process.env.TESTERS_HOST ?? "127.0.0.1",
   dashPort: num(process.env.TESTERS_PORT, 3100),
   dashUser: process.env.TESTERS_USER ?? "",
   dashPass: process.env.TESTERS_PASS ?? "",
+  /// The bearer token for the read-only review feed (/api/review). Unset or
+  /// shorter than 32 characters, the feed refuses every request.
+  reviewToken: process.env.REVIEW_TOKEN ?? "",
+  /// The path Caddy serves the dashboard under, for absolute shot links.
+  reviewPrefix: (process.env.REVIEW_PREFIX ?? "/testers").replace(/\/$/, ""),
   /// Stop after this many ms (0: forever). Used for local verification runs.
   runForMs: num(process.env.RUN_FOR_MS, 0),
   headless: process.env.HEADFUL !== "1",
@@ -61,4 +73,5 @@ export const config = {
 export const paths = {
   db: path.join(config.dataDir, "testers.db"),
   shots: path.join(config.dataDir, "shots"),
+  survey: path.join(config.dataDir, "survey"),
 };
