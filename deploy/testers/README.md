@@ -121,6 +121,162 @@ The survey takes a worker's turn between sessions, in chunks of
 turns running on one worker. It adds no browsers, so the unit's CPU and
 memory caps hold.
 
+## Checks
+
+Beside the journeys, the fleet runs checks (`testers/checks/`). The API
+pinger and the deploy watcher run in the fleet's own process with no
+browser. The rest take a worker's turn between sessions, the way the survey
+does, so they add no browsers and the unit's CPU and memory caps hold. Each
+is cut off after `CHECK_TIMEOUT_MS` (8 minutes), and each periodic run is a
+row in `check_runs`.
+
+| Check | When | What it files |
+| --- | --- | --- |
+| API health | every `API_HEALTH_EVERY_SEC` (300) | `api-health`, high |
+| Deploy watch and smoke | every `DEPLOY_POLL_SEC` (60); smoke on a change | `deploy-smoke`, high |
+| Speed, errors, layout | in every survey capture (hourly) | `slow-lcp`, `layout-shift`, `console-error`, `broken-image`, `horizontal-overflow`, `container-overflow`, `text-overlap`, `small-tap-target`, `clipped-button` |
+| UI numbers vs API | every `NUMBERS_EVERY_MIN` (30) | `number-mismatch` |
+| Stale and paused markets | every `STALE_EVERY_MIN` (30) | `stale-not-blocked`, `stale-no-reason`, `stale-unflagged` |
+| Wallet edge cases | every `WALLET_EDGES_EVERY_MIN` (240) | `wallet-edge` |
+| Links, SEO, share cards | every `LINKS_EVERY_HOURS` (24) | `broken-link`, `seo-missing`, `seo-duplicate`, `share-card` |
+
+Every check reads the API at `CHECKS_API_URL` (https://api.unwindfi.xyz),
+the host the site itself reads.
+
+**API health.** Every route the site reads, one request at a time, 300 ms
+apart: `/api/markets` (and `?all=1`), `/api/rewards?owner=<t01>`,
+`/api/leaderboard`, `/api/creators`, `/api/backings`, `/api/apy`,
+`/api/account?owner=<t01>`, `/api/batch/SOL`, `/api/trades/SOL`,
+`/api/candles/SOL`, `/api/fills`, `/api/wallets`, `/api/testnet-pools`,
+`/api/icon/<a listed mint>` and the site's root. Status and time to the end
+of the body go in `api_checks`, each route's current state in `api_routes`.
+A route that answers 4xx or 5xx, answers 200 with an `error` field or a body
+that is not JSON, or takes longer than `API_SLOW_MS` (3,000) gets one high
+issue with the body's first line, so a stale IDL's "Cannot read properties
+of undefined" on `/api/rewards` shows within one pass. When the route answers
+well again the issue is marked fixed; a relapse reopens it. The dashboard
+reads it at `GET /api/api-health?hours=24` (basic auth): each route's
+state, its pings, and the last 20 deploys.
+
+**Deploy watch.** A deploy is any of:
+
+- the site: the hashed script names in `www.unwindfi.xyz/`'s HTML (the build
+  id the fleet already stamps on issues) or the page's ETag changed;
+- the server: a build header on `/api/markets` (`x-build`,
+  `x-server-build`, `x-revision` or `x-server-started`) changed. The server
+  sends none today, so the watcher falls back to the shape of its answers
+  (the sorted field names of `/api/markets`, `/api/rewards` and
+  `/api/leaderboard`), which moves when a server deploy changes what the site
+  reads. A server deploy that changes no answer is seen only through the next
+  rule; adding one of those headers to `scripts/server.ts` makes it exact;
+- a restart: the pinger found nearly every route unreachable or 502, then
+  the API answered again (what `deploy/testnet/push.sh` does).
+
+The first reading after the fleet starts is a baseline (kept in the store,
+so a deploy while the fleet was stopped is still seen). On a change a row
+goes in `deploys` and two smoke tasks are queued, taken by the next free
+workers ahead of the survey and the sessions: browse, trade (open and
+close), list (to the preview) as the first of `DEPLOY_PERSONAS`, then
+rewards, earn and trade as the second, on its own device. Each journey's
+pass or fail lands on the deploy's row (`results`, `status` pass or fail);
+any failure files a high `deploy-smoke` issue.
+
+**Speed, errors and layout** ride on the survey's loads (no extra captures).
+Per capture, into `page_metrics`: time to first byte, DOMContentLoaded,
+load, LCP and CLS (a PerformanceObserver installed before the page's
+scripts), bytes on the wire and request count (DevTools protocol, which
+counts the API too), failed requests, console errors and broken images
+(complete, with a source, `naturalWidth` 0). Filed: LCP over `PERF_LCP_MS`
+(4,000), CLS over `PERF_CLS` (0.25), any console error, any broken image.
+The layout checks run at both sizes in both themes: the session's own page
+checks (page wider than the screen, controls off screen, clipped labels),
+an element running out of its bordered or filled box, two interactive text
+boxes in the page's flow that cross, tap targets under 44 by 44 CSS px on a
+touch screen (one issue for the header and footer, one for the page), and
+button text cut by an overflow-hidden box. `SURVEY_QUALITY=0` turns these
+off.
+
+**UI numbers vs API.** As a visitor, then connected as the first of
+`NUMBERS_PERSONAS` that holds a position: `/markets` (each row's price, open
+interest, 24h change, 24h volume, per-batch fill), two trade pages (the
+header's mark, spread, 24h volume, open interest, 1h funding and leverage
+cap; each market's cap and price in the list beside the chart; the
+Liquidity panel's bid, ask, caps, per-batch fill and pool; the batch number
+and phase, the last clear and the resting book against `/api/batch/:sym`),
+then `/portfolio`'s available USDC, margin and each position's side, size,
+entry and margin against `/api/account`. Tolerance is half a unit of the
+last printed place. A field that disagrees is read again, page and API both,
+three seconds later, and filed only if it still does, with the field, both
+values, both reads and the route.
+
+**Stale and paused markets.** Markets in `/api/markets` that are paused, or
+whose `priceAgeMs` is past 80% of `maxPriceAgeSec` (at most three), are
+opened connected as `STALE_PERSONA`. A market still stale or paused when its
+page is open must be flagged in the header, and the ticket must refuse an
+opening order and say why under its button. With none in that state the run
+is a pass.
+
+**Wallet edge cases**, on the terminal, desktop, as the first of
+`WALLET_EDGE_PERSONAS`: a signature rejected in the wallet (the wallet
+refuses before signing, so nothing is signed or sent; needs a persona with
+test USDC); a disconnect from the site's menu and one from the wallet's side,
+each with an order typed, then a reconnect; a switch of the wallet's account
+to the second persona in the same context. Then a trade from a wallet with
+no SOL: set `UNFUNDED_KEY` to a secret key file (a JSON array, mode 600,
+outside the repo) for a wallet holding test USDC and no SOL, and the order is
+sent (unless `DRY_TX`) and must fail with a message about SOL. Without it a
+fresh key is made each run, holding nothing, and the ticket must refuse with
+a reason. `fund.ts` never funds that key; give it USDC once by hand. In
+every case the page must leave no "Confirming…" behind and take the next
+order.
+
+**Links, SEO and share cards**, daily: a breadth-first crawl from the site's
+main routes and the docs' front page, internal addresses only (the site, the
+docs, the API), at most `LINKS_MAX` (300). Site pages are rendered (the app
+draws its links and its not-found page); docs pages are fetched and read as
+HTML; files are asked with HEAD, then GET when HEAD is refused. A 404, a 5xx,
+or the not-found page is filed with the page that linked it. Each main
+route's title, meta description, og:title, og:description and og:image
+must be there, titles and descriptions should differ between routes, and the
+og:image must load as an image. Each listed market's card must load from
+`/api/og/trade/<SYM>.png`, and the page a link previewer (Twitterbot) gets for
+`/trade/<SYM>` must point its og:image at that card, which must load too.
+
+To try one check by hand (prints what it filed):
+
+    DRY_TX=1 npx ts-node --transpile-only -P testers/tsconfig.json testers/check.ts <name>
+
+Names: `numbers`, `stale`, `wallet-edges`, `links`, `api-health`, `deploy`
+(one look at the fingerprints), `smoke` (the smoke pass now), `survey
+<route>` (one route's captures with the speed and layout checks).
+`VERBOSE=1` prints every figure the numbers check compares.
+
+New settings (all optional; defaults in brackets):
+
+| Variable | Meaning |
+| --- | --- |
+| `CHECKS_API_URL` | API the checks read [https://api.unwindfi.xyz] |
+| `DOCS_URL` | Docs site the link crawl starts from [https://docs.unwindfi.xyz] |
+| `API_HEALTH_EVERY_SEC` | Seconds between API passes [300] |
+| `API_SLOW_MS` | A route slower than this is failing [3000] |
+| `API_TIMEOUT_MS` | A request is given up after this [10000] |
+| `DEPLOY_POLL_SEC` | Seconds between deploy looks; 0 turns the watcher off [60] |
+| `DEPLOY_SMOKE` | 0: record deploys without the smoke pass [1] |
+| `DEPLOY_PERSONAS` | The smoke pass's two personas [t10,t09] |
+| `NUMBERS_EVERY_MIN` | Minutes between number checks; 0 never [30] |
+| `NUMBERS_PERSONAS` | Personas the number check may read as [t02,t10,t12,t20] |
+| `NUMBERS_VIEW_WALLET` | Also compare this wallet's `/portfolio?wallet=` (local runs) [unset] |
+| `STALE_EVERY_MIN` | Minutes between stale market checks; 0 never [30] |
+| `STALE_PERSONA` | Persona for the stale check [t30] |
+| `WALLET_EDGES_EVERY_MIN` | Minutes between wallet edge runs; 0 never [240] |
+| `WALLET_EDGE_PERSONAS` | The persona, then the one switched to [t20,t30] |
+| `UNFUNDED_KEY` | Secret key file for the zero-SOL trade [a fresh key each run] |
+| `LINKS_EVERY_HOURS` | Hours between link, SEO and card passes; 0 never [24] |
+| `LINKS_MAX` | Addresses the crawl visits at most [300] |
+| `PERF_LCP_MS`, `PERF_CLS` | Speed thresholds [4000, 0.25] |
+| `SURVEY_QUALITY` | 0 turns the survey's speed and layout checks off [1] |
+| `CHECK_TIMEOUT_MS` | A check is cut off after this [480000] |
+
 ## Review feed
 
 A read-only JSON feed for a scheduled reviewer that has HTTPS but no SSH and

@@ -8,8 +8,9 @@
  * the site or the API stops answering, the fleet records one outage and
  * waits, longer each time, instead of filing the same failure from every
  * session. Once an hour the survey (survey.ts) borrows a worker's turn for a
- * chunk of route captures. SIGTERM finishes the current journeys' steps and
- * exits.
+ * chunk of route captures, and the checks (checks/index.ts) take turns the
+ * same way; the API pinger and the deploy watcher run beside the workers
+ * with no browser. SIGTERM finishes the current journeys' steps and exits.
  *
  *   npx ts-node --transpile-only -P testers/tsconfig.json testers/run.ts
  */
@@ -23,6 +24,7 @@ import { Ctx, StepError } from "./session";
 import * as store from "./store";
 import { normalize } from "./detectors";
 import * as survey from "./survey";
+import * as checks from "./checks";
 
 let stopping = false;
 const started = Date.now();
@@ -195,8 +197,15 @@ async function worker(n: number) {
     }
     if (!browser || !browser.isConnected()) browser = await launch();
     // A survey chunk takes this worker's turn when one is due, but never two
-    // turns running, so a single worker still alternates with journeys.
-    if (!surveyedLast && await survey.due()) {
+    // turns running, so a single worker still alternates with journeys. A
+    // deploy's smoke pass goes first whatever ran last; the other checks
+    // (checks/index.ts) take turns as the survey does.
+    let task = checks.urgent();
+    if (!task && !surveyedLast && !(await survey.due())) task = checks.next();
+    if (task) {
+      log(`[w${n}] ${await checks.run(task, browser, n)}`);
+      surveyedLast = task.kind === "check";
+    } else if (!surveyedLast && await survey.due()) {
       log(`[w${n}] ${await survey.chunk(browser, () => stopping)}`);
       surveyedLast = true;
     } else {
@@ -231,6 +240,8 @@ async function main() {
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
+  // The API pinger and the deploy watcher: no browser.
+  checks.start(() => stopping || (!!config.runForMs && Date.now() - started > config.runForMs));
   await Promise.all(Array.from({ length: config.concurrency }, (_, i) => worker(i + 1)));
   log("stopped");
   process.exit(0);

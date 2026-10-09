@@ -7,6 +7,10 @@ import path from "path";
 
 const num = (v: string | undefined, d: number) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 const flag = (v: string | undefined) => v === "1" || v === "true" || v === "yes";
+const list = (v: string | undefined, d: string[]) => {
+  const xs = (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return xs.length ? xs : d;
+};
 
 export const config = {
   /// The site the testers drive. Production by default; a local dev server
@@ -53,6 +57,44 @@ export const config = {
   surveyEveryMin: num(process.env.SURVEY_EVERY_MIN, 60),
   surveyChunk: Math.max(1, num(process.env.SURVEY_CHUNK, 10)),
   surveyHashBits: num(process.env.SURVEY_HASH_BITS, 4),
+  /// The checks in testers/checks/ (see deploy/testers/README.md). They read
+  /// the API at its own host, the way the site does, and the docs site for
+  /// the link crawl.
+  checksApiUrl: (process.env.CHECKS_API_URL ?? "https://api.unwindfi.xyz").replace(/\/$/, ""),
+  docsUrl: (process.env.DOCS_URL ?? "https://docs.unwindfi.xyz").replace(/\/$/, ""),
+  /// Minutes between runs of each browser check (0: never). The link, SEO
+  /// and share card pass counts in hours.
+  numbersEveryMin: num(process.env.NUMBERS_EVERY_MIN, 30),
+  staleEveryMin: num(process.env.STALE_EVERY_MIN, 30),
+  walletEdgesEveryMin: num(process.env.WALLET_EDGES_EVERY_MIN, 240),
+  linksEveryHours: num(process.env.LINKS_EVERY_HOURS, 24),
+  linksMax: Math.max(20, num(process.env.LINKS_MAX, 300)),
+  /// A check that runs past this is cut off, like a session.
+  checkTimeoutMs: num(process.env.CHECK_TIMEOUT_MS, 8 * 60_000),
+  /// Personas the checks borrow (ids, comma separated).
+  numbersPersonas: list(process.env.NUMBERS_PERSONAS, ["t02", "t10", "t12", "t20"]),
+  walletEdgePersonas: list(process.env.WALLET_EDGE_PERSONAS, ["t20", "t30"]),
+  stalePersona: process.env.STALE_PERSONA ?? "t30",
+  deployPersonas: list(process.env.DEPLOY_PERSONAS, ["t10", "t09"]),
+  /// A secret key (JSON array) holding test USDC and no SOL, for the zero-SOL
+  /// trade. Unset: a fresh key each run, which holds neither.
+  unfundedKey: process.env.UNFUNDED_KEY ?? "",
+  /// Local runs: read this wallet's /portfolio (?wallet=) as well.
+  numbersViewWallet: process.env.NUMBERS_VIEW_WALLET ?? "",
+  /// Page speed thresholds for the survey's measurements.
+  lcpMs: num(process.env.PERF_LCP_MS, 4_000),
+  cls: num(process.env.PERF_CLS, 0.25),
+  /// Layout and speed checks in the survey pass (0 turns them off).
+  surveyQuality: process.env.SURVEY_QUALITY !== "0",
+  /// The API pinger: every route once per this many seconds, slow past
+  /// `apiSlowMs`. No browser.
+  apiHealthEverySec: num(process.env.API_HEALTH_EVERY_SEC, 300),
+  apiSlowMs: num(process.env.API_SLOW_MS, 3_000),
+  apiTimeoutMs: num(process.env.API_TIMEOUT_MS, 10_000),
+  /// The deploy watcher: how often it reads the site's build and the
+  /// server's answer, and whether a change runs the smoke pass.
+  deployPollSec: num(process.env.DEPLOY_POLL_SEC, 60),
+  deploySmoke: process.env.DEPLOY_SMOKE !== "0",
   /// Dashboard.
   dashHost: process.env.TESTERS_HOST ?? "127.0.0.1",
   dashPort: num(process.env.TESTERS_PORT, 3100),

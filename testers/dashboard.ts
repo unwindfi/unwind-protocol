@@ -17,6 +17,7 @@ import express from "express";
 import { config, paths } from "./config";
 import { PERSONAS } from "./personas";
 import * as store from "./store";
+import * as apiHealth from "./checks/api-health";
 
 if (!config.dashUser || !config.dashPass) {
   console.error("Set TESTERS_USER and TESTERS_PASS: the dashboard does not run without a password.");
@@ -181,6 +182,13 @@ app.get("/api/health", (_req, res) => {
     personas, open, mem, lastSession: lastSession.t,
     lastHour: perHour.slice(-1)[0]?.n ?? 0,
   });
+});
+
+/// The API pinger's view (checks/api-health.ts): each route's state, its
+/// pings over `hours` (24 by default, at most 72), and the recent deploys.
+app.get("/api/api-health", (req, res) => {
+  const h = Math.min(72, Math.max(1, Number(req.query.hours) || 24));
+  res.set("Cache-Control", "no-store").json(apiHealth.summary(h));
 });
 
 app.get("/api/summary", (_req, res) => {

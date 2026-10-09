@@ -8,6 +8,11 @@
  * per (route, theme, device) is kept; `changed_at` says when it last moved,
  * which is what the review feed reads.
  *
+ * The same loads are measured and checked (checks/quality.ts): navigation
+ * timing, LCP, CLS, bytes, console errors, failed requests and broken
+ * images into page_metrics, and the layout checks at both sizes and in both
+ * themes. SURVEY_QUALITY=0 turns that off.
+ *
  * The pass is split into chunks of SURVEY_CHUNK captures that a worker
  * takes between sessions (run.ts), never more than one worker at a time, so
  * the fleet's browser count and its CPU and memory caps stay as they are.
@@ -19,6 +24,7 @@ import type { Browser, Page } from "playwright-core";
 import { config, paths } from "./config";
 import { DEVICES, type Device } from "./personas";
 import * as store from "./store";
+import * as quality from "./checks/quality";
 
 export interface Target { route: string; theme: "dark" | "light"; device: Device }
 
@@ -131,7 +137,11 @@ export async function capture(browser: Browser, t: Target): Promise<boolean> {
   let shot: Buffer | null = null;
   let snapshot: string | null = null;
   let hash: string | null = null;
+  // Speed, errors and layout on the same load (checks/quality.ts).
+  let watched: quality.Watch | null = null;
+  let inspected: quality.Inspection | null = null;
   try {
+    if (config.surveyQuality) await context.addInitScript(quality.PERF_WATCH);
     context.setDefaultTimeout(12_000);
     context.setDefaultNavigationTimeout(30_000);
     await context.addInitScript((theme) => {
@@ -140,6 +150,7 @@ export async function capture(browser: Browser, t: Target): Promise<boolean> {
     // The same fences as a session: no faucet, no mirror, nothing sent.
     await context.route(/\/api\/(faucet|devnet-copy|tx\/send|seen)(\?|$)/, (r) => r.abort("blockedbyclient"));
     const page = await context.newPage();
+    if (config.surveyQuality) watched = await quality.watch(context, page);
     page.on("console", (m) => {
       if (m.type() !== "error") return;
       const text = m.text();
@@ -157,6 +168,7 @@ export async function capture(browser: Browser, t: Target): Promise<boolean> {
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
     await page.waitForTimeout(1_500);
 
+    if (config.surveyQuality) inspected = await quality.inspect(page, t);
     const h = await page.evaluate(() => Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0)).catch(() => t.device.height);
     shot = await page.screenshot({
       type: "jpeg", quality: QUALITY, fullPage: true, timeout: 15_000,
@@ -180,6 +192,9 @@ export async function capture(browser: Browser, t: Target): Promise<boolean> {
     fs.writeFileSync(tmp, shot);
     fs.renameSync(tmp, path.join(paths.survey, file));
     shotPath = `survey/${file}`;
+  }
+  if (config.surveyQuality && !error) {
+    await quality.record(t, watched, inspected, errors, shot ? path.join(paths.survey, fileFor(t)) : null).catch(() => undefined);
   }
   return store.recordSurvey({
     route: t.route, theme: t.theme, device: t.device.name, hash, snapshot,

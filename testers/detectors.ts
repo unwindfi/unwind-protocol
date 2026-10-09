@@ -78,6 +78,9 @@ export class Recorder {
   toasts: ToastEvent[] = [];
   /// Outcomes of /api/tx/send, newest last.
   sends: { ok: boolean; error?: string; sig?: string; at: number }[] = [];
+  /// An error toast a check provokes on purpose (a trade with no SOL): kept
+  /// in `toasts`, not filed.
+  expectToast: RegExp | null = null;
 
   /// The route each request was made from: by the time it fails the page
   /// may have moved on.
@@ -188,7 +191,7 @@ export class Recorder {
     if (this.toasts.length > 50) this.toasts.shift();
     if (t.status === "loading") { if (!this.loading.has(t.text)) this.loading.set(t.text, Date.now()); return; }
     for (const k of this.loading.keys()) if (t.text.startsWith(k.split("\n")[0])) this.loading.delete(k);
-    if (t.status === "error") {
+    if (t.status === "error" && !this.expectToast?.test(t.text)) {
       // A transaction's failure says "<label> failed"; anything else red is
       // the page telling the user something went wrong.
       const tx = /\bfailed\b/i.test(t.text.split("\n")[0]);

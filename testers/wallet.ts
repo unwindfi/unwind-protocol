@@ -13,8 +13,8 @@
  * popup refuses it, so nothing is ever broadcast.
  */
 import crypto from "crypto";
-import type { BrowserContext } from "playwright-core";
-import { Connection, Keypair, VersionedTransaction } from "@solana/web3.js";
+import type { BrowserContext, Page } from "playwright-core";
+import { Connection, Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { config } from "./config";
 import type { Ticket } from "./txgate";
 import * as store from "./store";
@@ -40,15 +40,22 @@ const SHIM = (cfg: { name: string; icon: string; address: string; publicKey: num
   const w = window as any;
   if (w.top !== w || w.__unwindTesterWallet) return;
   const SIGN = "__unwindTesterSign";
-  const pk = new Uint8Array(cfg.publicKey);
   const FEATURES = ["solana:signTransaction", "solana:signAndSendTransaction", "solana:signMessage"];
-  const account = Object.freeze({
-    address: cfg.address, publicKey: pk, chains: ["solana:devnet"], features: FEATURES,
+  const make = (address: string, key: number[]) => Object.freeze({
+    address, publicKey: new Uint8Array(key), chains: ["solana:devnet"], features: FEATURES,
     label: cfg.name, icon: cfg.icon,
   });
+  let account = make(cfg.address, cfg.publicKey);
+  // The account switched to in an earlier page (see `switchTo`): set by a
+  // later init script, so read whenever the account is asked for.
+  const current = () => {
+    const next = w.__unwindTesterNext as { address: string; publicKey: number[] } | undefined;
+    if (next && next.address !== account.address) account = make(next.address, next.publicKey);
+    return account;
+  };
   let connected = false;
   const listeners = new Set<(p: unknown) => void>();
-  const emit = () => listeners.forEach((fn) => { try { fn({ accounts: connected ? [account] : [] }); } catch { /* app's */ } });
+  const emit = () => listeners.forEach((fn) => { try { fn({ accounts: connected ? [current()] : [] }); } catch { /* app's */ } });
   const toB64 = (u: Uint8Array) => { let s = ""; for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); };
   const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const call = async (kind: string, payload: Record<string, unknown>) => {
@@ -61,7 +68,7 @@ const SHIM = (cfg: { name: string; icon: string; address: string; publicKey: num
     name: cfg.name,
     icon: cfg.icon,
     chains: ["solana:devnet"],
-    get accounts() { return connected ? [account] : []; },
+    get accounts() { return connected ? [current()] : []; },
     features: {
       "standard:connect": {
         version: "1.0.0",
@@ -71,7 +78,7 @@ const SHIM = (cfg: { name: string; icon: string; address: string; publicKey: num
             connected = true;
             emit();
           }
-          return { accounts: [account] };
+          return { accounts: [current()] };
         },
       },
       "standard:disconnect": {
@@ -123,6 +130,14 @@ const SHIM = (cfg: { name: string; icon: string; address: string; publicKey: num
       },
     },
   };
+  // What a person does in the wallet itself rather than on the page: switch
+  // to another account, or disconnect the site from the wallet's side.
+  w.__unwindTesterSwitch = (next: { address: string; publicKey: number[] }) => {
+    w.__unwindTesterNext = next;
+    current();
+    if (connected) emit();
+  };
+  w.__unwindTesterDrop = () => { connected = false; emit(); };
   const register = (api: { register: (w: unknown) => unknown }) => { try { api.register(wallet); } catch { /* twice */ } };
   try {
     window.dispatchEvent(new CustomEvent("wallet-standard:register-wallet", { detail: register }));
@@ -148,6 +163,20 @@ export interface WalletHandle {
   /// Resolves when the page has asked for a signature (or not, after `ms`).
   waitForSign(ms: number): Promise<boolean>;
   pending(): Ticket | null;
+  /// The next transaction the page asks to sign is rejected the way a
+  /// person closing the popup rejects it, ticket or not. Nothing is signed.
+  rejectNext(): void;
+  /// How many signatures were rejected on purpose so far.
+  rejected(): number;
+  /// Switches the wallet to another account, as a person does in the
+  /// extension: the page hears a change event, and later loads in this
+  /// context see the new account. With a public key only, every signature is
+  /// refused.
+  switchTo(page: Page, next: Keypair | PublicKey): Promise<void>;
+  /// Disconnects the site from the wallet's side.
+  drop(page: Page): Promise<void>;
+  /// The address the wallet holds now.
+  address(): string;
 }
 
 /// Ed25519 over a message, with Node's own crypto: the seed is the first 32
@@ -170,7 +199,10 @@ export async function installWallet(
   let ticket: Ticket | null = null;
   let waiters: (() => void)[] = [];
   const wake = () => { const w = waiters; waiters = []; w.forEach((f) => f()); };
-  const owner = kp.publicKey.toBase58();
+  let signer: Keypair | null = kp;
+  let owner = kp.publicKey.toBase58();
+  let rejectNext = false;
+  let rejected = 0;
 
   const refuse = (reason: string) => {
     log.refused.push({ reason, at: Date.now() });
@@ -183,7 +215,8 @@ export async function installWallet(
     const tx = VersionedTransaction.deserialize(Buffer.from(b64, "base64"));
     const signers = tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures).map((k) => k.toBase58());
     if (!signers.includes(owner)) throw new Error(`transaction does not ask ${owner.slice(0, 4)} to sign`);
-    tx.sign([kp]);
+    if (!signer) throw new Error(`no key for ${owner.slice(0, 4)} (watch only)`);
+    tx.sign([signer]);
     return tx;
   };
 
@@ -193,10 +226,19 @@ export async function installWallet(
       if (kind === "disconnect") return { ok: true };
       if (kind === "signMessage") {
         log.messages++;
-        const sig = signBytes(kp, Buffer.from(String(payload.message), "base64"));
+        if (!signer) return refuse("asked to sign a message with a watch-only account");
+        const sig = signBytes(signer, Buffer.from(String(payload.message), "base64"));
         return { signature: Buffer.from(sig).toString("base64") };
       }
       if (kind === "signTransaction" || kind === "signAndSendTransaction") {
+        if (rejectNext) {
+          // On purpose, so not a refusal the journey should hear about.
+          rejectNext = false;
+          rejected++;
+          log.refused.push({ reason: "rejected on purpose", at: Date.now() });
+          wake();
+          return { error: REJECT };
+        }
         const t = ticket;
         if (!t) return refuse("asked to sign without a ticket");
         ticket = null;
@@ -233,6 +275,21 @@ export async function installWallet(
     allow(t) { ticket = t; },
     revoke() { ticket = null; },
     pending: () => ticket,
+    rejectNext() { rejectNext = true; },
+    rejected: () => rejected,
+    address: () => owner,
+    async switchTo(page, next) {
+      const pub = next instanceof Keypair ? next.publicKey : next;
+      signer = next instanceof Keypair ? next : null;
+      owner = pub.toBase58();
+      ticket = null;
+      const acct = { address: owner, publicKey: Array.from(pub.toBytes()) };
+      await context.addInitScript((a) => { (window as any).__unwindTesterNext = a; }, acct);
+      await page.evaluate((a) => (window as any).__unwindTesterSwitch?.(a), acct);
+    },
+    async drop(page) {
+      await page.evaluate(() => (window as any).__unwindTesterDrop?.());
+    },
     waitForSign(ms) {
       return new Promise((resolve) => {
         const done = () => { clearTimeout(timer); resolve(true); };

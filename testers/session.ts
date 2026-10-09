@@ -11,6 +11,7 @@ import { rng, type Rng } from "./rng";
 import * as store from "./store";
 import * as txgate from "./txgate";
 import { installWallet, WALLET_NAME, type WalletHandle } from "./wallet";
+import type { Keypair } from "@solana/web3.js";
 
 export interface Market {
   symbol: string; name: string; price: number; bid: number; ask: number;
@@ -57,9 +58,10 @@ export class Ctx {
   connected = false;
   private marketCache: Market[] | null = null;
 
-  constructor(public persona: Persona, public session: number, public worker: number) {
+  /// `key` replaces the persona's own wallet (the checks' unfunded wallet).
+  constructor(public persona: Persona, public session: number, public worker: number, private key: Keypair = keyOf(persona)) {
     this.rng = rng(persona.seed ^ (session * 2654435761));
-    this.owner = keyOf(persona).publicKey.toBase58();
+    this.owner = key.publicKey.toBase58();
   }
 
   get phone() { return this.persona.device.width < 768; }
@@ -102,7 +104,7 @@ export class Ctx {
       await this.context.route("**/api/seen", (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' }));
     }
 
-    this.wallet = await installWallet(this.context, p, keyOf(p), {
+    this.wallet = await installWallet(this.context, p, this.key, {
       onRefused: (reason) => void this.rec?.issue("unexpected-sign", "medium", `Wallet asked to sign outside a journey's transaction step: ${reason}`),
     });
     await this.context.exposeFunction("__unwindToast", (t: { status: string; text: string }) => this.rec?.onToast(t));
