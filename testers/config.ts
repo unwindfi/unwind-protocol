@@ -35,6 +35,28 @@ export const config = {
   /// Real listings by the lister personas, fleet wide, per day. Each one
   /// creates a market and posts backing, so it is kept rare.
   listingsPerDay: num(process.env.LISTINGS_PER_DAY, 1),
+  /// The multi-visit journeys (journeys/followup.ts and the stages after it).
+  /// Liquidation: one dedicated persona, a small stake at the market's top
+  /// leverage, watched this long before it is closed as "did not move".
+  liqPersona: process.env.LIQ_PERSONA ?? "t52",
+  liqCollateralUsd: num(process.env.LIQ_COLLATERAL_USD, 12),
+  liqWatchMs: num(process.env.LIQ_WATCH_MS, 20 * 60_000),
+  /// How long a moved take profit is watched for firing before it is closed.
+  triggerWatchMs: num(process.env.TRIGGER_WATCH_MS, 20 * 60_000),
+  /// A new listing must have its first price within this (the keeper's pass
+  /// is every 25s), and tokens the listing journey may list, in order, when
+  /// none the fleet listed before can be listed again.
+  listPriceWindowMs: num(process.env.LIST_PRICE_WINDOW_MS, 90_000),
+  listCandidates: (process.env.LIST_CANDIDATES ?? "cbBTC,PUMP,MELANIA,ZEC,ME")
+    .split(",").map((s) => s.trim()).filter(Boolean),
+  /// Faucet claims through the site, fleet wide, per day (each spends the
+  /// faucet's shared daily budget), and how long a claim stopped by the human
+  /// check waits before it is tried again.
+  faucetClaimsPerDay: num(process.env.FAUCET_CLAIMS_PER_DAY, 1),
+  faucetHumanBackoffMs: num(process.env.FAUCET_HUMAN_BACKOFF_MS, 24 * 3_600_000),
+  /// A referee's hold before its close earns points (600s on chain, plus a
+  /// margin for the batch and the clock).
+  referralHoldMs: num(process.env.REFERRAL_HOLD_MS, 630_000),
   /// A session (one persona, one fresh context) is cut off after this long.
   sessionTimeoutMs: num(process.env.SESSION_TIMEOUT_MS, 6 * 60_000),
   /// Pause between sessions on one worker, plus up to `jitterMs` at random.

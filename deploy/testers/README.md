@@ -99,6 +99,65 @@ the status change.
 | `POST /api/issues/<sig>/status` | `{ "status": "open" \| "fixed" \| "ignored" }` |
 | `GET /shots/<file>.jpg` | An issue screenshot |
 
+## Multi-visit journeys
+
+Some flows outlast a session: a close held 10 minutes for points, a
+withdrawal's 150 slots, a trigger that may fire in the next 20 minutes, and
+the three minutes between one persona's transactions. These journeys do one
+stage per visit and write the next stage, with its due time, to the store's
+`meta` table (`fu:<persona>:<journey>`, see `testers/journeys/followup.ts`).
+No browser waits: once a stage is due, the next worker turn goes to that
+persona before the round robin. A persona in the middle of a plan sits the
+round robin out, so no other journey trades over it. Plans older than 12
+hours are dropped. Results that are not issues (a take profit that did not
+fire, a market that did not move) are logged and kept as `note:<journey>:<persona>`.
+
+| Journey | Who | Stages | Checked against the API |
+| --- | --- | --- | --- |
+| `lifecycle` | scalper, swing, power | open $30, add $20, close $20, close the rest | Positions row (value, entry, PnL, margin, funding) vs `/api/account`; the entry after adding lies between the old entry and the fill; a partial close leaves it; each fill on Trade history vs `/api/fills`; fee vs the market's bps (or 90% referred, 50% lister); one price per flow per batch on `/api/trades/:sym` |
+| `tpsl` | limit, swing, power | open $20, set TP, set SL, cancel TP, set TP 0.2% from the mark, cancel SL, watch up to `TRIGGER_WATCH_MS`, close if it did not fire | each trigger in `orders` (price, direction), in the ticket's Triggers box and on Open orders; a fired TP's close in history and gone from Open orders; closing in full cancels what stands |
+| `liquidation` | `LIQ_PERSONA` only | open `LIQ_COLLATERAL_USD` at the top leverage of the market most likely to move that far, watch the API up to `LIQ_WATCH_MS`, close if it did not move | "Position liquidated" once, with symbol, side and returned amount; nothing after a reload (#139); the Liquidations tab row |
+| `makers` | limit, power (not on phones) | limit 3% away, moved to 0.4% (replaced in one transaction), canceled, then a post-only quote at the mid | the limit in `orders` and on Open orders; escrow out and back in USDC; a fired limit fills no worse than its price at the batch's price; the maker quote seen resting in `/api/batch/:sym?owner=`, then filled at its flow's clearing price or refunded |
+| `newmarket` | lister | list one token with $100 backing, then one $10 order, then close it | the new market in `/api/markets` and on `/markets`; its first price within `LIST_PRICE_WINDOW_MS` (or the opening auction's stated minutes) |
+| `backing` | lp, backer | pool deposit, back a market, request a withdrawal, claim once ready | USDC, xLP minted, `/api/backings`, "Your backing now", the pending shares, the stated wait vs `secondsLeft`, Claim disabled until ready, the claim's payout less the fee |
+| `referral` | referrer, then a persona that has never filled | A claims `ut-<id>`; B arrives by `/r/<code>`, opens $520, closes after 10 min, opens $260, closes after 10 min; A checks | B's referrer and code; B's points are 2 per $1 closed; A gets nothing from the close that took B past $1,000 held, then 10% of B's next close; A's USDC is 10% of B's fees; the Referred card |
+| `faucet` | new | a throwaway wallet claims on Earn; then deposits it all and claims again from a fresh browser | the prompt for an empty wallet; USDC and SOL arrive; the over-limit claim is refused in words that say when |
+
+The faucet sits behind Cloudflare Turnstile. The journey never answers the
+check. When it does not pass by itself within 30 seconds, the fleet records
+one low issue, "faucet needs human check", and does not try again for
+`FAUCET_HUMAN_BACKOFF_MS`.
+
+Settings, all optional:
+
+| Variable | Default | |
+| --- | --- | --- |
+| `LIQ_PERSONA` | `t52` | the only persona that runs `liquidation`, and nothing else |
+| `LIQ_COLLATERAL_USD` | 12 | its stake per attempt |
+| `LIQ_WATCH_MS` | 1200000 | how long it waits for a liquidation |
+| `TRIGGER_WATCH_MS` | 1200000 | how long a moved take profit is watched |
+| `LIST_PRICE_WINDOW_MS` | 90000 | a "Live at listing" market's first price, at most this late |
+| `LIST_CANDIDATES` | `cbBTC,PUMP,MELANIA,ZEC,ME` | tokens `newmarket` may list, in order (each read "Live at listing" on October 10, 2026); one whose preview reads too thin is skipped from then on |
+| `LISTINGS_PER_DAY` | 1 | shared by `list` and `newmarket`; raise to 2 or 3 for both to list |
+| `FAUCET_CLAIMS_PER_DAY` | 1 | each spends the faucet's daily budget, which real users share |
+| `FAUCET_HUMAN_BACKOFF_MS` | 86400000 | wait after the human check stopped a claim |
+| `REFERRAL_HOLD_MS` | 630000 | a referee's hold before it closes (600s on chain) |
+
+Funding: nothing new for `fund.ts`.
+
+- `LIQ_PERSONA` needs only `LIQ_COLLATERAL_USD` plus fees per attempt. It
+  runs nothing else, and positions are margined one by one, so its stake,
+  not its balance, bounds what it can lose: the default top up is enough.
+- The referee B needs $260 of USDC (it checks $260 before it is picked) and
+  must never have filled: a wallet names its referrer only before its first
+  fill. The lp and backer personas qualify until each has been used once
+  (`ref:used` in `meta`). After that `referral` logs "no persona left" and
+  stops; new keys for those personas would make them eligible again.
+- `newmarket` uses the lister's existing 2,500 USDC and its SOL for the
+  listing's rent, the same as `list`'s real listing.
+- `faucet` uses throwaway wallets the faucet funds; the over-limit step
+  leaves that one claim (10,000 test USDC) in the pool.
+
 ## Survey
 
 Every `SURVEY_EVERY_MIN` minutes (60 by default, 0 turns it off) the fleet

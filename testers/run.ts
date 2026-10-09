@@ -19,7 +19,8 @@ import { execFileSync } from "child_process";
 import { chromium, type Browser } from "playwright-core";
 import { config } from "./config";
 import { activePersonas, loadKeys, type Persona } from "./personas";
-import { plan } from "./journeys";
+import { byName, plan } from "./journeys";
+import * as followup from "./journeys/followup";
 import { Ctx, StepError } from "./session";
 import * as store from "./store";
 import { normalize } from "./detectors";
@@ -116,9 +117,23 @@ let turn = 0;
 /// Round robin, with the starting point shuffled per run so a restart does
 /// not always begin with the same person.
 const offset = Math.floor(Math.random() * personas.length);
-const nextPersona = (): Persona => personas[(offset + turn++) % personas.length];
+/// Personas in a session right now, so two workers never share one.
+const running = new Set<string>();
+/// A persona with a follow-up due goes first (journeys/followup.ts); one
+/// waiting on a follow-up not yet due sits the round robin out, so nothing
+/// trades over the plan it is in the middle of.
+const nextPersona = (): Persona => {
+  const due = followup.nextDue(personas.map((p) => p.id), running);
+  if (due) return personas.find((p) => p.id === due)!;
+  for (let i = 0; i < personas.length; i++) {
+    const p = personas[(offset + turn++) % personas.length];
+    if (!running.has(p.id) && !followup.holds(p.id)) return p;
+  }
+  return personas[(offset + turn++) % personas.length];
+};
 
 async function session(browser: Browser, worker: number, p: Persona) {
+  running.add(p.id);
   const id = store.startSession({ persona: p.id, role: p.role, device: p.device.name, theme: p.theme, worker });
   const ctx = new Ctx(p, id, worker);
   const results: string[] = [];
@@ -128,7 +143,8 @@ async function session(browser: Browser, worker: number, p: Persona) {
   try {
     await ctx.open(browser);
     ctx.rec.onIssue = () => { issues++; };
-    const journeys = plan(p.role, ctx.rng);
+    const due = followup.dueFor(p.id).map((n) => byName(n)).filter((j): j is NonNullable<typeof j> => !!j);
+    const journeys = due.length ? due : plan(p.role, ctx.rng, p.id);
     const sessionEnd = t0 + config.sessionTimeoutMs;
     for (const j of journeys) {
       if (stopping || Date.now() > sessionEnd - 10_000) break;
@@ -136,6 +152,7 @@ async function session(browser: Browser, worker: number, p: Persona) {
       ctx.deadline = Math.min(sessionEnd, js + j.budgetMs);
       let ok = true, err: string | undefined;
       let timer: NodeJS.Timeout | undefined;
+      const before = due.length ? followup.get(p.id, j.name) : null;
       try {
         await Promise.race([
           j.run(ctx),
@@ -151,7 +168,10 @@ async function session(browser: Browser, worker: number, p: Persona) {
           key: `${j.name} ${ctx.rec.step} ${normalize(String(e?.message ?? e).split("\n")[0]).replace(/locator\([^)]*\)/g, "")}`.slice(0, 200),
           detail: String(e?.stack ?? e).slice(0, 4000),
         }).catch(() => undefined);
-      } finally { if (timer) clearTimeout(timer); }
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (before) followup.settle(p.id, j.name, before);
+      }
       store.recordJourney({ session: id, persona: p.id, name: j.name, started: js, ok, error: err, steps: ctx.steps });
       results.push(`${j.name} ${ok ? "ok" : `FAIL (${err})`}`);
       if (ok) passed++; else failed++;
@@ -165,6 +185,7 @@ async function session(browser: Browser, worker: number, p: Persona) {
     error = String(e?.message ?? e).split("\n")[0];
     failed++;
   } finally {
+    running.delete(p.id);
     const mb = chromeMb();
     await ctx.close();
     store.endSession(id, { ok: failed === 0 && !error, passed, failed, error, chromeMb: mb });
