@@ -64,7 +64,6 @@ export default function App() {
   const [side, setSide] = useState<"long" | "short">("long");
   const [busy, setBusy] = useState(false);
   const [trades, setTrades] = useState<Trade[]>([]);
-  const seenLiqs = useRef(0);
 
   const wallet = useWallet();
   const owner = wallet.publicKey?.toBase58();
@@ -165,19 +164,26 @@ export default function App() {
   const showToast = toast.show;
 
   // A liquidation is the one event the trader did not initiate, so it is the one
-  // that has to interrupt them.
+  // that has to interrupt them, once. What has been shown is kept per wallet
+  // by the newest liquidation's time: a count started at zero on every load,
+  // so a past liquidation came back on each refresh, and the list's 100-fill
+  // cap could hold the count still while a new one arrived.
   useEffect(() => {
-    const n = account?.liquidations.length ?? 0;
-    if (n > seenLiqs.current) {
-      const l = account!.liquidations[0];
-      showToast({
-        title: "Position liquidated",
-        description: `${l.symbol} ${l.isLong ? "long" : "short"} at ${pnum(l.price)} · ${money(l.returned)} returned`,
-        status: "error",
-      });
-      seenLiqs.current = n;
-    }
-  }, [account?.liquidations.length, showToast]);
+    const list = account?.liquidations;
+    if (!owner || !list?.length) return;
+    const key = `unwind.seenLiq.${owner}`;
+    let seen = 0;
+    try { seen = Number(localStorage.getItem(key)) || 0; } catch { /* private window */ }
+    const fresh = list.filter((l) => l.t > seen);
+    if (!fresh.length) return;
+    const l = fresh[0];
+    showToast({
+      title: fresh.length > 1 ? `${fresh.length} positions liquidated` : "Position liquidated",
+      description: `${l.symbol} ${l.isLong ? "long" : "short"} at ${pnum(l.price)} · ${money(l.returned)} returned`,
+      status: "error",
+    });
+    try { localStorage.setItem(key, String(list[0].t)); } catch { /* private window */ }
+  }, [owner, account?.liquidations, showToast]);
 
   /// One entry point for both paths: a connected wallet signs the transaction
   /// itself, and without one the server signs with the demo keypair.
