@@ -41,3 +41,6 @@ testers*.json
 /testers/data/
 /testers/keys/
 *.testers-keys.json
+
+# Local Claude Code instructions, linked from the unwind-team repo.
+CLAUDE.local.md
