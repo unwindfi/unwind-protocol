@@ -31,7 +31,7 @@ export const PROGRAM_ERRORS: readonly (readonly [string, string, string])[] = [
   ["PositionHealthy", "Position is not liquidatable", "Position is not liquidatable"],
   ["PositionCovered", "Position's profit is still covered by the liquidity reserved against it", "Position is still covered by the pool"],
   ["PositionUnhealthy", "Position is already liquidatable and cannot be increased", "Position is near liquidation and can't grow"],
-  ["PositionAlreadyOpen", "Position is already open; close it before opening a new one", "Close the open position first"],
+  ["PositionAlreadyOpen", "Position is already open; close it before opening a new one", "Already on the other side here. Close it or let it fill first"],
   ["PositionEmpty", "Position is empty", "No open position"],
   ["InsufficientLiquidity", "Pool has insufficient free liquidity", "Not enough free liquidity in the pool"],
   ["MarketBudgetExhausted", "market has spent the loss budget it was listed with", "This market has used its loss budget"],

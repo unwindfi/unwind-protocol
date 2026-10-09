@@ -157,6 +157,8 @@ export interface RestingOrder {
   price: number; size: number; isBid: boolean; isMaker: boolean; reduceOnly: boolean;
   /// Quoted by the devnet's own maker, which unwind runs.
   house?: boolean;
+  /// Placed by the wallet the batch was read for (`getBatch`'s `owner`).
+  mine?: boolean;
 }
 
 /// One of a batch's two auctions. The buy flow is takers buying from makers,
@@ -486,9 +488,10 @@ export const getTrades = async (symbol: string) => {
 
 /// Null without a backend: a static deploy has no chain, so there is no batch
 /// to report and the panel says so rather than counting down to nothing.
-export const getBatch = async (symbol: string) => {
+/// With `owner`, that wallet's own orders come back marked `mine`.
+export const getBatch = async (symbol: string, owner?: string) => {
   if (!(await hasBackend())) return null;
-  return get<Batch>(`/api/batch/${symbol}`);
+  return get<Batch>(`/api/batch/${symbol}${owner ? `?owner=${owner}` : ""}`);
 };
 
 /// Reads a pool the way the program would. Null without a backend: there is
@@ -559,6 +562,10 @@ export function usePollState<T>(
 ) {
   const [data, setData] = useState<T | null>(() => seed?.() ?? null);
   const [error, setError] = useState(false);
+  /// Whether `data` was read for these inputs on this page, as against the
+  /// seed, which can be a copy from an earlier visit. A check that refuses
+  /// something should only trust a live answer.
+  const [live, setLive] = useState(false);
   const [again, setAgain] = useState(0);
   const first = useRef(true);
   const lastDeps = useRef(deps);
@@ -574,12 +581,12 @@ export function usePollState<T>(
     const changed = deps.length !== lastDeps.current.length
       || deps.some((d, i) => !Object.is(d, lastDeps.current[i]));
     lastDeps.current = deps;
-    if (!first.current && changed) setData(seed?.() ?? null);
+    if (!first.current && changed) { setData(seed?.() ?? null); setLive(false); }
     first.current = false;
     const run = async () => {
       try {
         const v = await fn();
-        if (alive) { setData(v); setError(false); }
+        if (alive) { setData(v); setError(false); setLive(true); }
       } catch { if (alive) setError(true); /* and keep the previous value */ }
       if (alive) timer = window.setTimeout(run, ms);
     };
@@ -587,7 +594,7 @@ export function usePollState<T>(
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, refresh, again]);
-  return { data, error, retry: () => setAgain((n) => n + 1) };
+  return { data, error, live, retry: () => setAgain((n) => n + 1) };
 }
 
 /// One wallet's fills, newest first. Only what the server has settled since

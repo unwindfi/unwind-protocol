@@ -16,6 +16,7 @@ import {
   MAX_UNIT_EXP, leverageForDepth, listingLimits, unitExpFor, unitLabel,
 } from "./listing-policy";
 import { MAX_COMPUTE_UNITS, packInstructions, withComputeLimit } from "./pack";
+import { openRefusal } from "./open-guard";
 import {
   binsPerMove, clmmDepth, clmmPrice, clmmSeedPrice, decodeBinArray, decodeClmm, decodeDlmmPair,
   dlmmBinsNeeded, dlmmDepth, dlmmPrice, findProgramAddress, ringTwapTick, sqrtPriceAtTick,
@@ -514,5 +515,50 @@ describe("pool readers mirror the program", () => {
       const [want] = PublicKey.findProgramAddressSync(seeds.map((s) => Buffer.from(s)), SystemProgram.programId);
       assert.equal(await findProgramAddress(seeds, program), want.toBase58());
     }
+  });
+});
+
+describe("open guard: positions do not flip", () => {
+  const long = { isLong: true, size: 400, closing: 0 };
+
+  it("lets an open add to the side already held", () => {
+    assert.isNull(openRefusal("SOL", true, long, []));
+  });
+
+  it("lets anything open with no position and nothing queued", () => {
+    assert.isNull(openRefusal("SOL", false, null, []));
+    assert.isNull(openRefusal("SOL", true, { isLong: false, size: 0, closing: 0 }, []));
+  });
+
+  it("refuses the other side, and says what is held", () => {
+    const r = openRefusal("SOL", false, long, []);
+    assert.equal(r?.kind, "held");
+    assert.equal(r?.message, "You already hold a LONG on SOL. Close or reduce it first.");
+  });
+
+  it("refuses it after a partial close, which leaves a position", () => {
+    assert.equal(openRefusal("SOL", false, { ...long, closing: 100 }, [])?.kind, "held");
+  });
+
+  it("says the open has to wait when all of the position is closing", () => {
+    const r = openRefusal("SOL", false, { ...long, closing: 400 }, [{ isBid: false, reduceOnly: true }]);
+    assert.equal(r?.kind, "closing");
+    assert.match(r!.message, /closes next batch/);
+  });
+
+  it("refuses an open against the wallet's own opening order still in the batch", () => {
+    const r = openRefusal("JUP", true, null, [{ isBid: false, reduceOnly: false }]);
+    assert.equal(r?.kind, "queued");
+    assert.equal(r?.message, "Your short order on JUP is still in this batch. Open the long after it settles.");
+  });
+
+  it("does not count a queued close or a same-side order", () => {
+    assert.isNull(openRefusal("JUP", true, null, [
+      { isBid: false, reduceOnly: true }, { isBid: true, reduceOnly: false }]));
+  });
+
+  it("asks a limit only about the position", () => {
+    assert.isNull(openRefusal("JUP", true, null, [{ isBid: false, reduceOnly: false }], false));
+    assert.equal(openRefusal("SOL", false, long, [], false)?.kind, "held");
   });
 });

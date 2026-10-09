@@ -107,8 +107,22 @@ export default function App() {
   // Twice a second against a one-second window: fast enough that the book is
   // at most half a batch behind, and the countdown between polls is interpolated from
   // the chain's own deadline rather than from this interval.
-  const batch = usePoll(() => (symbol ? getBatch(symbol) : Promise.resolve(null)), 500, [symbol],
-    () => (symbol ? peek<Batch>(`/api/batch/${symbol}`) : null));
+  // Read for the connected wallet, so its own orders come back marked.
+  const batchPoll = usePollState(() => (symbol ? getBatch(symbol, owner) : Promise.resolve(null)), 500,
+    [symbol, owner], () => (symbol ? peek<Batch>(`/api/batch/${symbol}`) : null));
+  const batch = batchPoll.data;
+  // This wallet's orders in the collecting batch, from a live read only: a
+  // cached copy's marks belong to whoever read it.
+  const mine = useMemo(() => (batchPoll.live && batch?.resting?.filter((o) => o.mine)) || [],
+    [batch, batchPoll.live]);
+  // When one of them leaves the batch it has settled and moved a position.
+  // Read the account then, rather than up to a poll later: a ticket that
+  // still showed the closed position would refuse the next open.
+  const mineCount = useRef(0);
+  useEffect(() => {
+    if (mine.length < mineCount.current) setAccountTick((t) => t + 1);
+    mineCount.current = mine.length;
+  }, [mine.length]);
 
   // A linked market missing from a cached list is not yet known to be
   // missing: it may have been listed since the cache was written. Falling
@@ -272,6 +286,8 @@ export default function App() {
             done: `Maker ${a.isLong ? "buy" : "sell"} ${money(a.size, 0)} at ${a.price} posted`,
             note: "Rests this batch. Unfilled, the margin comes back.",
           })}
+          onClose={() => { setTicketOpen(false); onCloseAll(market.symbol); }}
+          accountLive={accountPoll.live} mine={mine}
           onFund={owner ? fund : undefined}
           accountState={accountState} onRetryAccount={accountPoll.retry}
       m={market} account={account} busy={busy || readOnly} mobile={isMobile}

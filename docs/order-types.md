@@ -75,8 +75,22 @@ All three apply to orders a trigger fires as well as to orders sent by hand.
 
 ## Positions do not flip
 
-A position is long or short. An open must be on the side the position holds,
-and is refused at submission otherwise. To change sides, close first.
+A wallet holds one position per market, long or short.
+
+1. An open on the side the position holds adds to it: the size grows, the
+   entry is blended by size, and leverage is checked on the combined position.
+2. An open on the other side is refused at submission. So is a limit placed
+   on the other side.
+3. An open is also refused while the wallet's own opening order on the other
+   side is still in the batch.
+4. To change sides, close first. A close fills in the next batch, and the
+   other side can be opened once it has.
+
+The trade ticket checks all of this before anything is signed, from fresh
+reads of the position and the batch. On the other side it disables the
+order, says what is held ("You already hold a SHORT on SOL. Close or reduce
+it first."), and offers Reduce and Close. The server asks the same question
+from the chain before it builds the transaction.
 
 ## Opens are checked at submission
 

@@ -8,9 +8,10 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/Tabs";
 import { NumberTicker } from "@/components/motion/number-ticker";
 import { DUR, EASE_OUT } from "@/lib/ease";
-import { poolFill, type Account, type Market } from "@/lib/api";
+import { poolFill, type Account, type Market, type RestingOrder } from "@/lib/api";
 import { money, pnum, price, tone } from "@/lib/format";
 import { faucetWaitHours } from "@/lib/tx";
+import { openRefusal } from "@scripts/open-guard";
 
 /// Key and value across one rule, the way /list states a figure: the name
 /// quiet on the left, the number in weight on the right.
@@ -176,9 +177,17 @@ function orderCap(maxLev: number, pos: Account["positions"][string] | undefined,
 
 export function OrderTicket({
   m, account, busy, onOrder, onLimit, onMaker, onPool, onFund, onTrigger, onCancelTrigger,
-  onReduce, submitLabel, mobile = false, card = false, side: sideProp, onSideChange, onConnect,
-  accountState, onRetryAccount,
+  onReduce, onClose, submitLabel, mobile = false, card = false, side: sideProp, onSideChange, onConnect,
+  accountState, onRetryAccount, accountLive = false, mine = [],
 }: {
+  /// Whether `account` was read on this page rather than seeded from an
+  /// earlier visit's copy. Only a live read may refuse an order: a cached
+  /// position can be one closed since.
+  accountLive?: boolean;
+  /// This wallet's own orders in the collecting batch.
+  mine?: RestingOrder[];
+  /// Closes all of the open position.
+  onClose?: () => void;
   /// For a connected wallet whose account has not been read: still reading,
   /// or the read failed. Its balance is then a placeholder, never $0.
   accountState?: "loading" | "failed";
@@ -305,6 +314,21 @@ export function OrderTicket({
   const ageSec = m.priceAgeMs == null ? null : m.priceAgeMs / 1000;
   const stale = ageSec != null && ageSec > m.maxPriceAgeSec;
 
+  /*
+   * Positions do not flip: an open on the side already held adds to it, and
+   * one on the other side is refused (see `open-guard.ts`). Asked here, before
+   * anything is signed, from live reads only. The account is read again the
+   * moment one of this wallet's orders settles (App), so a close that has
+   * filled does not keep blocking. A limit is placed outside the batch, so it
+   * is asked only about the position.
+   */
+  const sideName = (l: boolean) => (l ? "long" : "short");
+  const flip = reduceOnly || onConnect || !accountLive ? null
+    : openRefusal(m.symbol, side === "long",
+        pos ? { isLong: pos.isLong, size: pos.size,
+                closing: mine.filter((o) => o.reduceOnly).reduce((n, o) => n + o.size, 0) } : null,
+        mine, !(mode === "limit" && !maker));
+
   // A reduce-only order posts no margin and takes no capacity (it hands size
   // back), so it is measured against the position instead of the account.
   // Said once, under the button, in the words a desk would use. The button
@@ -312,6 +336,7 @@ export function OrderTicket({
   // as an alarm, and the trader still has to find out what to press.
   const warn =
     stale ? `Price feed ${ageSec! >= 120 ? `${Math.round(ageSec! / 60)} min` : `${Math.round(ageSec!)}s`} behind. Orders paused.`
+    : flip ? flip.message
     : reduceOnly
       ? !pos ? `No ${m.symbol} position to reduce.`
         : pos.isLong === (side === "long")
@@ -725,6 +750,32 @@ export function OrderTicket({
         </button>
         {!onConnect && (warn || limitNote) && (
           <p className="text-pretty mt-2.5 text-center text-[12px] leading-relaxed text-muted-foreground">{warn || limitNote}</p>
+        )}
+        {/* The way out, next to the reason. Reducing is an order on this
+            same side, so it only switches the ticket to reduce-only at
+            market, sized to at most the position. */}
+        {!stale && flip?.kind === "held" && (onReduce || onClose) && (
+          <p className="mt-1.5 flex justify-center gap-4 text-[12px] text-muted-foreground">
+            {onReduce && (
+              <button type="button" disabled={busy}
+                onClick={() => {
+                  setMode("market");
+                  setReduceOnly(true);
+                  const cap = pos!.size;
+                  if (size > cap) setAmount(denom === "usd" ? String(Math.floor(cap * 100) / 100)
+                    : String(Math.floor((cap / m.price) * 1e4) / 1e4));
+                }}
+                className="underline decoration-line underline-offset-2 hover:text-foreground disabled:opacity-35">
+                Reduce {sideName(pos!.isLong)}
+              </button>
+            )}
+            {onClose && (
+              <button type="button" disabled={busy} onClick={onClose}
+                className="underline decoration-line underline-offset-2 hover:text-foreground disabled:opacity-35">
+                Close {sideName(pos!.isLong)}
+              </button>
+            )}
+          </p>
         )}
       </div>
 

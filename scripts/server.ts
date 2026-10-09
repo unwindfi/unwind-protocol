@@ -41,6 +41,7 @@ import {
   indicativeCross, livePoints, notePremium, num, payoutPct, pendingStakePoints, premiumOf,
   seasonStanding, weekStart,
 } from "./server-logic";
+import { openRefusal } from "./open-guard";
 import {
   BACKER_FEE_SHARE_BPS, DEPTH_LEVERAGE_TIERS, LISTING_LEVERAGE_CEILING_BPS, MIN_LISTING_BACKING_USD, MIN_OBSERVATIONS,
   MIN_OBSERVATION_WINDOW_SEC, QUOTE_MINTS, listingLimits, unitLabel,
@@ -1791,6 +1792,33 @@ const closableUsd = async (m: MarketRt, owner: PublicKey) => {
   return open <= 0 ? null : { isLong: p.isLong as boolean, usd: open / 1e6 };
 };
 
+/// The batch as last read, or read now. Shared by the batch route and the
+/// pre-sign check so an order build costs no extra call while the auction is
+/// busy.
+const batchState = async (m: MarketRt): Promise<any> => {
+  const seen = batchSeen.get(m.symbol);
+  return seen && Date.now() - seen.at < BATCH_FRESH_MS
+    ? seen.state
+    : batchReads.get(m.symbol, () => program.account.batch.fetchNullable(batchPda(m.address)));
+};
+
+/// Why the program would refuse this open, in the page's words, or null
+/// (see `open-guard.ts`). Asked from the chain before the transaction is
+/// built, so the trader is not handed a signature that can only fail. A
+/// failed read says nothing and leaves it to the program.
+const openConflict = async (m: MarketRt, owner: PublicKey, isLong: boolean, inBatch = true) => {
+  const [info, state] = await Promise.all([
+    conn.getAccountInfo(positionPda(m.address, owner)).catch(() => null),
+    inBatch ? batchState(m).catch(() => null) : null,
+  ]);
+  const p: any = info ? program.coder.accounts.decode("position", info.data) : null;
+  const pos = p ? { isLong: !!p.isLong, size: num(p.sizeUsd) / 1e6, closing: num(p.closingUsd) / 1e6 } : null;
+  const mine = ((state?.orders ?? []) as any[])
+    .filter((o) => o.active !== 0 && new PublicKey(o.owner).equals(owner))
+    .map((o) => ({ isBid: o.isBid !== 0, reduceOnly: o.reduceOnly !== 0 }));
+  return openRefusal(m.symbol, isLong, pos, mine, inBatch)?.message ?? null;
+};
+
 /// A wallet's referral and points record. Named for what it holds, because
 /// `trader` is already the demo keypair.
 const traderPda = (owner: PublicKey) =>
@@ -3175,11 +3203,12 @@ app.get("/api/batch/:symbol", async (req, res) => {
   const m = rt[req.params.symbol];
   if (!m) return res.status(404).json({ error: "unknown market" });
   try {
-    const seen = batchSeen.get(m.symbol);
-    const state: any = seen && Date.now() - seen.at < BATCH_FRESH_MS
-      ? seen.state
-      : await batchReads.get(m.symbol, () => program.account.batch.fetchNullable(batchPda(m.address)));
+    const state: any = await batchState(m);
     if (!state) return res.json({ exists: false });
+    // With `?owner=`, that wallet's own orders are marked, so its ticket can
+    // tell an open the program would refuse (see `openConflict`).
+    let me: PublicKey | null = null;
+    try { me = req.query.owner ? new PublicKey(String(req.query.owner)) : null; } catch { me = null; }
 
     const opened = Number(state.openedTs);
     const resting = (state.orders as any[])
@@ -3191,6 +3220,7 @@ app.get("/api/batch/:symbol", async (req, res) => {
         isMaker: o.isMaker !== 0,
         reduceOnly: o.reduceOnly !== 0,
         house: isHouse(o.owner),
+        ...(me && new PublicKey(o.owner).equals(me) ? { mine: true } : {}),
       }));
 
     // A market still seasoning is in its opening auction: orders rest until the
@@ -5239,6 +5269,8 @@ app.post("/api/tx/order", async (req, res) => {
     if (!m) return res.status(404).json({ error: "unknown market" });
     const maker = !!req.body.maker;
     if (maker && !Number(req.body.price)) throw new Error("a maker order needs a price");
+    const conflict = await openConflict(m, owner, !!isLong);
+    if (conflict) return res.status(409).json({ error: conflict });
     const limit = Number(req.body.price) || marketLimit(m, !!isLong);
     const ix = await program.methods
       .submitOrder(USD(limit), USD(Number(size)), USD(Number(collateral)), !!isLong, false, maker)
@@ -5449,6 +5481,12 @@ app.post("/api/tx/order/trigger", async (req, res) => {
     // create an order account twice, and the second "set" failed with a bare
     // "Simulation failed" (66 times in the load test).
     const m = rt[req.body.symbol];
+    // A limit is an open the keeper fires later, and the program asks the
+    // same question when it is placed.
+    if (m && req.body.kind === "limit") {
+      const conflict = await openConflict(m, owner, !!req.body.isLong, false);
+      if (conflict) return res.status(409).json({ error: conflict });
+    }
     const slot = m ? orderParams(req.body).slot : -1;
     const standing = m ? await conn.getAccountInfo(orderPda(m.address, owner, slot)) : null;
     const replace = standing ? [await cancelOrderIx(owner, { symbol: req.body.symbol, slot })] : [];
