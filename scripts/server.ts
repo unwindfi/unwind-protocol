@@ -2921,10 +2921,11 @@ async function marketsView() {
         maxPriceAgeSec: ma.maxPriceAgeSec,
         feedError: lastPostError || null,
         ...q,
-        // The program caps an observed market by its pool's sustained depth
-        // (`Market::depth_leverage_cap_bps`); this is the same number.
+        // `Market::effective_max_leverage_bps`: a closed session's ceiling
+        // never above the market's own, and an observed market held to what
+        // its pool's sustained depth supports (`depth_leverage_cap_bps`).
         maxLeverage: Math.min(
-          (ma.session === 2 ? ma.closedSessionLeverageBps : ma.maxLeverageBps) / BPS,
+          (ma.session === 2 ? Math.min(ma.closedSessionLeverageBps, ma.maxLeverageBps) : ma.maxLeverageBps) / BPS,
           ma.priceSource === 1 ? Math.max(ma.depthLeverageX, DEPTH_LEVERAGE_TIERS[0][1]) : Infinity),
         session: ma.session,
         // Paused by the pool's authority: no new opens or backing, exits only.

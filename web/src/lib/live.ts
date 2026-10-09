@@ -104,7 +104,7 @@ export async function liveMarkets(): Promise<Market[]> {
       change: price - open,
       changePct,
       high: price, low: price,
-      maxLeverage: (session === 2 ? 20_000 : def.maxLeverageBps) / 10_000,
+      maxLeverage: (session === 2 ? Math.min(20_000, def.maxLeverageBps) : def.maxLeverageBps) / 10_000,
       session,
       maintenanceMarginBps: def.maintenanceMarginBps,
       openFeeBps: OPEN_FEE_BPS,

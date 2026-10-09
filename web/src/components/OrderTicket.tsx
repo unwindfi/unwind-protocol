@@ -1,7 +1,7 @@
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import { Pending, Unavailable } from "@/components/ui/unavailable";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/motion/checkbox";
 import { RangeSlider } from "@/components/motion/range-slider";
 import { Tooltip } from "@/components/motion/tooltip";
@@ -159,6 +159,21 @@ const MIN_ORDER_USD = 10;
 const TIF = { gtc: 0, "1h": 3600, "1d": 86_400 } as const;
 type Tif = keyof typeof TIF;
 
+/// The most leverage this order may be placed at. The program caps the
+/// position an open grows, not the order alone: size over collateral, with
+/// the funding the position already owes taken off its collateral
+/// (`admit_open`). An add to a position near the cap, or past a cap that has
+/// since fallen, fits only at a lower leverage than the market's maximum.
+/// Held a hair under the exact figure, since funding keeps accruing between
+/// this read and the order landing, and floored to the slider's step.
+function orderCap(maxLev: number, pos: Account["positions"][string] | undefined,
+                  isLong: boolean, size: number) {
+  if (!pos || pos.isLong !== isLong || size <= 0) return maxLev;
+  const equity = Math.max(0, pos.collateral - pos.funding);
+  const need = (pos.size + size) / (maxLev * 0.999) - equity;
+  return need <= 0 ? maxLev : Math.min(maxLev, Math.floor((size / need) * 10) / 10);
+}
+
 export function OrderTicket({
   m, account, busy, onOrder, onLimit, onMaker, onPool, onFund, onTrigger, onCancelTrigger,
   onReduce, submitLabel, mobile = false, card = false, side: sideProp, onSideChange, onConnect,
@@ -230,7 +245,6 @@ export function OrderTicket({
   const [postOnly, setPostOnly] = useState(false);
 
   const maxLev = m.maxLeverage;
-  const L = Math.min(Math.max(lev, 1.1), maxLev);
   const avail = account?.usdc ?? 0;
   const pos = account?.positions[m.symbol];
 
@@ -240,6 +254,30 @@ export function OrderTicket({
 
   const typed = Number(amount) || 0;
   const size = denom === "usd" ? typed : typed * m.price;
+
+  // Every figure below, and the order itself, is priced at `L`, so nothing
+  // the ticket sends can be above the cap it reads. A reduce posts no margin
+  // and has no cap.
+  const cap = reduceOnly ? maxLev : orderCap(maxLev, pos, side === "long", size);
+  const L = Math.min(Math.max(lev, 1.1), cap);
+
+  /*
+   * A market's maximum moves while the ticket is open: a pool's depth falls a
+   * tier, or the underlying closes. The chosen leverage comes down with it,
+   * and the ticket says so once rather than letting the chip change under
+   * the trader's eye.
+   */
+  const [capNote, setCapNote] = useState("");
+  const seen = useRef({ symbol: m.symbol, max: maxLev });
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { symbol: m.symbol, max: maxLev };
+    if (was.symbol !== m.symbol) return setCapNote("");
+    if (maxLev >= was.max || lev <= maxLev) return;
+    setLev(maxLev);
+    setCapNote(`${m.symbol} max leverage fell to ${levText(maxLev)}. Yours is now ${levText(maxLev)}.`);
+  }, [m.symbol, maxLev, lev]);
+  const chooseLev = (v: number) => { setLev(v); setCapNote(""); };
   const swap = () => {
     const next = denom === "usd" ? "base" : "usd";
     setAmount(typed
@@ -281,6 +319,7 @@ export function OrderTicket({
           : ""
     : size <= 0 ? ""
     : size < MIN_ORDER_USD ? `Minimum order ${money(MIN_ORDER_USD, 0)}.`
+    : cap < 1.1 ? `Your ${side} is over this market's ${levText(maxLev)} cap. Reduce it before adding.`
     : account && calc.debit > avail ? `Needs ${money(calc.debit)} margin, ${money(avail)} free. Lower size or raise leverage.`
     : calc.capped ? `Over this market's ${side} capacity. Lower size.`
     : "";
@@ -387,6 +426,10 @@ export function OrderTicket({
           </button>
         </div>
 
+        {capNote && (
+          <p role="status" className="text-pretty mt-2 text-[12px] leading-relaxed text-muted-foreground">{capNote}</p>
+        )}
+
         <AnimatePresence initial={false}>
           {levOpen && (
             <motion.div key="lev"
@@ -396,13 +439,17 @@ export function OrderTicket({
               transition={reduceMotion ? { duration: 0 } : { duration: DUR.moderate, ease: EASE_OUT }}
               className="overflow-hidden">
               <div className="pt-4">
-                <RangeSlider value={L} onValueChange={setLev} min={1.1} max={maxLev} step={0.1}
+                <RangeSlider value={L} onValueChange={chooseLev} min={1.1} max={Math.max(1.1, cap)}
+                  step={0.1} disabled={cap < 1.1}
                   aria-label="Leverage" formatValueText={(v) => `${v.toFixed(1)}x`} />
                 {/* The ends of the range, so a thumb at the far right reads as
-                    "this market's maximum" rather than as a slider stuck. */}
+                    "this market's maximum" rather than as a slider stuck. An
+                    add says when the position it grows is what holds it. */}
                 <div className="mt-1.5 flex justify-between text-[11.5px] text-dim">
                   <span className="n">1.1x</span>
-                  <span className="n">{maxLev}x max</span>
+                  <span className="n">{cap < maxLev
+                    ? `${levText(Math.max(0, cap))} max with your ${side}`
+                    : `${levText(maxLev)} max`}</span>
                 </div>
               </div>
             </motion.div>

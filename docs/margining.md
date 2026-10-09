@@ -24,7 +24,13 @@ Collateral is escrowed when the order is submitted. The part an unfilled
 order does not use comes back at settlement.
 
 Adding to a position checks the grown position on collateral net of the
-funding it already owes. The entry blends as the notional-weighted harmonic
+funding it already owes. So an add to a position near the cap fits only at
+a lower leverage than the market's maximum, and an add to a position already
+past it (the cap fell after it opened) fits only once the order is large
+enough to bring the whole position back under. The trade ticket caps its
+leverage slider at what the grown position allows and says when that is
+below the market's maximum. When a market's maximum falls while the ticket is
+open, the ticket lowers the chosen leverage to it and says so. The entry blends as the notional-weighted harmonic
 mean:
 
 ```
