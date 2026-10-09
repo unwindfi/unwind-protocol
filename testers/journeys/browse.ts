@@ -29,7 +29,10 @@ export const browse: Journey = {
       await ctx.step(`group ${g}`, async () => {
         const b = page.getByRole("button", { name: g, exact: true });
         if (!(await b.first().isVisible().catch(() => false))) return;
-        await ctx.click(b, `the ${g} group`);
+        // The group already open has nothing to change into, so it is
+        // allowed to stay still.
+        const open = (await b.first().getAttribute("aria-pressed")) === "true";
+        await ctx.click(b, `the ${g} group`, { expectChange: !open });
         if ((await b.first().getAttribute("aria-pressed")) !== "true") {
           await ctx.rec.issue("control-mismatch", "medium", `The ${g} group did not show as selected after a click`, { key: `group ${g}` });
         }

@@ -412,7 +412,10 @@ export default function Markets() {
                 onClick={() => { setGroup(g.key); setQuery(""); }}
                 className={`press group/card relative h-[124px] w-[170px] flex-none overflow-hidden rounded-[16px] sm:w-auto sm:min-w-[132px] sm:flex-1
                             border text-left ${on
-                  ? "border-foreground/25 bg-panel3" : "border-line bg-panel hover:bg-panel2"}`}>
+                  // A solid edge in the text color: the old faint one read
+                  // like a hovered card, so pressing the group already open
+                  // looked like a click that did nothing.
+                  ? "border-foreground bg-panel3" : "border-line bg-panel hover:bg-panel2"}`}>
                 <img src={`/groups/${g.key}.webp`} alt="" aria-hidden
                   width={118} height={118} draggable={false}
                   className="pointer-events-none absolute -right-5 -top-6 h-[118px] w-[118px] select-none
