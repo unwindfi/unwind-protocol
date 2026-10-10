@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { SiX } from "@icons-pack/react-simple-icons";
-import { DOCS, LEGAL, RISKS, SiteHeader, X_URL } from "@/site/Chrome";
+import { DOCS, EMAIL, LEGAL, RISKS, SiteHeader, X_URL } from "@/site/Chrome";
 
 /*
  * The privacy policy, the terms and the risk disclosures, one page each at
@@ -12,7 +12,7 @@ import { DOCS, LEGAL, RISKS, SiteHeader, X_URL } from "@/site/Chrome";
  * user signs, and that devnet carries no value. There is no company behind
  * unwind yet, so nothing here names one; when there is, these name it.
  */
-const UPDATED = "October 7, 2026";
+const UPDATED = "October 10, 2026";
 
 type Doc = { title: string; lede: ReactNode; sections: { h: string; body: ReactNode[] }[] };
 
@@ -21,7 +21,7 @@ const A = ({ href, children }: { href: string; children: ReactNode }) => (
   <a href={href} {...(href.startsWith("http") ? out : {})}
     className="text-foreground underline underline-offset-2 hover:opacity-80">{children}</a>
 );
-const contact = <>Send a direct message to <A href={X_URL}>@unwindfi on X</A>.</>;
+const contact = <>Email <A href={`mailto:${EMAIL}`}>{EMAIL}</A> or send a direct message to <A href={X_URL}>@unwindfi on X</A>.</>;
 
 const DOCS_BY_PATH: Record<string, Doc> = {
   "/privacy": {

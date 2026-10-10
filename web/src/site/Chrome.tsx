@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Wordmark } from "@/components/Wordmark";
 import { GlassMark } from "@/components/GlassMark";
 import {
-  ArrowUpRight, Menu, Search, X,
+  ArrowUpRight, Menu, Search, X, Mail,
 } from "lucide-react";
 import { SiX } from "@icons-pack/react-simple-icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -48,6 +48,7 @@ export const SkipLink = () => (
 export const DOCS = "https://docs.unwindfi.xyz";
 
 export const X_URL = "https://x.com/unwindfi";
+export const EMAIL = "hello@unwindfi.xyz";
 
 export const RISKS = `${DOCS}/about-unwind/risks`;
 /// The privacy policy, terms and risk disclosures (site/Legal.tsx).
@@ -248,7 +249,7 @@ export function PageMenu({ here, tradeHref = "/trade", className = "" }: {
 }
 
 export function SiteFooter(_: { tradeHref?: string } = {}) {
-  type L = { label: string; href: string; out?: boolean; Icon?: typeof SiX; logo?: boolean };
+  type L = { label: string; href: string; out?: boolean; Icon?: typeof SiX | typeof Mail; logo?: boolean };
   const cols: { title: string; links: L[] }[] = [
     { title: "Product", links: [
       { label: "Markets", href: "/markets" },
@@ -263,6 +264,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
     // Brand marks come from simple-icons; lucide carries none.
     { title: "Community", links: [
       { label: "X", href: X_URL, out: true, Icon: SiX },
+      { label: EMAIL, href: `mailto:${EMAIL}`, Icon: Mail },
       { label: "Superteam Nepal", href: SUPERTEAM_NP, out: true, logo: true },
     ] },
   ];
