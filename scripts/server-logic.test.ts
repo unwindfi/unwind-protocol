@@ -8,7 +8,7 @@ import * as path from "path";
 import { Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
   BREAKER_PCT, Claim, PREMIUM_WINDOW_MS, Season, breaker, countTraders, crossOf, faucetRefusal,
-  flowOf, fundingRates, indicativeCross, livePoints, markStale, notePremium, num,
+  flowOf, fundingRates, indicativeCross, livePoints, markStale, markWrittenMs, notePremium, num,
   observedTradeable, payoutPct, pendingStakePoints, premiumOf, seasonStanding, weekStart,
 } from "./server-logic";
 import { sizeSwap } from "./testnet-flow";
@@ -573,6 +573,17 @@ describe("server: a stale mark pauses an observed market", () => {
     assert.isFalse(observedTradeable(true, 27_255, 1_309_877, 120));
     assert.isFalse(observedTradeable(false, 1_000, 1_000, 120), "seasoning");
     assert.isFalse(observedTradeable(true, 0, 1_000, 120), "unbacked");
+  });
+
+  it("takes a mark's age from the chain, not from when it was read", () => {
+    const now = 1_791_630_000_000;
+    // Written an hour ago and re-read just now, as at a restart.
+    const written = markWrittenMs(now / 1000 - 3_600, now, now);
+    assert.equal(now - written, 3_600_000);
+    assert.isFalse(observedTradeable(true, 1_000, now - written, 120));
+    // A clock ahead of ours reads as just now, and no timestamp keeps the fallback.
+    assert.equal(markWrittenMs(now / 1000 + 30, now, 0), now);
+    assert.equal(markWrittenMs(0, now, 42), 42);
   });
 
   it("has no age before the first reading and no limit at zero", () => {

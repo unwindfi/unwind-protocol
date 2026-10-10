@@ -61,6 +61,13 @@ export function observedTradeable(
   return seasoned && budgetUsd > 0 && !markStale(ageMs, maxAgeSec);
 }
 
+/// When an observed market's mark was written, in ms: its on-chain
+/// `last_update_ts`, never later than `now` (a validator clock running ahead
+/// would read as a mark from the future). `fallback` when the account has no
+/// timestamp yet.
+export const markWrittenMs = (lastUpdateTs: number, now: number, fallback: number) =>
+  lastUpdateTs > 0 ? Math.min(now, lastUpdateTs * 1000) : fallback;
+
 /// A mark older than the market accepts. A market with no age limit on
 /// record (zero) is never stale here; the program has its own floor.
 export const markStale = (ageMs: number | null, maxAgeSec: number) =>

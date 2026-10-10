@@ -38,8 +38,8 @@ import { SOURCE_KIND, clmmPrice, decodeBinArray, decodeClmm, decodeDlmmPair, dlm
 import { Memo, markMayRest } from "./read-cache";
 import {
   BookOrder, Claim, Season, breaker, countTraders, crossOf, faucetRefusal, flowOf, fundingRates,
-  indicativeCross, livePoints, markStale, notePremium, num, observedTradeable, payoutPct,
-  pendingStakePoints, premiumOf, seasonStanding, weekStart,
+  indicativeCross, livePoints, markStale, markWrittenMs, notePremium, num, observedTradeable,
+  payoutPct, pendingStakePoints, premiumOf, seasonStanding, weekStart,
 } from "./server-logic";
 import { openRefusal } from "./open-guard";
 import {
@@ -2751,7 +2751,11 @@ function publish(market: PublicKey, o: any, fresh = true) {
     underlying: null,
     liquidity: m.observed.depthUsd,
   } as any;
-  if (fresh || !m.lastFetch) m.lastFetch = now;
+  // The mark's age is the chain's: when it was last written, not when this
+  // process last read it. A restart re-reads every market at once, and
+  // timing from that read showed a mark refused for an hour as seconds old,
+  // so a stale market kept reporting itself tradeable.
+  m.lastFetch = markWrittenMs(num(o.lastUpdateTs), now, fresh ? now : m.lastFetch);
   if (!m.liveFrom) m.liveFrom = now;
   if (!m.open) m.open = price;
   m.high = Math.max(m.high || price, price);
