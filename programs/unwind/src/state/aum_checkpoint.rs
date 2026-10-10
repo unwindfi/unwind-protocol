@@ -36,8 +36,9 @@ pub struct AumCheckpoint {
     /// The same pass as a withdrawal claim reads it: each market at whichever
     /// leaves the pool worth less.
     pub pass_claim_pnl_usd: i64,
-    /// Markets the pass counted at their worst because their price could not
-    /// be read (see `Unpriced`).
+    /// Markets the pass counted at their bounds because their price could not
+    /// be read: at their best on the deposit side, their worst on the claim
+    /// side (see `Unpriced`).
     pub pass_unpriced: u16,
 
     /// The last pass that completed. `done_ts` is when it started, so its age
@@ -49,5 +50,13 @@ pub struct AumCheckpoint {
     pub done_claim_pnl_usd: i64,
     pub done_unpriced: u16,
 
-    pub _reserved: [u8; 12],
+    /// Whether the pass stored an unpriced market at its best on the deposit
+    /// side. Passes before October 2026 stored it at its worst on both, and
+    /// refused deposits instead; a deposit that read one of those now would
+    /// buy in at the worst. False on any pass started by the older program,
+    /// so such a pass with an unpriced market still refuses a deposit.
+    pub pass_at_best: bool,
+    pub done_at_best: bool,
+
+    pub _reserved: [u8; 10],
 }

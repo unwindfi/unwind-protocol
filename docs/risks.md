@@ -107,9 +107,9 @@ See [How to underwrite a market](how-to-underwrite-a-market.md).
 3. **Paid in kind.** A claim pays USDC plus the same share of any tokens
    the LPs hold from backing they covered.
 4. **Priced from a checkpoint.** Deposits and withdrawals price shares from
-   a pass over every market at most 60 seconds old. A deposit is refused
-   while any market's price is unreadable. A withdrawal counts that market at
-   the most it could cost the LPs.
+   a pass over every market at most 60 seconds old. While a market's price
+   is unreadable, a deposit counts it at the least it could cost the LPs and
+   a withdrawal at the most, so neither can profit from the stale price.
 
 See [The pool](pool.md).
 

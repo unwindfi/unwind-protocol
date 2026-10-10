@@ -110,7 +110,7 @@ for the LP moving money.
 | --- | --- | --- |
 | Risk price vs oracle | whichever leaves the pool worth more | whichever leaves it worth less |
 | Losers past their collateral | netted against other collateral | counted as bad debt, upper bound |
-| Market that cannot be priced | deposit refused | counted at its worst |
+| Market that cannot be priced | counted at its best | counted at its worst |
 
 A market's risk price can trail its oracle after a move (see
 [Price sources](price-sources.md#the-risk-price)). Valuing at the worse of the
@@ -132,9 +132,18 @@ $85. Each is $15,000 down. The first can pay only $10,000.
 | At $85 | $30,000 owed to the pool | $20,000 |
 | At $95 | $10,000 | $10,000 |
 
-A market whose price cannot be read counts, on the claim side, as if its
-winners took all its remaining budget past its backing. One stalled feed
-cannot lock the pool.
+A market whose price cannot be read counts at the bound that goes against the
+LP moving money. On the deposit side its traders have lost all their
+collateral, less what goes back to its backers. On the claim side its winners
+took all its remaining budget past its backing. No price the market could
+reach values the pool higher for a leaver or lower for a depositor, so a
+stale mark cannot be used to buy in cheap or leave rich, and one stalled feed
+locks neither side.
+
+What it costs: while a market is unpriced, a depositor pays as if its traders
+had lost everything, which can be more than they actually lost. That is at
+most the market's collateral plus what its winners are up. Until October 2026 a deposit was refused instead, which let
+one stalled feed close the pool to deposits.
 
 ## The valuation checkpoint
 

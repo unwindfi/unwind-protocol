@@ -33,11 +33,13 @@ pub fn pool_aum_usd<'info>(
         now,
         unpriced,
     )?;
-    // A checkpoint that counted a market at its worst because its price could
-    // not be read refuses a deposit, which can wait for the price, and prices
-    // a withdrawal, which must not be locked in by one stalled feed.
-    if unpriced == Unpriced::Refuse {
-        require!(checkpoint.done_unpriced == 0, PerpError::StaleOracle);
+    // A market whose price could not be read is in the checkpoint at both
+    // of its bounds (see `fold_checkpoint`), so neither side waits for it:
+    // one stalled feed used to refuse every deposit into the pool. A pass
+    // from before that change stored the worst on the deposit side too,
+    // which would sell shares cheap, so it still refuses.
+    if unpriced == Unpriced::AtBest {
+        require!(checkpoint.done_unpriced == 0 || checkpoint.done_at_best, PerpError::StaleOracle);
     }
     let in_kind = lp_in_kind_usd(pool, remaining_accounts)?;
     Ok(pool.aum_with_in_kind_usd(pnl, in_kind))
@@ -46,17 +48,20 @@ pub fn pool_aum_usd<'info>(
 /// What to do with a market whose price could not be read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Unpriced {
-    /// Refuse, as a deposit does: it can wait for the price.
-    Refuse,
+    /// Count it at the least it could cost the LPs, as a deposit does: the
+    /// pool at its most, so the depositor buys no share of a loss the price
+    /// would show.
+    AtBest,
     /// Count it at the most it could cost the LPs, as a withdrawal does.
     AtWorst,
 }
 
 /// Whether a failed price read means the price is unusable right now (old,
 /// too uncertain, not seasoned) rather than that the wrong account was
-/// passed. Only the first may be counted at worst in a checkpoint: a pass is
-/// shared, and letting anyone mark a market unpriced by passing another
-/// account would let them refuse every deposit and cheapen every withdrawal.
+/// passed. Only the first may be counted at its bounds in a checkpoint: a
+/// pass is shared, and letting anyone mark a market unpriced by passing
+/// another account would let them overprice every deposit and cheapen every
+/// withdrawal.
 fn price_unusable(e: &Error) -> bool {
     match e {
         Error::AnchorError(a) => [
@@ -71,7 +76,7 @@ fn price_unusable(e: &Error) -> bool {
 }
 
 /// Trader PnL from a checkpoint, if the pool may be priced from it now: the
-/// deposit-side sum for a deposit (`Refuse`), the claim-side sum for a
+/// deposit-side sum for a deposit (`AtBest`), the claim-side sum for a
 /// withdrawal (`AtWorst`). See `lp_pnl_against_the_mover`.
 ///
 /// `aum_drift_usd` is the pool's `Pool::aum_drift_usd`. The pass stored each
@@ -98,7 +103,7 @@ pub fn checkpoint_pnl_usd(
     // Wrapping, as every drift sum is: only differences are meaningful, and
     // they come out exact however far the running totals have travelled.
     Ok(match side {
-        Unpriced::Refuse => c.done_pnl_usd,
+        Unpriced::AtBest => c.done_pnl_usd,
         Unpriced::AtWorst => c.done_claim_pnl_usd,
     }
     .wrapping_add(aum_drift_usd))
@@ -181,6 +186,7 @@ pub fn fold_checkpoint<'info>(
         c.pass_pnl_usd = 0;
         c.pass_claim_pnl_usd = 0;
         c.pass_unpriced = 0;
+        c.pass_at_best = true;
     } else {
         require!(c.pass_open && !stale && !moved, PerpError::AumCheckpointStale);
     }
@@ -200,14 +206,22 @@ pub fn fold_checkpoint<'info>(
             Ok(oracle) => {
                 let valued = accrued_to(&market, pool, now)?;
                 (
-                    lp_pnl_against_the_mover(&valued, oracle.price, Unpriced::Refuse)?,
+                    lp_pnl_against_the_mover(&valued, oracle.price, Unpriced::AtBest)?,
                     lp_pnl_against_the_mover(&valued, oracle.price, Unpriced::AtWorst)?,
                 )
             }
+            // No price: each side at the bound that goes against whoever
+            // moves money. A deposit counts the market at the least it could
+            // cost the LPs (every trader there loses all their collateral),
+            // a claim at the most (winners paid the whole remaining budget).
+            // No price the market could reach values the pool higher for the
+            // depositor or lower for the leaver, so a stale mark cannot be
+            // used to buy in cheap or leave rich; what it costs is the
+            // depositor paying for a gain the LPs may not have, bounded by
+            // that market's collateral.
             Err(e) if price_unusable(&e) => {
                 c.pass_unpriced += 1;
-                let worst = market.lp_worst_pnl_usd();
-                (worst, worst)
+                (market.lp_best_pnl_usd(), market.lp_worst_pnl_usd())
             }
             Err(e) => return Err(e),
         };
@@ -231,6 +245,7 @@ pub fn fold_checkpoint<'info>(
         c.done_pnl_usd = c.pass_pnl_usd;
         c.done_claim_pnl_usd = c.pass_claim_pnl_usd;
         c.done_unpriced = c.pass_unpriced;
+        c.done_at_best = c.pass_at_best;
         c.pass_open = false;
     }
     Ok(())
@@ -297,7 +312,7 @@ pub fn lp_in_kind<'info>(
 /// move the two disagree for a while. Valuing the pool at the oracle alone
 /// lets a depositor buy in just before the risk price catches up with a loss,
 /// or a leaver claim just before it catches up with a gain. So a deposit
-/// (`Refuse`) counts the pool at the higher of the two values, and buys fewer
+/// (`AtBest`) counts the pool at the higher of the two values, and buys fewer
 /// shares; a claim (`AtWorst`) counts it at the lower, and is paid less. A
 /// market with no risk price on record yet is valued at the oracle.
 ///
@@ -305,7 +320,7 @@ pub fn lp_in_kind<'info>(
 /// does not count a loser's loss past its own collateral as collectable.
 pub fn lp_pnl_against_the_mover(market: &Market, target: u64, unpriced: Unpriced) -> Result<i64> {
     let read = |price: u64| match unpriced {
-        Unpriced::Refuse => market.lp_pnl_usd(price),
+        Unpriced::AtBest => market.lp_pnl_usd(price),
         Unpriced::AtWorst => market.lp_claim_pnl_usd(price),
     };
     let at_target = read(target)?;
@@ -315,7 +330,7 @@ pub fn lp_pnl_against_the_mover(market: &Market, target: u64, unpriced: Unpriced
     let at_risk = read(market.risk_price)?;
     Ok(match unpriced {
         // Less owed is more pool value.
-        Unpriced::Refuse => at_target.min(at_risk),
+        Unpriced::AtBest => at_target.min(at_risk),
         Unpriced::AtWorst => at_target.max(at_risk),
     })
 }
@@ -451,7 +466,7 @@ mod tests {
             done_ts: NOW - age, done_version: version, done_markets: markets, done_pnl_usd: pnl,
             done_claim_pnl_usd: pnl,
             done_unpriced: 0,
-            _reserved: [0; 12],
+            pass_at_best: true, done_at_best: true, _reserved: [0; 10],
         }
     }
 
@@ -498,7 +513,7 @@ mod tests {
         assert!(truth.abs_diff(then) < D);
         let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
         assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), truth);
-        assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), truth);
+        assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(), truth);
     }
 
     /// The deposit side of S2-01: a winner paid out of liquidity after the
@@ -541,7 +556,7 @@ mod tests {
         let (key, _) = pool_account(&p);
         let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
         let c = done(key, version, set, first.wrapping_add(second), 5);
-        for side in [Unpriced::Refuse, Unpriced::AtWorst] {
+        for side in [Unpriced::AtBest, Unpriced::AtWorst] {
             let aum = pool_aum_usd(&after, &c, NOW, accounts(vec![]), side).unwrap();
             assert!((aum as i64).abs_diff(worth) < D, "{side:?}: {aum} vs {worth}");
         }
@@ -604,7 +619,7 @@ mod tests {
         let (version, set) = (p.oi_version, p.markets_with_oi);
         let (key, before) = pool_account(&p);
         let c = done(key, version, set, checkpoint_pnl_of(&m, owed), 5);
-        let then = pool_aum_usd(&before, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap();
+        let then = pool_aum_usd(&before, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap();
         assert_eq!(then, 1_007_920 * D);
 
         // Another 8 hours accrue after the reading, then A closes flat and
@@ -616,13 +631,13 @@ mod tests {
         assert_eq!(p.liquidity_usd, 1_007_280 * D);
         assert_eq!((p.oi_version, p.markets_with_oi), (version, set));
         let after: Account<'static, Pool> = Account::try_from(&*leak(owned(key, &p))).unwrap();
-        for side in [Unpriced::Refuse, Unpriced::AtWorst] {
+        for side in [Unpriced::AtBest, Unpriced::AtWorst] {
             assert_eq!(pool_aum_usd(&after, &c, NOW, accounts(vec![]), side).unwrap(), then, "{side:?}");
         }
         // And a fresh reading counts what B owes now, $728.
         let fresh = checkpoint_pnl_of(&m, m.lp_pnl_usd(t::PX).unwrap());
         let c2 = done(key, version, set, fresh, 5);
-        assert_eq!(pool_aum_usd(&after, &c2, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(),
+        assert_eq!(pool_aum_usd(&after, &c2, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(),
                    1_008_008 * D);
     }
 
@@ -671,7 +686,7 @@ mod tests {
                   50_000 * D, 0, Pubkey::new_unique(), 100_000 * D, t::PX, 0).unwrap();
         let down = t::PX * 85 / 100;
         let claim = lp_pnl_against_the_mover(&m, down, Unpriced::AtWorst).unwrap();
-        let deposit = lp_pnl_against_the_mover(&m, down, Unpriced::Refuse).unwrap();
+        let deposit = lp_pnl_against_the_mover(&m, down, Unpriced::AtBest).unwrap();
         assert_eq!(deposit, -30_000 * D as i64);
         assert!(claim >= -25_000 * D as i64, "claim counts {claim}, past the $25k the pool can collect");
         // The bound charges every long at A's collateral ratio: $20k.
@@ -680,7 +695,7 @@ mod tests {
         // At $95 nobody is past their collateral, and both read the same.
         let near = t::PX * 95 / 100;
         assert_eq!(lp_pnl_against_the_mover(&m, near, Unpriced::AtWorst).unwrap(), -10_000 * D as i64);
-        assert_eq!(lp_pnl_against_the_mover(&m, near, Unpriced::Refuse).unwrap(), -10_000 * D as i64);
+        assert_eq!(lp_pnl_against_the_mover(&m, near, Unpriced::AtBest).unwrap(), -10_000 * D as i64);
     }
 
     #[test]
@@ -695,12 +710,12 @@ mod tests {
         let at_risk = m.lp_pnl_usd(105_000_000).unwrap();
         assert!(at_risk < at_target, "the pool owes less at $105");
         // A deposit buys at the higher pool value, a claim is paid at the lower.
-        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::Refuse).unwrap(), at_risk);
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtBest).unwrap(), at_risk);
         assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtWorst).unwrap(), at_target);
         // And the other way round when the risk price trails a fall.
         m.risk_price = 115_000_000;
         let at_risk = m.lp_pnl_usd(115_000_000).unwrap();
-        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::Refuse).unwrap(), at_target);
+        assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtBest).unwrap(), at_target);
         assert_eq!(lp_pnl_against_the_mover(&m, 110_000_000, Unpriced::AtWorst).unwrap(), at_risk);
         // No risk price on record: the oracle alone.
         m.risk_price = 0;
@@ -711,14 +726,14 @@ mod tests {
     fn with_nothing_open_and_nothing_held_aum_is_the_liquidity() {
         let (key, p) = pool_account(&pool(7_000_000, 0, 0));
         let c = done(key, 0, 0, 0, 5);
-        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), 7_000_000);
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(), 7_000_000);
     }
 
     #[test]
     fn what_traders_are_up_comes_off_the_checkpoint() {
         let (key, p) = pool_account(&pool(7_000_000, 3, 0));
         let c = done(key, 0, 3, 1_500_000, 5);
-        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), 5_500_000);
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(), 5_500_000);
     }
 
     #[test]
@@ -728,7 +743,7 @@ mod tests {
         let (key, p) = pool_account(&pool(7_000_000, 1, 0));
         let mut c = done(key, 0, 1, 1_000_000, 5);
         c.done_claim_pnl_usd = 1_500_000;
-        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap(), 6_000_000);
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(), 6_000_000);
         assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), 5_500_000);
     }
 
@@ -736,10 +751,10 @@ mod tests {
     fn a_checkpoint_too_old_is_refused() {
         let (key, p) = pool_account(&pool(7_000_000, 1, 0));
         let c = done(key, 0, 1, 0, AUM_MAX_AGE_SEC + 1);
-        let e = pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::AumCheckpointStale));
         let fresh = done(key, 0, 1, 0, AUM_MAX_AGE_SEC);
-        assert!(pool_aum_usd(&p, &fresh, NOW, accounts(vec![]), Unpriced::Refuse).is_ok());
+        assert!(pool_aum_usd(&p, &fresh, NOW, accounts(vec![]), Unpriced::AtBest).is_ok());
     }
 
     #[test]
@@ -750,11 +765,11 @@ mod tests {
         let mut q = pool(7_000_000, 2, 0);
         q.oi_version = 9;
         let (key, p) = pool_account(&q);
-        let e = pool_aum_usd(&p, &done(key, 8, 2, 0, 5), NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(key, 8, 2, 0, 5), NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::AumCheckpointStale));
-        let e = pool_aum_usd(&p, &done(key, 9, 1, 0, 5), NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(key, 9, 1, 0, 5), NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::AumCheckpointStale));
-        assert!(pool_aum_usd(&p, &done(key, 9, 2, 0, 5), NOW, accounts(vec![]), Unpriced::Refuse).is_ok());
+        assert!(pool_aum_usd(&p, &done(key, 9, 2, 0, 5), NOW, accounts(vec![]), Unpriced::AtBest).is_ok());
     }
 
     #[test]
@@ -762,20 +777,55 @@ mod tests {
         let (key, p) = pool_account(&pool(7_000_000, 0, 0));
         let mut never = done(key, 0, 0, 0, 5);
         never.done_ts = 0;
-        let e = pool_aum_usd(&p, &never, NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &never, NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::AumCheckpointStale));
-        let e = pool_aum_usd(&p, &done(Pubkey::new_unique(), 0, 0, 0, 5), NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(Pubkey::new_unique(), 0, 0, 0, 5), NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::MarketPoolMismatch));
     }
 
     #[test]
-    fn a_checkpoint_with_an_unpriced_market_refuses_deposits_but_prices_withdrawals() {
+    fn a_checkpoint_with_an_unpriced_market_prices_deposits_and_withdrawals() {
+        // One stale mark used to refuse every deposit into the pool (WIF,
+        // POPCAT and ORCA on devnet, October 10, 2026). Both sides now read
+        // the bound the pass stored for them.
+        let (key, p) = pool_account(&pool(7_000_000, 1, 0));
+        let mut c = done(key, 0, 1, 2_000_000, 5);
+        c.done_pnl_usd = -500_000;
+        c.done_unpriced = 1;
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap(), 7_500_000);
+        assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), 5_000_000);
+    }
+
+    #[test]
+    fn a_pass_from_before_the_upgrade_with_an_unpriced_market_still_refuses_deposits() {
+        // Its deposit sum holds the market at its worst, which would sell
+        // shares cheap for the minute it stays fresh.
         let (key, p) = pool_account(&pool(7_000_000, 1, 0));
         let mut c = done(key, 0, 1, 2_000_000, 5);
         c.done_unpriced = 1;
-        let e = pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        c.done_at_best = false;
+        let e = pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::StaleOracle));
         assert_eq!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtWorst).unwrap(), 5_000_000);
+        // With every market priced it has nothing at either bound to misread.
+        c.done_unpriced = 0;
+        assert!(pool_aum_usd(&p, &c, NOW, accounts(vec![]), Unpriced::AtBest).is_ok());
+    }
+
+    #[test]
+    fn a_pass_the_older_program_opened_is_finished_without_the_new_flag() {
+        let (key, p) = pool_account(&pool(7_000_000, 2, 0));
+        let mut c = done(key, 0, 2, 0, 500);
+        let list = accounts(two_markets(key));
+        fold_checkpoint(&p, &mut c, true, NOW, &list[..2]).unwrap();
+        // As the older program left it: half counted, no flag.
+        c.pass_at_best = false;
+        fold_checkpoint(&p, &mut c, false, NOW + 1, &list[2..]).unwrap();
+        assert!(!c.pass_open);
+        assert!(!c.done_at_best, "its first market's deposit side may be at worst");
+        // A fresh pass sets it.
+        fold_checkpoint(&p, &mut c, true, NOW + 2, list).unwrap();
+        assert!(c.done_at_best);
     }
 
     #[test]
@@ -814,7 +864,7 @@ mod tests {
         // Leaving a custody out would sell shares without the tokens the LPs
         // hold in it.
         let (key, p) = pool_account(&pool(7_000_000, 0, 1));
-        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteCustodyList));
     }
 
@@ -824,7 +874,7 @@ mod tests {
         // 2.5 tokens of a stable at a dollar ($1 is 1,000,000). The backers'
         // 123 tokens are not the LPs' and must not count.
         let c = owned(Pubkey::new_unique(), &custody(key, 0, 2_500_000, true));
-        let aum = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![c, unread()]), Unpriced::Refuse).unwrap();
+        let aum = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![c, unread()]), Unpriced::AtBest).unwrap();
         assert_eq!(aum, 7_000_000 + 2_500_000);
     }
 
@@ -834,18 +884,18 @@ mod tests {
         // here is an empty account, and the call still succeeds.
         let (key, p) = pool_account(&pool(7_000_000, 0, 1));
         let c = owned(Pubkey::new_unique(), &custody(key, 0, 0, false));
-        assert_eq!(pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![c, unread()]), Unpriced::Refuse).unwrap(), 7_000_000);
+        assert_eq!(pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![c, unread()]), Unpriced::AtBest).unwrap(), 7_000_000);
     }
 
     #[test]
     fn custodies_out_of_order_or_from_another_pool_are_refused() {
         let (key, p) = pool_account(&pool(7_000_000, 0, 1));
         let wrong_slot = owned(Pubkey::new_unique(), &custody(key, 1, 1, true));
-        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![wrong_slot, unread()]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![wrong_slot, unread()]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::IncompleteCustodyList));
 
         let elsewhere = owned(Pubkey::new_unique(), &custody(Pubkey::new_unique(), 0, 1, true));
-        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![elsewhere, unread()]), Unpriced::Refuse).unwrap_err();
+        let e = pool_aum_usd(&p, &done(key, 0, 0, 0, 5), NOW, accounts(vec![elsewhere, unread()]), Unpriced::AtBest).unwrap_err();
         assert_eq!(code(e), u32::from(PerpError::MarketPoolMismatch));
     }
 
@@ -901,15 +951,21 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_counts_an_unseasoned_market_at_its_worst() {
+    fn a_pass_counts_an_unseasoned_market_at_its_bounds() {
         let (key, p) = pool_account(&pool(7_000_000, 2, 0));
         let mut c = done(key, 0, 2, 0, 500);
-        fold_checkpoint(&p, &mut c, true, NOW, accounts(two_markets(key))).unwrap();
+        let list = accounts(two_markets(key));
+        fold_checkpoint(&p, &mut c, true, NOW, list).unwrap();
         assert!(!c.pass_open, "both counted, so the pass completes");
         assert_eq!((c.done_markets, c.done_unpriced), (2, 2));
-        // Each at its whole remaining budget, deposit and claim side alike.
-        assert_eq!(c.done_pnl_usd, 7_000_000);
+        // A claim at each market's whole remaining budget; a deposit at all
+        // of its traders' collateral lost.
         assert_eq!(c.done_claim_pnl_usd, 7_000_000);
+        let best: i64 = [&list[0], &list[2]].iter()
+            .map(|a| Account::<Market>::try_from(*a).unwrap().lp_best_pnl_usd())
+            .sum();
+        assert_eq!(c.done_pnl_usd, best);
+        assert!(best <= 0, "never more than any price could owe");
         assert_eq!(c.done_ts, NOW);
     }
 
@@ -926,7 +982,7 @@ mod tests {
         assert_eq!(code(e), u32::from(PerpError::IncompleteMarketList));
         fold_checkpoint(&p, &mut c, false, NOW + 1, &list[2..]).unwrap();
         assert!(!c.pass_open);
-        assert_eq!(c.done_pnl_usd, 7_000_000);
+        assert_eq!(c.done_claim_pnl_usd, 7_000_000);
     }
 
     #[test]

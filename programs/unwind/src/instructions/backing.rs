@@ -1262,14 +1262,14 @@ mod tests {
             pass_pnl_usd: counted, pass_claim_pnl_usd: counted, pass_unpriced: 0,
             done_ts: NOW, done_version: p.oi_version, done_markets: p.markets_with_oi,
             done_pnl_usd: counted, done_claim_pnl_usd: counted, done_unpriced: 0,
-            _reserved: [0; 12],
+            pass_at_best: true, done_at_best: true, _reserved: [0; 10],
         };
 
         let owed_before = crate::aum::lp_owed_now(&m).unwrap();
         book_unback(&mut p, &mut m, 10 * K, 10 * K, 0, owed_before).unwrap();
         let truth = m.lp_pnl_usd(price).unwrap();
         assert_eq!(truth, -20 * K as i64, "the $20k is the LPs' now");
-        for side in [crate::aum::Unpriced::Refuse, crate::aum::Unpriced::AtWorst] {
+        for side in [crate::aum::Unpriced::AtBest, crate::aum::Unpriced::AtWorst] {
             let read = crate::aum::checkpoint_pnl_usd(
                 pool_key, p.oi_version, p.markets_with_oi, p.aum_drift_usd, &c, NOW, side,
             )

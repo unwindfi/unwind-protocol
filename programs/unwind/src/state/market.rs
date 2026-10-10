@@ -851,6 +851,15 @@ impl Market {
         -((collected - restored) as i64)
     }
 
+    /// The least `lp_pnl_usd` can be at any price: every trader in the market
+    /// loses all of their collateral, less what backing restores. What an LP
+    /// deposit counts a market at when its price cannot be read.
+    pub fn lp_best_pnl_usd(&self) -> i64 {
+        // `lp_from_net` never decreases as the net claim grows, so the
+        // smallest claim is its floor.
+        self.lp_from_net(i64::MIN)
+    }
+
     /// The most `lp_pnl_usd` can be at any price: winners paid everything
     /// the remaining budget allows, less what backing pays first. What an
     /// LP withdrawal counts a market at when its price cannot be read.
@@ -1449,6 +1458,30 @@ mod tests {
             batch_backing_usd: 0,
             batch_insurance_usd: 0,
             batch_backer_fees_usd: 0,
+        }
+    }
+
+    #[test]
+    fn no_price_counts_a_market_below_its_best_or_above_its_worst() {
+        const K: u64 = 1_000_000_000; // $1,000
+        let entry = 1_000_000;
+        for (long, short, drawn) in [(50 * K, 0, 0), (0, 50 * K, 0), (30 * K, 20 * K, 2 * K)] {
+            let mut m = market();
+            m.long_size_usd = long;
+            m.long_avg_entry_price = entry;
+            m.short_size_usd = short;
+            m.short_avg_entry_price = entry;
+            m.collateral_usd = 5 * K;
+            m.loss_budget_usd = 8 * K;
+            m.backing_shares = (drawn > 0) as u64;
+            m.backing_drawn_usd = drawn;
+            let (best, worst) = (m.lp_best_pnl_usd(), m.lp_worst_pnl_usd());
+            // All the collateral lost, less what goes back to the backers.
+            assert_eq!(best, -((5 * K - drawn) as i64));
+            for price in [1, entry / 10, entry / 2, entry, 2 * entry, 10 * entry, 1_000 * entry] {
+                let at = m.lp_pnl_usd(price).unwrap();
+                assert!(best <= at && at <= worst, "{price}: {best} <= {at} <= {worst}");
+            }
         }
     }
 

@@ -94,7 +94,7 @@ pub fn add_liquidity<'info>(
 
     let aum_before = pool_aum_usd(
         &ctx.accounts.pool, &ctx.accounts.checkpoint, Clock::get()?.unix_timestamp,
-        ctx.remaining_accounts, Unpriced::Refuse,
+        ctx.remaining_accounts, Unpriced::AtBest,
     )?;
     let lp_supply = ctx.accounts.lp_mint.supply;
 
