@@ -50,6 +50,10 @@ export function statusOf(m: Market) {
   if (o.budgetUsd <= 0) {
     return { label: "Unbacked", tone: "text-dim", detail: "anyone can underwrite it" };
   }
+  if (o.stale) {
+    const min = Math.max(1, Math.round((m.priceAgeMs ?? 0) / 60_000));
+    return { label: "Paused", tone: "text-down", detail: `mark ${min}m old · orders wait for a fresh one` };
+  }
   return { label: "Live", tone: "text-up", detail: compact(o.budgetUsd) + " budget" };
 }
 

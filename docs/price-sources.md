@@ -173,6 +173,8 @@ The pool authority names the keeper with `set_mark_keeper`; setting the empty
 key stops every push. A keeper that stops, or one whose prices the band
 refuses, leaves its marks to go stale, and a stale mark halts its market. The
 pool's spot is recorded beside every pushed mark, so any gap is on chain.
+While a mark is past its market's maximum age the API reports the market as
+not tradeable and the site shows it as Paused.
 
 ### Without a keeper
 

@@ -38,8 +38,8 @@ import { SOURCE_KIND, clmmPrice, decodeBinArray, decodeClmm, decodeDlmmPair, dlm
 import { Memo, markMayRest } from "./read-cache";
 import {
   BookOrder, Claim, Season, breaker, countTraders, crossOf, faucetRefusal, flowOf, fundingRates,
-  indicativeCross, livePoints, notePremium, num, payoutPct, pendingStakePoints, premiumOf,
-  seasonStanding, weekStart,
+  indicativeCross, livePoints, markStale, notePremium, num, observedTradeable, payoutPct,
+  pendingStakePoints, premiumOf, seasonStanding, weekStart,
 } from "./server-logic";
 import { openRefusal } from "./open-guard";
 import {
@@ -2997,6 +2997,7 @@ async function marketsView() {
       const shortSize = num(ma.shortSizeUsd) / 1e6;
       const total = longSize + shortSize;
       const real = await realMintOf(m);
+      const ageMs = m.lastFetch ? Date.now() - m.lastFetch : null;
       return {
         symbol: m.symbol, name: m.name, color: m.color, mono: m.mono, price,
         // Off the lists (see `hiddenMarket`); served only with ?all=1.
@@ -3014,7 +3015,7 @@ async function marketsView() {
         underlying: m.quote?.underlying ?? null,
         confBps: m.quote?.confBps ?? 0,
         poolLiquidity: m.quote?.liquidity ?? 0,
-        priceAgeMs: m.lastFetch ? Date.now() - m.lastFetch : null,
+        priceAgeMs: ageMs,
         maxPriceAgeSec: ma.maxPriceAgeSec,
         feedError: lastPostError || null,
         ...q,
@@ -3097,7 +3098,10 @@ async function marketsView() {
           // symbol carries for it (`1M` for six).
           unitExp: m.observed.unitExp,
           unitLabel: unitLabel(m.observed.unitExp),
-          tradeable: m.observed.seasoned && num(ma.lossBudgetUsd) > 0,
+          // A mark past its age limit pauses the market: the program refuses
+          // every order against it until the keeper pushes again.
+          stale: markStale(ageMs, ma.maxPriceAgeSec),
+          tradeable: observedTradeable(m.observed.seasoned, num(ma.lossBudgetUsd), ageMs, ma.maxPriceAgeSec),
         },
         // Two hours of real minute closes, not the last two minutes of tape:
         // at a one-second tick the tape is far too zoomed in to show a shape.
@@ -5166,7 +5170,11 @@ async function backingsView(owner: PublicKey) {
         // The market's own state, so the row can say whether this backing is
         // doing anything yet.
         budgetUsd: num(ma.lossBudgetUsd) / 1e6,
-        tradeable: m.observed ? m.observed.seasoned && num(ma.lossBudgetUsd) > 0 : true,
+        tradeable: m.observed
+          ? observedTradeable(m.observed.seasoned, num(ma.lossBudgetUsd),
+            m.lastFetch ? Date.now() - m.lastFetch : null, ma.maxPriceAgeSec)
+          : true,
+        stale: !!m.observed && markStale(m.lastFetch ? Date.now() - m.lastFetch : null, ma.maxPriceAgeSec),
         opening: !!m.observed && !m.observed.seasoned,
       });
     }

@@ -92,8 +92,15 @@ not carry over.
    and mirror pool every 2 minutes. The pools still supply the depth that
    sets leverage and budgets, and the price a pushed mark is checked against:
    a mark more than 10% from the pool's own price is refused, so a copy whose
-   pool has drifted that far pauses until the next swap brings it back.
-5. **Charts** start with the real token's history (Jupiter's chart data) and
+   pool has drifted that far pauses until the next swap brings it back. A
+   pool whose liquidity ends short of the real price is walked there in
+   steps within one pass: swap to the last bin with liquidity, lay fresh
+   liquidity around the new price, swap again, up to 8 steps (about 20%).
+6. **Paused while stale.** A market whose mark is older than its maximum age
+   takes no orders. `/api/markets` reports it with `observed.stale: true` and
+   `observed.tradeable: false`, and the site shows it as Paused until the
+   keeper pushes again.
+7. **Charts** start with the real token's history (Jupiter's chart data) and
    continue with the venue's own prints.
 
 A market listed on mainnet is priced from its own pool (see

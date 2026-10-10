@@ -49,6 +49,23 @@ export const pendingStakePoints = (usd: number, perDay: number, since: number, n
   since > 0 && now > since ? (usd * perDay * (now - since)) / 86_400 : 0;
 
 
+/// Whether an observed market takes orders now: its mark has seasoned, it has
+/// a budget, and the mark is no older than the market's `maxPriceAgeSec`.
+/// Past that the program refuses every order as stale, so the market is
+/// paused in all but name; saying `tradeable` there sent the site's ticket
+/// and the tester fleet at orders that could only bounce. `ageMs` is null
+/// before the first reading.
+export function observedTradeable(
+  seasoned: boolean, budgetUsd: number, ageMs: number | null, maxAgeSec: number,
+): boolean {
+  return seasoned && budgetUsd > 0 && !markStale(ageMs, maxAgeSec);
+}
+
+/// A mark older than the market accepts. A market with no age limit on
+/// record (zero) is never stale here; the program has its own floor.
+export const markStale = (ageMs: number | null, maxAgeSec: number) =>
+  ageMs != null && maxAgeSec > 0 && ageMs / 1000 > maxAgeSec;
+
 /// Mirrors `haircut_profit_usd`: the fraction of winners' profit the market
 /// can pay, as a percentage. Each side counts at `Market::side_winners_usd`:
 /// the bound on its gross winners from its moment sums when every position on

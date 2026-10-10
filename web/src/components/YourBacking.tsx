@@ -25,6 +25,7 @@ const amount = (sym: string, n: number) =>
 
 function status(b: Backing) {
   if (b.opening) return { text: "Opening auction", tone: "text-brand" };
+  if (b.stale) return { text: "Paused · mark stale", tone: "text-down" };
   if (b.tradeable) return { text: `Live · ${compact(b.budgetUsd)} budget`, tone: "text-up" };
   return { text: "Not live", tone: "text-dim" };
 }

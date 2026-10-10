@@ -439,7 +439,7 @@ function Holdings({ account, backings, rewards, owner, loaded }: {
   const backed: HoldRow[] = backings.map((b) => ({
     key: b.symbol, href: vaultHref(b.symbol), name: `${b.symbol} backing`,
     sub: "First-loss vault", value: b.value, deposited: b.deposited,
-    status: b.opening ? "Opening" : b.tradeable ? "Live" : "Waiting" }));
+    status: b.opening ? "Opening" : b.stale ? "Paused" : b.tradeable ? "Live" : "Waiting" }));
 
   return (
     <>

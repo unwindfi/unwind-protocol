@@ -102,6 +102,31 @@ const EDGE_BINS = 5;
 /// the same shape the seeding script lays.
 const SIDE_USD = 180_000;
 const HALF_WIDTH = 30;
+/// Edge-to-edge steps one pass may take toward a far target. Each moves the
+/// price up to HALF_WIDTH bins (3% at a 10 bps bin step) and lays one
+/// position, so eight cover a drift of about 20% in a single pass.
+const MAX_STEPS = 8;
+
+/// How much to swap toward `target` (price per lamport), given a
+/// partial-fill quote. The least input that reaches the target, found by
+/// search; when no input does, because the target lies past the pool's last
+/// bin with liquidity, a little less than the quote could fill, so the swap
+/// ends inside the last bin instead of asking the chain for liquidity that
+/// is not there. `reached` says which.
+export function sizeSwap(
+  quoteAt: (amount: bigint) => { endPrice: number; consumed: bigint },
+  hi: bigint, target: number, up: boolean,
+): { amount: bigint; reached: boolean } {
+  const reached = (end: number) => (up ? end >= target : end <= target);
+  let lo = 0n;
+  let found = false;
+  for (let i = 0; i < 24 && hi - lo > 1n; i++) {
+    const mid = (lo + hi) / 2n;
+    if (reached(quoteAt(mid).endPrice)) { hi = mid; found = true; } else lo = mid;
+  }
+  if (found) return { amount: hi, reached: true };
+  return { amount: (quoteAt(hi).consumed * 98n) / 100n, reached: false };
+}
 
 /// `real` is set on a copy made on request (`seedPool` via the server's
 /// /api/devnet-copy): the mainnet mint it follows, and `sideUsd` the depth it
@@ -162,7 +187,7 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
 
   async function follow(s: Seeded, realPrice: number) {
     const dlmm = await DLMM.create(conn, new PublicKey(s.pair));
-    const now = Number((await dlmm.getActiveBin()).pricePerToken);
+    const start = Number((await dlmm.getActiveBin()).pricePerToken);
     // A copy of a real token is held at the real price itself: its chart
     // draws the real token's history from its mainnet pool, and a pool at its
     // own offset would trade at a level that history never shows. One that
@@ -171,19 +196,32 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
     let target = realPrice;
     if (!isCopy(s)) {
       let a = anchors.get(s.symbol);
-      if (!a) { a = { real: realPrice, pool: now }; anchors.set(s.symbol, a); }
+      if (!a) { a = { real: realPrice, pool: start }; anchors.set(s.symbol, a); }
       target = a.pool * (realPrice / a.real);
     }
 
-    if (Math.abs(target / now - 1) > DEADBAND) {
-      await swapTo(dlmm, s, target, target > now);
+    // A target past the last bin with liquidity is walked to in steps: swap
+    // to the edge, lay fresh depth there, swap again. Swapping the whole way
+    // in one go fails on chain (CannotFindNonZeroLiquidityBinArrayId), and
+    // used to fail before the liquidity was re-laid, so the pool never moved
+    // again: WIF, POPCAT and ORCA sat 11 to 13% off the real price for hours
+    // on October 10, 2026, past the keeper's 10% gap, and their marks went
+    // stale.
+    for (let step = 0; ; step++) {
+      await keepLiquidityAround(dlmm, s);
+      const now = Number((await dlmm.getActiveBin()).pricePerToken);
+      if (Math.abs(target / now - 1) <= DEADBAND || step >= MAX_STEPS) break;
+      const got = await swapTo(dlmm, s, target, target > now);
       await dlmm.refetchStates();
+      // Nothing at all to swap into that way: depth goes down first, even
+      // where an older position still nominally covers the price.
+      if (got === "none") await keepLiquidityAround(dlmm, s, true);
     }
-    await keepLiquidityAround(dlmm, s);
   }
 
-  /// Swaps until the pool's price reaches `target`, sized by searching the
-  /// SDK's own quote rather than guessing at the bins' liquidity.
+  /// Swaps until the pool's price reaches `target`, or as far toward it as
+  /// the pool's liquidity goes, sized by searching the SDK's own quote rather
+  /// than guessing at the bins' liquidity.
   async function swapTo(dlmm: DLMM, s: Seeded, target: number, up: boolean) {
     // Buying the token (paying USDC) raises its price; selling lowers it.
     const swapForY = !up;
@@ -191,44 +229,44 @@ export function makeFlow(conn: Connection, authority: Keypair, usdc: PublicKey, 
     const outMint = up ? new PublicKey(s.mint) : usdc;
     const binArrays = await dlmm.getBinArrayForSwap(swapForY, 6);
     const targetLamport = Number(dlmm.toPricePerLamport(target));
-    const reached = (end: number) => (up ? end >= targetLamport : end <= targetLamport);
 
     // Upper bound for the search: a whole side's worth of the input token.
     const inDecimals = up ? 6 : dlmm.tokenX.mint.decimals;
     const inPrice = up ? 1 : target;
-    let lo = 0n;
-    let hi = BigInt(Math.ceil((SIDE_USD / inPrice) * 10 ** inDecimals));
-    let best: ReturnType<DLMM["swapQuote"]> | null = null;
-    for (let i = 0; i < 24 && hi - lo > 1n; i++) {
-      const mid = (lo + hi) / 2n;
-      const q = dlmm.swapQuote(new BN(mid.toString()), swapForY, new BN(100), binArrays, true);
-      if (reached(Number(q.endPrice.toString()))) { hi = mid; best = q; } else lo = mid;
-    }
-    const amount = best ? hi : lo;
-    if (amount === 0n) return;
-    const quote = best ?? dlmm.swapQuote(new BN(amount.toString()), swapForY, new BN(100), binArrays, true);
+    const hi = BigInt(Math.ceil((SIDE_USD / inPrice) * 10 ** inDecimals));
+    // A partial-fill quote stops where the liquidity does; the swap on chain
+    // does not, it fails.
+    const quote = (amount: bigint) =>
+      dlmm.swapQuote(new BN(amount.toString()), swapForY, new BN(100), binArrays, true);
+    const plan = sizeSwap((amount) => {
+      const q = quote(amount);
+      return { endPrice: Number(q.endPrice.toString()), consumed: BigInt(q.consumedInAmount.toString()) };
+    }, hi, targetLamport, up);
+    if (plan.amount === 0n) return "none" as const;
+    const q = quote(plan.amount);
 
     await mintTo(conn, authority, inMint,
       (await getOrCreateAssociatedTokenAccount(conn, authority, inMint, authority.publicKey)).address,
-      authority, amount);
+      authority, plan.amount);
     await getOrCreateAssociatedTokenAccount(conn, authority, outMint, authority.publicKey);
     const tx = await dlmm.swap({
-      inToken: inMint, outToken: outMint, inAmount: new BN(amount.toString()),
-      minOutAmount: quote.minOutAmount, lbPair: dlmm.pubkey, user: authority.publicKey,
-      binArraysPubkey: quote.binArraysPubkey,
+      inToken: inMint, outToken: outMint, inAmount: new BN(plan.amount.toString()),
+      minOutAmount: q.minOutAmount, lbPair: dlmm.pubkey, user: authority.publicKey,
+      binArraysPubkey: q.binArraysPubkey,
     });
     await sendAndConfirmTransaction(conn, tx, [authority]);
+    return plan.reached ? "reached" as const : "edge" as const;
   }
 
   /// Lays a fresh position around the price when it nears the edge of every
   /// existing one. Old positions stay: liquidity left behind is depth the
   /// price finds again if it comes back.
-  async function keepLiquidityAround(dlmm: DLMM, s: Seeded) {
+  async function keepLiquidityAround(dlmm: DLMM, s: Seeded, force = false) {
     const active = (await dlmm.getActiveBin()).binId;
     const { userPositions } = await dlmm.getPositionsByUserAndLbPair(authority.publicKey);
     const covered = userPositions.some((p) =>
       active >= p.positionData.lowerBinId + EDGE_BINS && active <= p.positionData.upperBinId - EDGE_BINS);
-    if (covered) return;
+    if (covered && !force) return;
     await layLiquidity(conn, authority, dlmm, s.mint, usdc, active,
       Number((await dlmm.getActiveBin()).pricePerToken), s.sideUsd);
     console.log(`flow ${s.symbol}: re-laid liquidity around bin ${active}`);

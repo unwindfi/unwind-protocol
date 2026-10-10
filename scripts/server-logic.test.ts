@@ -8,9 +8,10 @@ import * as path from "path";
 import { Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
   BREAKER_PCT, Claim, PREMIUM_WINDOW_MS, Season, breaker, countTraders, crossOf, faucetRefusal,
-  flowOf, fundingRates, indicativeCross, livePoints, notePremium, num, payoutPct,
-  pendingStakePoints, premiumOf, seasonStanding, weekStart,
+  flowOf, fundingRates, indicativeCross, livePoints, markStale, notePremium, num,
+  observedTradeable, payoutPct, pendingStakePoints, premiumOf, seasonStanding, weekStart,
 } from "./server-logic";
+import { sizeSwap } from "./testnet-flow";
 import {
   DEPTH_LEVERAGE_TIERS, LISTING_LEVERAGE_CEILING_BPS, LISTING_OI_CEILING_USD, LISTING_OI_FLOOR_USD,
   MAX_UNIT_EXP, leverageForDepth, listingLimits, unitExpFor, unitLabel,
@@ -560,5 +561,60 @@ describe("open guard: positions do not flip", () => {
   it("asks a limit only about the position", () => {
     assert.isNull(openRefusal("JUP", true, null, [{ isBid: false, reduceOnly: false }], false));
     assert.equal(openRefusal("SOL", false, long, [], false)?.kind, "held");
+  });
+});
+
+describe("server: a stale mark pauses an observed market", () => {
+  it("is tradeable only seasoned, backed and within the age limit", () => {
+    assert.isTrue(observedTradeable(true, 1_000, 30_000, 120));
+    assert.isTrue(observedTradeable(true, 1_000, 120_000, 120), "at the limit");
+    assert.isFalse(observedTradeable(true, 1_000, 120_001, 120), "past it");
+    // ORCA on October 10, 2026: a 22 minute old mark reported as tradeable.
+    assert.isFalse(observedTradeable(true, 27_255, 1_309_877, 120));
+    assert.isFalse(observedTradeable(false, 1_000, 1_000, 120), "seasoning");
+    assert.isFalse(observedTradeable(true, 0, 1_000, 120), "unbacked");
+  });
+
+  it("has no age before the first reading and no limit at zero", () => {
+    assert.isFalse(markStale(null, 120));
+    assert.isFalse(markStale(10_000_000, 0));
+    assert.isTrue(observedTradeable(true, 1_000, null, 120));
+  });
+});
+
+describe("devnet flow: sizing a swap toward the real price", () => {
+  // A pool with `bins` bins of liquidity in the direction of travel, each
+  // taking `perBin` of input to cross, one price unit per bin from 100. A
+  // partial-fill quote stops at the last bin, as the SDK's does.
+  const pool = (bins: number, perBin: bigint, up: boolean) => (amount: bigint) => {
+    const cap = BigInt(bins) * perBin;
+    const used = amount < cap ? amount : cap;
+    const moved = Number(used) / Number(perBin);
+    return { endPrice: up ? 100 + moved : 100 - moved, consumed: used };
+  };
+
+  it("finds the least input that reaches a target inside the liquidity", () => {
+    const q = pool(30, 1_000n, true);
+    const { amount, reached } = sizeSwap(q, 1_000_000n, 110, true);
+    assert.isTrue(reached);
+    assert.equal(q(amount).endPrice, 110);
+    assert.isBelow(q(amount - 1n).endPrice, 110);
+  });
+
+  it("stops inside the last bin when the target lies past the liquidity", () => {
+    // WIF's copy on October 10, 2026: 19 bins of USDC below the price and
+    // the real price 104 bins down. Asking for the whole way swapped more
+    // than the pool holds and failed on chain every pass.
+    const q = pool(19, 1_000n, false);
+    const { amount, reached } = sizeSwap(q, 10_000_000n, 100 - 104, false);
+    assert.isFalse(reached);
+    assert.isTrue(amount <= 19n * 1_000n, "never more than the pool can fill");
+    assert.isTrue(amount > 18n * 1_000n, "but most of the way to the edge");
+  });
+
+  it("swaps nothing when there is nothing to swap into", () => {
+    const { amount, reached } = sizeSwap(pool(0, 1_000n, true), 1_000_000n, 120, true);
+    assert.equal(amount, 0n);
+    assert.isFalse(reached);
   });
 });

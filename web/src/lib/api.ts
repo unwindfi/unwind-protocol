@@ -70,6 +70,9 @@ export interface Observed {
   /// either, and saying which is missing is the difference between a market
   /// that is waiting and one that looks broken.
   tradeable: boolean;
+  /// The mark is older than the market's `maxPriceAgeSec`: the program
+  /// refuses orders until the keeper pushes again. Paused, not broken.
+  stale?: boolean;
 }
 
 /// A pool as the program would read it, fetched before anything is signed.
@@ -363,6 +366,8 @@ export interface Backing {
   held: Record<string, number>;
   budgetUsd: number;
   tradeable: boolean;
+  /// Its mark is past the market's age limit, so it takes no orders for now.
+  stale?: boolean;
   /// Still seasoning: orders are resting in its opening auction.
   opening: boolean;
 }

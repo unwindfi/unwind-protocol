@@ -353,7 +353,9 @@ export function BookPanel({
               <div className="pb-3">
                 <Ripeness o={m.observed} />
                 <p className="text-pretty mt-3 text-[12px] leading-relaxed text-muted-foreground">
-                  {statusOf(m).detail}. {m.observed.budgetUsd > 0
+                  {statusOf(m).detail}. {m.observed.stale
+                    ? "The program refuses orders against a mark past its age limit."
+                    : m.observed.budgetUsd > 0
                     ? "Orders clear together at open, at one price."
                     : "Opens after 15m of readings, once backed."}
                 </p>
