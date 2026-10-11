@@ -62,6 +62,9 @@ const COLS = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto] items-center g
   "md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,.8fr)_auto]";
 
 /// A figure with its caption and one line, for the row under the hero.
+/// Hours of history a backing rate needs before it may headline the page.
+const APY_HEADLINE_HOURS = 168;
+
 export function Tile({ k, v, sub, tone = "" }: { k: string; v: ReactNode; sub?: ReactNode; tone?: string }) {
   return (
     <div className="min-w-0 rounded-[16px] border border-line bg-panel px-3.5 py-3.5 sm:rounded-[20px] sm:px-6 sm:py-5">
@@ -590,13 +593,22 @@ export default function Earn() {
   [vaults, filter]);
 
   const pool = account?.pool;
-  const deposited = vaults.reduce((a, v) => a + v.tvl, 0);
+  // Market backing alone. It used to include the pool, so the figure read
+  // $227K until the pool loaded and then jumped to $10.85M under the name
+  // "Total backed"; the pool has its own tile.
+  const backingVaults = vaults.filter((v) => v.kind === "market");
+  const backed = backingVaults.reduce((a, v) => a + v.tvl, 0);
+  const backedCount = backingVaults.filter((v) => v.tvl > 0).length;
   // The Pool panel's own deposit: not the backings, which have their own
   // rows below, and not what is on its way out, which "Withdrawing" shows.
   // It used to sum all three and read $421.82 against $164.99 in the pool.
   const inPool = account?.lp.value ?? 0;
   const poolApy = apyCell(apy?.pool, "no deposits");
-  const best = vaults.filter((v) => v.apy.value != null).sort((a, b) => b.apy.value! - a.apy.value!)[0];
+  // Only rates measured over a week: a day's fees on a new vault, stretched
+  // to a year, read as 222% and headlined the page.
+  const settled = (v: Vault) => v.kind === "market" && v.apy.value != null
+    && (apy?.markets[v.symbol!]?.hours ?? 0) >= APY_HEADLINE_HOURS;
+  const best = backingVaults.filter(settled).sort((a, b) => b.apy.value! - a.apy.value!)[0];
   const devnet = useHasBackend() === true;
   const table = useRef<HTMLElement>(null);
   const toMarkets = () => {
@@ -729,16 +741,17 @@ export default function Earn() {
           </aside>
         </div>
 
-        {/* Three figures under the hero, Kurate's row: what is backed across
-            every vault, what the pool can still lend, the best rate on offer. */}
+        {/* Three figures under the hero, one per thing they count: the
+            pool, the markets' first-loss backing, and the best backing rate
+            with a week behind it. */}
         <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <Tile k="Total backed" v={<AnimatedNumber value={deposited} duration={0.9} format={compact} />}
-            sub={`${vaults.length} vaults`} />
-          <Tile k="Free liquidity" v={pool ? compact(pool.free) : "–"}
-            sub={pool ? `${pool.utilization.toFixed(1)}% in use` : devnet ? "Loading" : "Devnet offline"} />
-          <Tile k="Best APY" tone={best?.apy.tone}
-            v={best?.apy.value != null ? `${best.apy.value.toFixed(2)}%` : "–"}
-            sub={best?.apy.value != null ? `${best.title}, ${best.apy.note}` : "Measuring"} />
+          <Tile k="Pool" v={pool ? compact(pool.aum) : "–"}
+            sub={pool ? `${pool.utilization.toFixed(1)}% lent to traders` : devnet ? "Loading" : "Devnet offline"} />
+          <Tile k="Backing" v={<AnimatedNumber value={backed} duration={0.9} format={compact} />}
+            sub={`${backedCount} of ${backingVaults.length} markets backed`} />
+          <Tile k="Best 7d APY" tone={best?.apy.tone}
+            v={best ? `${best.apy.value!.toFixed(2)}%` : "–"}
+            sub={best ? best.title : "Needs 7 days of data"} />
         </div>
 
         {/* ---------------------------------------------- where yours is */}
@@ -756,7 +769,7 @@ export default function Earn() {
                 <span className="n ml-2 text-[14px] font-normal text-dim">{shown.length}</span>
               </h2>
               <p className="n mt-1 text-[12.5px] text-muted-foreground">
-                <AnimatedNumber value={deposited} duration={0.9} format={(n) => money(n, 0)} /> deposited
+                <AnimatedNumber value={backed} duration={0.9} format={(n) => money(n, 0)} /> backing
                 {" · "}First loss · 50% of LP fees
               </p>
             </div>
