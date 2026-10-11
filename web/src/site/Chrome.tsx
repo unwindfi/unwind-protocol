@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Wordmark } from "@/components/Wordmark";
-import { GlassMark } from "@/components/GlassMark";
+import { LogoMark } from "@/components/LogoMark";
 import {
   ArrowUpRight, Menu, Search, X, Mail,
 } from "lucide-react";
@@ -136,7 +136,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
       <SkipLink />
       <div className="flex h-[64px] items-center gap-3 px-4 sm:gap-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
-          <GlassMark className="h-8 w-8" />
+          <LogoMark className="h-8 w-8" />
           {/* At 320px the bar cannot fit the word, the wallet, the theme and
               the menu; the mark alone still says whose page this is. "Beta"
               goes first, below sm: with a wallet connected it pushed a 390px
@@ -288,7 +288,7 @@ export function SiteFooter(_: { tradeHref?: string } = {}) {
         <div className="grid gap-8 md:grid-cols-[1.2fr_2fr]">
           <div>
             <a href="/markets" aria-label="unwind markets" className="flex items-center gap-2.5">
-              <GlassMark className="h-7 w-7" />
+              <LogoMark className="h-7 w-7" />
               <Wordmark height={21} />
             </a>
             <p className="text-pretty mt-3 max-w-[34ch] text-[13.5px] leading-relaxed text-muted-foreground">

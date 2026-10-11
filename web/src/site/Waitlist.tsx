@@ -5,7 +5,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import "@fontsource/inter/500.css";
 import { ArrowUpRight, ChevronDown, Volume2, VolumeX } from "lucide-react";
 import { LightHero } from "@/components/LightHero";
-import { GlassMark } from "@/components/GlassMark";
+import { LogoMark } from "@/components/LogoMark";
 import { Wordmark } from "@/components/Wordmark";
 import { SiX } from "@icons-pack/react-simple-icons";
 import { OUTLINE, Shell } from "@/site/Chrome";
@@ -242,7 +242,7 @@ export default function Waitlist() {
                                sm:left-10 sm:top-9">
           {/* The logo as the app's nav draws it: the violet glass mark and the
               Geist wordmark. */}
-          <GlassMark className="h-9 w-9" />
+          <LogoMark className="h-9 w-9" />
           <Wordmark height={24} />
         </a>
         <nav className="absolute right-6 top-6 z-20 flex items-center gap-4 sm:right-10 sm:top-9">

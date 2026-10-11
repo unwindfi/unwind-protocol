@@ -1,5 +1,6 @@
 import "@/site/serif.css";
 import { OUTLINE, SOLID, SiteHeader } from "@/site/Chrome";
+import { LogoMark } from "@/components/LogoMark";
 
 /*
  * An address nobody claimed, in the unlocked site. It used to open the trade
@@ -15,7 +16,7 @@ export default function NotFound() {
         <img src="/waitlist/field.webp" alt="" aria-hidden
           className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-80" />
         <div className="relative flex flex-col items-center px-6 py-16 text-center">
-          <img src="/waitlist/logo-glass-mark.webp" alt="" className="h-20 w-20" />
+          <LogoMark className="h-20 w-20 text-white" />
           <h1 className="text-balance font-serif-display mt-6 text-[clamp(3rem,9vw,5.5rem)] leading-none
                          tracking-[-.025em] text-[#ece9fb]">
             Nothing here.

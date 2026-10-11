@@ -34,7 +34,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, RISKS, Shell, SiteFooter, SiteHeader } from "@/site/Chrome";
 import { useHasBackend } from "@/lib/api";
-import { GlassMark } from "@/components/GlassMark";
+import { LogoMark } from "@/components/LogoMark";
 import { TickerLogo } from "@/components/TickerLogo";
 import { WalletActions } from "@/components/WalletActions";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
@@ -516,7 +516,7 @@ export function VaultIcon({ v }: { v: Vault }) {
   return v.kind === "pool" || !v.market ? (
     <span className="grid size-10 flex-none place-items-center rounded-full bg-panel2
                      bg-panel2">
-      <GlassMark className="size-[26px]" />
+      <LogoMark className="size-[26px]" />
     </span>
   ) : (
     <span className="flex-none"><TickerLogo m={v.market} size={40} /></span>

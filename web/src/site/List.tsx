@@ -27,7 +27,7 @@ import {
   DOCS, PILL_INDICATOR, PILL_LIST, PILL_TRIGGER, RISKS, Shell, SiteFooter, SiteHeader,
 } from "@/site/Chrome";
 import { PayToken } from "@/components/PayToken";
-import { GlassMark } from "@/components/GlassMark";
+import { LogoMark } from "@/components/LogoMark";
 import { RangeSlider } from "@/components/motion/range-slider";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Checkbox } from "@/components/motion/checkbox";
@@ -960,7 +960,7 @@ export default function List() {
                   ? <TokenIcon icon={preview?.icon ?? token.icon} mint={preview?.icon ? preview.base : token.mint}
                       label={token.symbol} size={36} />
                   : <span className="grid size-9 flex-none place-items-center rounded-full bg-panel3">
-                      <GlassMark className="size-[22px]" />
+                      <LogoMark className="size-[22px]" />
                     </span>}
                 <span className="min-w-0">
                   <span className="block text-[13px] font-medium">{status.title}</span>

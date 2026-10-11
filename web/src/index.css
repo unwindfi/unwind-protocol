@@ -297,7 +297,7 @@
   /*
    * The mark on hover: whirled like a wheel, fast off the mark and slowing to
    * rest, two full turns so it stops where it started. Played once per hover
-   * by `GlassMark`, which removes the class when it ends rather than on
+   * by `LogoMark`, which removes the class when it ends rather than on
    * pointer-leave, so a quick pass of the cursor still gets the whole spin.
    */
   @keyframes chakra {
