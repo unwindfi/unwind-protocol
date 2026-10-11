@@ -386,7 +386,7 @@ export default function App() {
           )}
           {view === "positions" && (
             <BottomPanel account={account} trades={trades} busy={busy} mobile
-              markets={markets} onClose={onCloseAll} />
+              markets={markets} market={market} owner={owner} onClose={onCloseAll} />
           )}
           {view === "account" && (
             <div className="pane-scroll min-h-0 flex-1">{ticket}</div>

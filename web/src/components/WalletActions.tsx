@@ -70,12 +70,14 @@ function Connected({ address, onDisconnect }: { address: string; onDisconnect: (
   return (
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
-        className={`press flex h-10 items-center gap-2 rounded-full px-3.5 text-[14px] text-foreground
+        className={`press flex h-10 items-center gap-2 rounded-full px-3 text-[14px] text-foreground
           sm:h-11 sm:gap-2.5 sm:rounded-[14px] sm:px-4 sm:text-[15px] ${
           open ? "bg-line" : "bg-panel3 hover:bg-line"}`}>
         <span className="size-2 flex-none rounded-full bg-up" />
         <span className="n">{short}</span>
-        <ChevronDown size={15} strokeWidth={2} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+        {/* Off on phones, where the header has no room for it; the tile
+            still opens the same menu. */}
+        <ChevronDown size={15} strokeWidth={2} className={`hidden text-muted-foreground transition-transform sm:block ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
         <div role="menu" className="absolute right-0 top-[calc(100%+6px)] z-50 w-[220px] rounded-[16px] border border-line

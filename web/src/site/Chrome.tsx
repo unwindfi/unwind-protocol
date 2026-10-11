@@ -134,13 +134,15 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
      */
     <header className="relative z-50 bg-background safe-t">
       <SkipLink />
-      <div className="flex h-[64px] items-center gap-4 px-4 sm:px-6">
+      <div className="flex h-[64px] items-center gap-3 px-4 sm:gap-4 sm:px-6">
         <a href="/markets" aria-label="unwind" className="flex flex-none items-center gap-2.5">
           <GlassMark className="h-8 w-8" />
           {/* At 320px the bar cannot fit the word, the wallet, the theme and
-              the menu; the mark alone still says whose page this is. */}
+              the menu; the mark alone still says whose page this is. "Beta"
+              goes first, below sm: with a wallet connected it pushed a 390px
+              phone's page to 437px and the menu off screen. */}
           <Wordmark height={18} className="max-[359px]:hidden" />
-          <span className="translate-y-px text-[13px] font-medium leading-none text-muted-foreground max-[359px]:hidden">Beta</span>
+          <span className="translate-y-px text-[13px] font-medium leading-none text-muted-foreground max-sm:hidden">Beta</span>
         </a>
         {/* Not on /markets, whose own search is the page's hero: two search
             fields on one screen asked which one to use. */}
@@ -153,7 +155,7 @@ export function SiteHeader({ here, tradeHref = "/trade", actions }: {
           Search markets
           <kbd className="ml-auto font-sans text-[12px] text-dim">{isMac ? "⌘K" : "Ctrl K"}</kbd>
         </a>}
-        <div className="ml-auto flex flex-none items-center gap-2">
+        <div className="ml-auto flex flex-none items-center gap-1.5 sm:gap-2">
           {actions}
           <ThemeToggle className="h-10 w-10" />
           <PageMenu here={here} tradeHref={tradeHref} className="lg:hidden" />

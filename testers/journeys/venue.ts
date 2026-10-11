@@ -200,13 +200,21 @@ export async function comparePosition(ctx: Ctx, journey: string, sym: string) {
   }
   // Funding has its own tab with the same figure; the docked table leaves
   // the column out, so this is where it is read on a laptop.
+  // Read together and retried, as the Positions check is: one read of each
+  // a few seconds apart caught a new position's funding crossing zero (WIF
+  // on October 10, 2026: the page at 0.01, the API at -0.01045) and filed
+  // the timing as a sign bug.
   if (!ctx.phone && await accountTab(ctx, "Funding")) {
-    const api = (await acct(ctx))?.positions[sym];
-    const ui = await rowFor(ctx, sym);
-    const paid = parseMoney(ui?.["Paid so far"]);
-    if (api?.funding != null && paid != null && !near(paid, -api.funding, 0.011)) {
-      await ctx.rec.issue("number-mismatch", "high", `${journey}: ${sym} funding paid shows ${paid}, the API says ${-api.funding}`, { key: `${journey} funding tab` });
+    let miss: string | null = null;
+    for (let i = 0; i < 3; i++) {
+      const [api, ui] = [(await acct(ctx))?.positions[sym], await rowFor(ctx, sym)];
+      const paid = parseMoney(ui?.["Paid so far"]);
+      miss = api?.funding != null && paid != null && !near(paid, -api.funding, 0.011)
+        ? `${journey}: ${sym} funding paid shows ${paid}, the API says ${-api.funding}` : null;
+      if (!miss) break;
+      await ctx.page.waitForTimeout(2_500);
     }
+    if (miss) await ctx.rec.issue("number-mismatch", "high", miss, { key: `${journey} funding tab` });
   }
 }
 

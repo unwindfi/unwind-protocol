@@ -591,7 +591,10 @@ export default function Earn() {
 
   const pool = account?.pool;
   const deposited = vaults.reduce((a, v) => a + v.tvl, 0);
-  const yours = vaults.reduce((a, v) => a + v.yours, 0);
+  // The Pool panel's own deposit: not the backings, which have their own
+  // rows below, and not what is on its way out, which "Withdrawing" shows.
+  // It used to sum all three and read $421.82 against $164.99 in the pool.
+  const inPool = account?.lp.value ?? 0;
   const poolApy = apyCell(apy?.pool, "no deposits");
   const best = vaults.filter((v) => v.apy.value != null).sort((a, b) => b.apy.value! - a.apy.value!)[0];
   const devnet = useHasBackend() === true;
@@ -682,7 +685,7 @@ export default function Earn() {
                   : poolApy.text}
               </Stat>
               <Stat k="Deposited">
-                {unread ?? (owner ? <AnimatedNumber value={yours} duration={0.9} format={(n) => money(n)} /> : <span className="font-normal text-dim">–</span>)}
+                {unread ?? (owner ? <AnimatedNumber value={inPool} duration={0.9} format={(n) => money(n)} /> : <span className="font-normal text-dim">–</span>)}
               </Stat>
               {owner && account?.lp.pending && (
                 <Stat k="Withdrawing">
