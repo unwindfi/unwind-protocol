@@ -1,22 +1,12 @@
-import { useState } from "react";
-
 /*
  * The mark, final since October 11, 2026: the glass petals' silhouette in one
  * flat colour (brand/logo-final). Drawn as a mask over `currentColor`, so it
  * is white on dark and near-black on light without a second file, and any
- * parent can tint it with a text colour.
- *
- * Hovering it spins it like a wheel and lets it settle (`.chakra`).
+ * parent can tint it with a text colour. It holds still: the hover spin it
+ * used to have played on every tap on a phone.
  */
-export function LogoMark({ className = "h-8 w-8", spin = true }: { className?: string; spin?: boolean }) {
-  const [spinning, setSpinning] = useState(false);
-  return (
-    <span aria-hidden
-      onPointerEnter={spin ? () => { if (!spinning) setSpinning(true); } : undefined}
-      onAnimationEnd={() => setSpinning(false)}
-      className={`inline-block flex-none bg-current ${className} ${spinning ? "chakra" : ""}`}
-      style={MASK} />
-  );
+export function LogoMark({ className = "h-8 w-8" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block flex-none bg-current ${className}`} style={MASK} />;
 }
 
 const MASK = {

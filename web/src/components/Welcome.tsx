@@ -131,7 +131,7 @@ export function Welcome() {
           <div className="px-6 pb-6 pt-5">
             <div className="relative h-[150px] overflow-hidden rounded-[16px] bg-panel2">
               <img src="/waitlist/field.webp" alt="" className="h-full w-full object-cover" />
-              <LogoMark spin={false}
+              <LogoMark
                 className="absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 text-white" />
             </div>
             <div className="mt-4 flex flex-col">

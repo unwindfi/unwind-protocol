@@ -112,7 +112,8 @@ ${bg ? `  <rect width="64" height="64" rx="14" fill="${bg}"/>\n` : ""}${wheel("b
 
 fs.writeFileSync(path.join(APP, "logo.svg"), svg());
 fs.writeFileSync(path.join(APP, "favicon.svg"), svg(BRAND));
-fs.writeFileSync(path.join(ROOT, "web", "public", "favicon.svg"), svg(BRAND));
+// web/public/favicon.svg is no longer written here: since October 11, 2026 the
+// site's icons come from the final flat mark (brand/logo-final), not this vector.
 
 // app/index.html is now build output, so the nav's copy of the mark lives in
 // the React source and is regenerated there instead.
@@ -127,4 +128,4 @@ if (fs.existsSync(brand)) {
     .replace(/x1="[\d.]+" y1="[\d.]+" x2="[\d.]+" y2="[\d.]+"/,
       `x1="${AXIS.x1}" y1="${AXIS.y1}" x2="${AXIS.x2}" y2="${AXIS.y2}"`));
 }
-console.log("wrote app/logo.svg, app/favicon.svg, web/public/favicon.svg");
+console.log("wrote app/logo.svg, app/favicon.svg");

@@ -14,10 +14,10 @@ export const metadata: Metadata = {
   description: 'unwind is a perpetual futures venue on Solana. List any Solana token, with leverage.',
   icons: {
     icon: [
-      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/favicon-64.png', sizes: '64x64', type: 'image/png' },
+      { url: '/favicon-32.png?v=2', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-64.png?v=2', sizes: '64x64', type: 'image/png' },
     ],
-    apple: '/apple-touch-icon.png',
+    apple: '/apple-touch-icon.png?v=2',
   },
   openGraph: {
     siteName,

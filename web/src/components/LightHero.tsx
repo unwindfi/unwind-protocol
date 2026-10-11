@@ -25,7 +25,7 @@ export function LightHero() {
                                 leading-[2] tracking-[.14em] text-white/55 sm:left-8 sm:top-7 sm:text-[11px]">
         {"Permissionless perps   ·   Solana\n".repeat(3).trim()}
       </p>
-      <LogoMark spin={false}
+      <LogoMark
         className="absolute left-1/2 top-[46%] aspect-square w-[min(45vh,55%)] max-w-[380px] -translate-x-1/2
                    -translate-y-1/2 text-white drop-shadow-[0_24px_40px_rgba(30,10,90,.35)]" />
       <div aria-hidden className="absolute bottom-4 left-4 text-[#e2d9ff] sm:bottom-6 sm:left-7">
