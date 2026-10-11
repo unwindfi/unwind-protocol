@@ -47,7 +47,7 @@ Two rules account for most of the system. The other pages follow from them.
 | Audit | None. Not reviewed by an audit firm. |
 | Mainnet | Off until an audit |
 | Formal checks | 126 Kani harnesses plus unit and integration tests (see [Verification](verification.md)) |
-| Source | [github.com/prarimz/unwind](https://github.com/prarimz/unwind): program, proofs, server, site |
+| Source | [github.com/unwindfi/unwind-protocol](https://github.com/unwindfi/unwind-protocol): program, proofs, server, site |
 
 {% hint style="warning" %}
 Nothing in this documentation is investment advice. The program is

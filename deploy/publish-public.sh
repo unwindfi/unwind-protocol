@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Publishes origin/main of the private repo to the public prarimz/unwind-protocol
+# Publishes origin/main of the private repo to the public unwindfi/unwind-protocol
 # as one new commit on top of its main, so the public repo never carries this
 # repo's history, PRs or branches. Paths in EXCLUDE are left out (files with no
 # license to redistribute, and anything kept private).
 #
 #   deploy/publish-public.sh "Commit message for the public repo"
 set -euo pipefail
-PUBLIC=https://github.com/prarimz/unwind-protocol.git
+PUBLIC=https://github.com/unwindfi/unwind-protocol.git
 EXCLUDE=(.claude/skills/emil-design-eng .claude/skills/apple-design)
 MSG=${1:?usage: deploy/publish-public.sh "message"}
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
@@ -28,5 +28,5 @@ git worktree add -q --detach "$TMP" origin/main
   if [ "$TREE" = "$(git rev-parse "$PARENT^{tree}")" ]; then echo "public repo already matches origin/main"; exit 0; fi
   C=$(git commit-tree "$TREE" -p "$PARENT" -m "$MSG")
   git push -q "$PUBLIC" "$C:refs/heads/main"
-  echo "published $(git rev-parse --short "$C") to prarimz/unwind-protocol"
+  echo "published $(git rev-parse --short "$C") to unwindfi/unwind-protocol"
 )
